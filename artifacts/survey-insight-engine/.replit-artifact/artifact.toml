@@ -1,0 +1,22 @@
+kind = "web"
+previewPath = "/"
+title = "Survey Insight Engine"
+version = "1.0.0"
+id = "artifacts/survey-insight-engine"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 21049
+
+[services.development]
+run = "streamlit run app.py --server.port 21049 --server.address 0.0.0.0 --server.headless true --server.enableCORS=false --server.enableXsrfProtection=false --server.baseUrlPath="
+
+[services.env]
+PORT = "21049"
+BASE_PATH = "/"
