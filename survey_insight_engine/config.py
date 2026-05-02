@@ -1,0 +1,44 @@
+"""Runtime constants and feature thresholds for the Survey Insight Engine.
+
+These are configuration values only — no computation logic, parsing, or
+business rules belong in this module.
+"""
+
+APP_NAME = "Survey Insight Engine"
+VERSION = "0.1.0-day1"
+
+# Strings treated as missing values during decode
+MISSING_VALUE_TOKENS = frozenset({
+    "", "NA", "N/A", "n/a", "Don't know", "DK",
+    "-1", "99", "999", "9999"
+})
+
+# Datamap structure (verified against the real sample file)
+DATAMAP_SHEET_NAME = "Sheet1"
+DATAMAP_INDEX_SHEET = "Index"   # ignored by parser
+
+# Patterns observed in the real datamap
+QUESTION_HEADER_PATTERN = r"^\[?([A-Za-z][A-Za-z0-9_]*)\]?:\s*(.+)$"
+VALUES_LINE_PATTERN = r"^Values:\s*(-?\d+)\s*-\s*(-?\d+)$"
+OPEN_NUMERIC_LINE = "Open numeric response"
+OPEN_TEXT_LINE = "Open text response"
+
+# Sub-column pattern for multi-select and grid:
+#   group 1 = parent question id (e.g. "Q53")
+#   group 2 = sub-index (e.g. "1")
+#   group 3 = optional "oe" suffix marking open-text follow-up
+SUB_COLUMN_PATTERN = r"^([A-Za-z][A-Za-z0-9_]*?)r(\d+)(oe)?$"
+
+# Default allocation parameters (numeric_allocation questions)
+DEFAULT_ALLOCATION_TARGET = 100.0
+ALLOCATION_TOLERANCE = 2.0
+
+# Quality thresholds
+LOW_SAMPLE_THRESHOLD = 30
+HIGH_MISSING_THRESHOLD = 0.20
+
+# File constraints
+MAX_UPLOAD_SIZE_MB = 200
+ACCEPTED_RAWDATA_EXTENSIONS = (".csv", ".xlsx")
+ACCEPTED_DATAMAP_EXTENSIONS = (".xlsx",)
+  # CSV cannot represent the multi-sheet structure we need.

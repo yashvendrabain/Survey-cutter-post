@@ -1,0 +1,227 @@
+You are working on the Survey Insight Engine. Today is Day 1. 
+Your only task today is to set up the project structure, install 
+dependencies, and build an empty Streamlit shell with file uploads. 
+You are NOT writing any analysis logic, parsing logic, or 
+computation today.
+
+CONTEXT
+
+This tool ingests a raw survey data file and a data map file, 
+parses them, classifies questions, and computes statistics with 
+a full audit trail. Today is foundation only. Codex is writing 
+the data contract layer (src/models.py) in parallel. You will 
+import from it once they commit, but you do not write or modify 
+that file.
+
+DELIVERABLES (in order)
+
+1. Folder structure exactly as below. Create empty .py files where 
+   indicated. Use POSIX style paths.
+
+   survey_insight_engine/
+   ├── app.py
+   ├── requirements.txt
+   ├── README.md
+   ├── config.py
+   ├── .gitignore
+   ├── src/
+   │   ├── __init__.py            
+   │   ├── models.py              # Codex writes today; you do 
+   │                              # NOT touch
+   │   ├── datamap_parser.py      # empty placeholder
+   │   ├── raw_decoder.py         # empty placeholder
+   │   ├── question_classifier.py # empty placeholder
+   │   ├── calc_primitives.py     # empty placeholder
+   │   ├── calculation_log.py     # empty placeholder
+   │   ├── single_cut_engine.py   # empty placeholder
+   │   ├── cross_cut_engine.py    # empty placeholder
+   │   └── excel_exporter.py      # empty placeholder
+   ├── tests/
+   │   ├── __init__.py            
+   │   └── fixtures/              
+   ├── outputs/                   # gitignored
+   ├── sample_data/               # gitignored
+   └── docs/
+
+2. .gitignore — Python standard plus:
+     outputs/
+     sample_data/
+     .replit
+     .pythonlibs/
+     __pycache__/
+     *.pyc
+     .venv/
+     .pytest_cache/
+
+3. requirements.txt — exact pinned versions (no ranges, no 
+   wildcards):
+     pandas==2.2.3
+     numpy==1.26.4
+     xlsxwriter==3.2.0
+     streamlit==1.39.0
+     openpyxl==3.1.5
+     pytest==8.3.3
+     python-dateutil==2.9.0
+     openai==1.54.0
+
+4. config.py — exactly these constants and nothing else. Add a 
+   module docstring stating these are runtime constants and feature 
+   thresholds; no computation logic belongs here.
+
+     APP_NAME = "Survey Insight Engine"
+     VERSION = "0.1.0-day1"
+
+     # Strings treated as missing values during decode
+     MISSING_VALUE_TOKENS = frozenset({
+         "", "NA", "N/A", "n/a", "Don't know", "DK",
+         "-1", "99", "999", "9999"
+     })
+
+     # Datamap structure (verified against the real sample file)
+     DATAMAP_SHEET_NAME = "Sheet1"
+     DATAMAP_INDEX_SHEET = "Index"   # ignored by parser
+
+     # Patterns observed in the real datamap
+     QUESTION_HEADER_PATTERN = r"^\[?([A-Za-z][A-Za-z0-9_]*)\]?:\s*(.+)$"
+     VALUES_LINE_PATTERN = r"^Values:\s*(-?\d+)\s*-\s*(-?\d+)$"
+     OPEN_NUMERIC_LINE = "Open numeric response"
+     OPEN_TEXT_LINE = "Open text response"
+
+     # Sub-column pattern for multi-select and grid:
+     #   group 1 = parent question id (e.g. "Q53")
+     #   group 2 = sub-index (e.g. "1")
+     #   group 3 = optional "oe" suffix marking open-text follow-up
+     SUB_COLUMN_PATTERN = r"^([A-Za-z][A-Za-z0-9_]*?)r(\d+)(oe)?$"
+
+     # Default allocation parameters (numeric_allocation questions)
+     DEFAULT_ALLOCATION_TARGET = 100.0
+     ALLOCATION_TOLERANCE = 2.0
+
+     # Quality thresholds
+     LOW_SAMPLE_THRESHOLD = 30
+     HIGH_MISSING_THRESHOLD = 0.20
+
+     # File constraints
+     MAX_UPLOAD_SIZE_MB = 200
+     ACCEPTED_RAWDATA_EXTENSIONS = (".csv", ".xlsx")
+     ACCEPTED_DATAMAP_EXTENSIONS = (".xlsx",)
+       # CSV cannot represent the multi-sheet structure we need.
+
+5. README.md — one paragraph explaining the tool's purpose, 
+   plus a "Status" section noting the current stage 
+   (Day 1 — foundation, file upload only, no analysis yet), 
+   plus a "Run locally" section with:
+       pip install -r requirements.txt
+       streamlit run app.py
+
+6. app.py — Streamlit shell with these properties exactly:
+
+   - Page config: layout="wide", page_title from APP_NAME, 
+     page_icon left as default
+   - Header showing APP_NAME and VERSION
+
+   - Sidebar:
+     - Section "Settings" with a single placeholder caption: 
+       "Configuration options will appear here as features are 
+       added"
+     - Section "About" with one-line description
+
+   - Main body, two columns:
+     - Left column: 
+         st.file_uploader for raw data, 
+         type=ACCEPTED_RAWDATA_EXTENSIONS minus the leading dot, 
+         help text quoting MAX_UPLOAD_SIZE_MB
+     - Right column: 
+         st.file_uploader for data map, 
+         type=ACCEPTED_DATAMAP_EXTENSIONS minus the leading dot, 
+         help text noting that data map must be xlsx
+
+   - Below the uploaders, show the file status as plain text:
+       "Raw data: [filename] ([size] KB)" or 
+       "Raw data: not uploaded"
+       "Data map: [filename] ([size] KB)" or 
+       "Data map: not uploaded"
+
+   - Initialize st.session_state once with these keys, all None 
+     initially:
+       data_map
+       survey_schema
+       decoded_df
+       quality_report
+       single_cut_results
+       cross_cut_results
+       audit_log
+       run_timestamp
+       raw_data_file
+       datamap_file
+
+     When a user uploads a file, store the UploadedFile object 
+     into raw_data_file or datamap_file. Do NOT parse or read 
+     the file content — just hold it.
+
+   - Below file status, an expandable section titled "Expected 
+     file format" with placeholder text:
+       "The data map should be an xlsx file with a 'Sheet1' tab 
+       containing question blocks separated by blank rows. Each 
+       block has a header line, a Values: or 'Open response' 
+       line, and one row per option."
+       "The raw data should be a csv or xlsx with one row per 
+       respondent, where column names match the question IDs 
+       declared in the data map."
+     This is a help block; it does not need to be styled beyond 
+     the default Streamlit expander.
+
+   - Do NOT call any function from src/ today. Do not import 
+     models.py — wait for Codex's commit. Once Codex commits, 
+     in a follow-up task, you will add a single import at the 
+     top:
+       from src.models import SurveySchema, DataQualityReport
+     for type-hinting purposes only. Do this only after their 
+     tests pass.
+
+CONSTRAINTS
+
+- Do NOT write any parsing, decoding, classification, or 
+  computation code today. Those modules stay as empty .py files.
+- Do NOT install any package not listed in requirements.txt.
+- Do NOT modify src/models.py — that is owned by Codex.
+- Use only Streamlit's built-in components. No custom HTML or CSS 
+  injection.
+- The app must launch and render with both file uploaders empty 
+  without errors before you commit.
+
+VERIFICATION BEFORE COMMIT
+
+Run, in order:
+  pip install -r requirements.txt
+  python -c "import pandas, numpy, xlsxwriter, streamlit, 
+             openpyxl, openai; print('imports OK')"
+  streamlit run app.py
+    -> open in browser, confirm:
+       (a) page loads with header
+       (b) both file uploaders visible
+       (c) sidebar has Settings and About sections
+       (d) "Expected file format" expander opens and closes
+       (e) uploading the sample Datamap_sample.xlsx and 
+           Rawdata_sample.xlsx (place them in sample_data/ first) 
+           shows correct filenames and sizes in the status block
+       (f) no console errors
+
+Then stop the streamlit server.
+
+COMMIT MESSAGES
+
+Two separate commits in this order:
+  1. "Day 1: project scaffold, dependencies, .gitignore, README"
+  2. "Day 1: Streamlit shell with file upload"
+
+WHEN YOU FINISH
+
+Reply with:
+  - confirmation all verification steps passed
+  - the streamlit URL if the app is running on a public Replit 
+    instance
+  - any deviations from this spec, with reasons
+
+If anything in this spec is ambiguous or you hit a blocker, STOP 
+and ask. Do not improvise file contents or invent fields.
