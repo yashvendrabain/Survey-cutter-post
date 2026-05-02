@@ -24,13 +24,13 @@ args = "Start application"
 name = "Start application"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "cd survey_insight_engine && streamlit run app.py --server.port 5000 --server.address 0.0.0.0 --server.headless true"
-waitForPort = 5000
-
 [workflows.workflow.metadata]
 outputType = "webview"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd survey_insight_engine && streamlit run app.py --server.port 5000 --server.address 0.0.0.0 --server.headless true --server.enableCORS=false --server.enableXsrfProtection=false"
+waitForPort = 5000
 
 [agent]
 stack = "PNPM_WORKSPACE"
