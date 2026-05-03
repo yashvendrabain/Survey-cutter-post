@@ -1,0 +1,130 @@
+            _require_distribution_payload(payload, "rate", "distribution")
+
+
+@dataclass(frozen=True, slots=True)
+class MultiSelectResult(SingleCutResult):
+    """Selection result for binary multi-select sub-columns.
+
+    Under DenominatorPolicy.VALID_RESPONSES, the denominator for each
+    selection_rate is respondents_who_answered_any — i.e. respondents
+    who answered at least one sub-column of the multi-select group.
+    """
+
+    selections: dict[str, dict]
+    respondents_who_answered_any: int
+
+    def __post_init__(self) -> None:
+        super(MultiSelectResult, self).__post_init__()
+        if self.question_type is not QuestionType.MULTI_SELECT_BINARY:
+            raise ValueError("MultiSelectResult requires question_type MULTI_SELECT_BINARY")
+        if not self.selections:
+            raise ValueError("selections must be non-empty")
+
+        _require_non_negative_int(
+            self.respondents_who_answered_any, "respondents_who_answered_any"
+        )
+        for column_id, payload in self.selections.items():
+            _require_non_empty_string(column_id, "selections key")
+            _require_distribution_payload(payload, "selection_rate", "selections")
+
+
+@dataclass(frozen=True, slots=True)
+class NumericResult(SingleCutResult):
+    """Descriptive statistics result for numeric survey responses."""
+
+    mean: float
+    median: float
+    std: float
+    min_val: float
+    max_val: float
+    percentiles: dict[int, float]
+    allocation_target: float | None = None
+    allocation_tolerance: float | None = None
+    allocation_excluded_n: int | None = None
+
+    def __post_init__(self) -> None:
+        super(NumericResult, self).__post_init__()
+        if self.question_type not in {
+            QuestionType.DIRECT_NUMERIC,
+            QuestionType.NUMERIC_ALLOCATION,
+        }:
+            raise ValueError(
+                "NumericResult requires question_type DIRECT_NUMERIC or "
+                "NUMERIC_ALLOCATION"
+            )
+
+        for field_name in ("mean", "median", "std", "min_val", "max_val"):
+            _require_numeric(getattr(self, field_name), field_name)
+        if self.min_val > self.max_val:
+            raise ValueError("min_val must be <= max_val")
+
+        required_percentiles = {25, 50, 75}
+        if not required_percentiles.issubset(self.percentiles):
+            raise ValueError("percentiles must include keys 25, 50, and 75")
+        for percentile, value in self.percentiles.items():
+            if not isinstance(percentile, int) or isinstance(percentile, bool):
+                raise ValueError("percentile keys must be integers")
+            _require_numeric(value, "percentile value")
+
+        if self.question_type is QuestionType.NUMERIC_ALLOCATION:
+            if self.allocation_target is None:
+                raise ValueError(
+                    "allocation_target must be set for NUMERIC_ALLOCATION"
+                )
+            if self.allocation_tolerance is None:
+                raise ValueError(
+                    "allocation_tolerance must be set for NUMERIC_ALLOCATION"
+                )
+            if self.allocation_excluded_n is None:
+                raise ValueError(
+                    "allocation_excluded_n must be set for NUMERIC_ALLOCATION"
+                )
+
+        if self.allocation_target is not None:
+            _require_numeric(self.allocation_target, "allocation_target")
+        if self.allocation_tolerance is not None:
+            _require_numeric(self.allocation_tolerance, "allocation_tolerance")
+            if self.allocation_tolerance < 0:
+                raise ValueError("allocation_tolerance must be non-negative")
+        if self.allocation_excluded_n is not None:
+            _require_non_negative_int(
+                self.allocation_excluded_n, "allocation_excluded_n"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class GridSingleSelectResult(SingleCutResult):
+    """Nested single-select results for each row of a grid question."""
+
+    rows: dict[str, SingleSelectResult]
+
+    def __post_init__(self) -> None:
+        super(GridSingleSelectResult, self).__post_init__()
+        if self.question_type is not QuestionType.GRID_SINGLE_SELECT:
+            raise ValueError(
+                "GridSingleSelectResult requires question_type GRID_SINGLE_SELECT"
+            )
+        if not self.rows:
+            raise ValueError("rows must be non-empty")
+
+        for row_column_id, result in self.rows.items():
+            _require_non_empty_string(row_column_id, "rows key")
+            if not isinstance(result, SingleSelectResult):
+                raise ValueError("rows values must be SingleSelectResult instances")
+
+
+def _require_distribution_payload(
+    payload: Any, rate_key: str, container_name: str
+) -> None:
+    if not isinstance(payload, dict):
+        raise ValueError(f"{container_name} payloads must be dictionaries")
+
+    for required_key in ("label", "count", rate_key):
+        if required_key not in payload:
+            raise ValueError(
+                f"{container_name} payloads must include {required_key!r}"
+            )
+
+    _require_non_empty_string(payload["label"], f"{container_name} label")
+    _require_non_negative_int(payload["count"], f"{container_name} count")
+    _require_rate(payload[rate_key], f"{container_name} {rate_key}")
