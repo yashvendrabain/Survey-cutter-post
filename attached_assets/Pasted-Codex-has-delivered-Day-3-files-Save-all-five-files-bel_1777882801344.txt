@@ -1,0 +1,103 @@
+Codex has delivered Day 3 files. Save all five files below, 
+then run verification.
+
+IMPORTANT: tests/conftest.py is an UPDATED VERSION that 
+replaces the existing file. It adds new fixture paths 
+(RAW_DECODER_CSV_PATH etc.) while keeping the original 
+datamap fixtures. Replace the existing file entirely.
+
+Save these files:
+
+1. artifacts/survey-insight-engine/src/raw_decoder.py
+2. artifacts/survey-insight-engine/src/question_classifier.py
+3. artifacts/survey-insight-engine/tests/test_raw_decoder.py
+4. artifacts/survey-insight-engine/tests/test_question_classifier.py
+5. artifacts/survey-insight-engine/tests/conftest.py
+   (REPLACE existing file entirely)
+
+After saving, run:
+
+cd artifacts/survey-insight-engine
+python -m unittest tests.test_raw_decoder -v
+python -m unittest tests.test_question_classifier -v
+
+Paste both outputs in full.
+
+Then run the real-file pipeline check:
+
+cd artifacts/survey-insight-engine && python -c "
+from src.datamap_parser import parse_datamap
+from src.raw_decoder import decode_raw_data
+from src.question_classifier import classify_questions
+
+dm = parse_datamap('sample_data/Datamap_sample.xlsx')
+df, qr = decode_raw_data(
+    'sample_data/Rawdata_sample.xlsx', dm)
+schema = classify_questions(
+    dm, 
+    df.columns.tolist(),
+    respondent_id_column='record',
+    total_respondents=len(df),
+    source_rawdata_path='sample_data/Rawdata_sample.xlsx'
+)
+
+print('=== DECODER ===')
+print(f'Rows: {len(df)}')
+print(f'Columns: {len(df.columns)}')
+print(f'Quality warnings: {len(qr.warnings)}')
+for w in qr.warnings[:10]:
+    print(f'  {w}')
+print(f'Coercion log entries: {len(qr.coercion_log)}')
+for entry in qr.coercion_log[:5]:
+    print(f'  {entry[\"column\"]}: {entry[\"rows_affected\"]} rows, '
+          f'values={entry[\"values_coerced\"][:3]}')
+
+print()
+print('=== SCHEMA ===')
+print(f'Total questions: {len(schema.questions)}')
+from collections import Counter
+types = Counter(q.question_type.value for q in schema.questions)
+for t, n in sorted(types.items()):
+    print(f'  {t}: {n}')
+
+print()
+eligible = schema.analysis_eligible_questions()
+print(f'Analysis eligible: {len(eligible)}')
+ineligible = [q for q in schema.questions 
+              if not q.analysis_eligible]
+print(f'Ineligible: {len(ineligible)}')
+for q in ineligible[:10]:
+    print(f'  {q.canonical_id}: {q.exclusion_reason}')
+
+print()
+print('=== UNKNOWN QUESTIONS ===')
+unknown = [q for q in schema.questions 
+           if q.question_type.value == 'UNKNOWN']
+print(f'  count: {len(unknown)}')
+for q in unknown[:10]:
+    print(f'  {q.canonical_id}: {q.question_text[:50]}')
+
+print()
+print('=== SAMPLE ELIGIBLE QUESTIONS ===')
+for q in list(eligible)[:8]:
+    print(f'  {q.canonical_id:20s} '
+          f'{q.question_type.value:25s} '
+          f'cols={len(q.raw_columns)}')
+"
+
+Paste the full output. Do not modify any file.
+
+--- FILE 1: src/raw_decoder.py ---
+[paste raw_decoder.py]
+
+--- FILE 2: src/question_classifier.py ---
+[paste question_classifier.py]
+
+--- FILE 3: tests/test_raw_decoder.py ---
+[paste test_raw_decoder.py]
+
+--- FILE 4: tests/test_question_classifier.py ---
+[paste test_question_classifier.py]
+
+--- FILE 5: tests/conftest.py (REPLACE EXISTING) ---
+[paste conftest.py]

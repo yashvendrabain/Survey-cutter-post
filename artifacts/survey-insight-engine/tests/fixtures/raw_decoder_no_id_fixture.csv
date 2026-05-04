@@ -1,0 +1,21 @@
+Q3,Q53r1,Q53r2,Q70,Q4r98oe,vStatus,extra_col
+1,1,0,10,note 1,complete,extra
+2,0,1,20,note 2,complete,extra
+1,1,1,101,note 3,complete,extra
+NA,0,0,30,note 4,complete,extra
+2,1,0,-1,note 5,complete,extra
+abc,0,1,50,,complete,extra
+1,1,0,60,NA,complete,extra
+2,0,1,70,N/A,complete,extra
+1,1,0,80,,complete,extra
+2,0,1,90,,complete,extra
+1,1,0,100,,complete,extra
+2,0,1,0,,complete,extra
+1,1,0,25,,complete,extra
+2,0,1,35,,complete,extra
+1,1,0,45,,complete,extra
+2,0,1,55,,complete,extra
+1,1,0,65,,complete,extra
+2,0,1,75,,complete,extra
+1,1,0,85,tail 1,complete,extra
+2,0,1,95,tail 2,complete,extra
