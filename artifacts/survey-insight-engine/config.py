@@ -27,7 +27,7 @@ OPEN_TEXT_LINE = "Open text response"
 #   group 1 = parent question id (e.g. "Q53")
 #   group 2 = sub-index (e.g. "1")
 #   group 3 = optional "oe" suffix marking open-text follow-up
-SUB_COLUMN_PATTERN = r"^([A-Za-z][A-Za-z0-9_]*?)r(\d+)(oe)?$"
+SUB_COLUMN_PATTERN = r"^[A-Za-z][A-Za-z0-9_]*$"
 
 # Default allocation parameters (numeric_allocation questions)
 DEFAULT_ALLOCATION_TARGET = 100.0
