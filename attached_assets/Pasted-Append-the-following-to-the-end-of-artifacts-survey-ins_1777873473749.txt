@@ -1,0 +1,61 @@
+Append the following to the end of 
+artifacts/survey-insight-engine/src/models.py
+Add a blank line before pasting to separate from existing code:
+
+@dataclass(frozen=True, slots=True)
+class DataQualityReport:
+    """Data quality summary for parsed survey inputs."""
+
+    total_rows: int
+    total_columns: int
+    columns_in_datamap: int
+    columns_not_in_datamap: tuple[str, ...]
+    per_column_missing_pct: dict[str, float]
+    per_column_out_of_range_pct: dict[str, float]
+    coercion_log: tuple[dict, ...]
+    warnings: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        _require_non_negative_int(self.total_rows, "total_rows")
+        _require_non_negative_int(self.total_columns, "total_columns")
+        for column, value in self.per_column_missing_pct.items():
+            _require_rate(value, f"per_column_missing_pct[{column!r}]")
+        for column, value in self.per_column_out_of_range_pct.items():
+            _require_rate(value, f"per_column_out_of_range_pct[{column!r}]")
+
+
+@dataclass(frozen=True, slots=True)
+class CrossCutResult:
+    """Result contract for cross-question analyses."""
+
+    cross_cut_id: str
+    synthetic_question_title: str
+    business_question: str
+    source_question_ids: tuple[str, ...]
+    analysis_type: AnalysisType
+    result_table: dict
+    ai_insight: str | None
+    ai_insight_was_template: bool
+    audit_records: tuple[AuditRecord, ...]
+    warnings: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        _require_non_empty_string(self.cross_cut_id, "cross_cut_id")
+        _require_non_empty_string(
+            self.synthetic_question_title, "synthetic_question_title"
+        )
+        if not self.source_question_ids:
+            raise ValueError("source_question_ids must be non-empty")
+
+Then run:
+cd artifacts/survey-insight-engine && python -c "
+from src.models import (
+    QuestionType, DenominatorPolicy, AnalysisType,
+    QuestionSpec, SurveySchema, AuditRecord,
+    SingleCutResult, SingleSelectResult, MultiSelectResult,
+    NumericResult, GridSingleSelectResult,
+    DataQualityReport, CrossCutResult
+)
+print('All imports OK')
+"
+Paste the full output.
