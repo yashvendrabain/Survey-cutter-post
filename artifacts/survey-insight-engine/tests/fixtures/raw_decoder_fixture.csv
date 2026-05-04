@@ -3,7 +3,7 @@ R001,1,1,0,10,note 1,complete,extra
 R002,2,0,1,20,note 2,complete,extra
 R003,1,1,1,101,note 3,complete,extra
 R004,NA,0,0,30,note 4,complete,extra
-R005,2,1,0,-1,note 5,complete,extra
+R005,2,1,0,105,note 5,complete,extra
 R006,abc,0,1,60,,complete,extra
 R007,1,1,0,60,NA,complete,extra
 R008,2,0,1,70,N/A,complete,extra
