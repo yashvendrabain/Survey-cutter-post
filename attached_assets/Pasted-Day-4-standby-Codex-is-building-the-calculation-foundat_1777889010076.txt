@@ -1,0 +1,80 @@
+Day 4 standby. Codex is building the calculation foundation 
+today. Your job is verification only.
+
+PATH: cd artifacts/survey-insight-engine
+
+When Codex delivers, I will paste 8 files. You will:
+
+1. Save each file to its correct path. Note: src/single_cut/ 
+   is a NEW PACKAGE directory — create it if it doesn't exist.
+
+2. Run all three test suites separately:
+     cd artifacts/survey-insight-engine
+     python -m unittest tests.test_calculation_log -v
+     python -m unittest tests.test_calc_primitives -v
+     python -m unittest tests.test_single_select -v
+   Paste each output in full.
+
+3. Run the cumulative pipeline check on the real file. This 
+   confirms parser → decoder → classifier → single_select 
+   works end-to-end:
+
+     cd artifacts/survey-insight-engine && python -c "
+     from src.datamap_parser import parse_datamap
+     from src.raw_decoder import decode_raw_data
+     from src.question_classifier import classify_questions
+     from src.calculation_log import CalculationLog
+     from src.single_cut._single_select import compute_single_select
+     from src.models import QuestionType
+
+     dm = parse_datamap('sample_data/Datamap_sample.xlsx')
+     df, qr = decode_raw_data(
+         'sample_data/Rawdata_sample.xlsx', dm)
+     schema = classify_questions(
+         dm, df.columns.tolist(),
+         respondent_id_column='record',
+         total_respondents=len(df),
+         source_rawdata_path='sample_data/Rawdata_sample.xlsx'
+     )
+     log = CalculationLog()
+
+     # Find first 5 SINGLE_SELECT eligible questions
+     ss_questions = [
+         q for q in schema.analysis_eligible_questions()
+         if q.question_type == QuestionType.SINGLE_SELECT
+     ][:5]
+
+     print(f'=== Testing {len(ss_questions)} single-select '
+           f'questions ===')
+     for spec in ss_questions:
+         try:
+             result = compute_single_select(spec, df, log)
+             print(f'\n{spec.canonical_id}: {spec.question_text[:50]}')
+             print(f'  valid_n={result.valid_n}, '
+                   f'missing_n={result.missing_n}')
+             for code, payload in list(
+                 result.distribution.items())[:5]:
+                 print(f'  {code}: '
+                       f'{payload[\"label\"][:30]:30s} '
+                       f'count={payload[\"count\"]:4d} '
+                       f'rate={payload[\"rate\"]:.4f}')
+         except Exception as e:
+             print(f'{spec.canonical_id}: ERROR - {e}')
+
+     print(f'\n=== AUDIT LOG ===')
+     print(f'Total records: {len(log)}')
+     for rec in log.all_records()[:3]:
+         print(f'  {rec.metric_name} for '
+               f'{rec.source_question_id}: '
+               f'denom={rec.denominator}, formula={rec.formula}')
+     "
+
+   Paste the full output.
+
+4. Do NOT modify any file Codex writes. If any output looks 
+   suspicious, paste it raw and let me triage.
+
+CONSTRAINTS
+- Do not write any logic.
+- Do not modify Codex's tests.
+- Do not adjust expected values in fixtures.
