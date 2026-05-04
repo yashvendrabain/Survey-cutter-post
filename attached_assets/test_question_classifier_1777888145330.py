@@ -1,0 +1,284 @@
+"""Tests for question classification into SurveySchema."""
+
+from __future__ import annotations
+
+import unittest
+
+from src.models import QuestionType
+from src.question_classifier import classify_questions
+
+
+CLASSIFIER_DATA_MAP = {
+    "questions": [
+        {
+            "canonical_id": "record",
+            "raw_id": "record",
+            "question_text": "Respondent ID",
+            "type_hint": None,
+            "value_range": None,
+            "options": [],
+            "sub_columns": [],
+            "parent_canonical_id": None,
+            "source_row": 1,
+            "warnings": [],
+        },
+        {
+            "canonical_id": "Q3",
+            "raw_id": "[Q3]",
+            "question_text": "Are you currently in a full-time position",
+            "type_hint": "values_range",
+            "value_range": (1, 2),
+            "options": [(1, "Yes"), (2, "No")],
+            "sub_columns": [],
+            "parent_canonical_id": None,
+            "source_row": 2,
+            "warnings": [],
+        },
+        {
+            "canonical_id": "Q53",
+            "raw_id": "Q53",
+            "question_text": "Which challenges apply?",
+            "type_hint": "values_range",
+            "value_range": (0, 1),
+            "options": [],
+            "sub_columns": [("Q53r1", "Knowledge gap"), ("Q53r2", "Alignment gap")],
+            "parent_canonical_id": None,
+            "source_row": 10,
+            "warnings": [],
+        },
+        {
+            "canonical_id": "Q33",
+            "raw_id": "Q33",
+            "question_text": "Allocate 100 points",
+            "type_hint": "values_range",
+            "value_range": (0, 999),
+            "options": [],
+            "sub_columns": [("Q33r1", "Pricing"), ("Q33r2", "Customer shift")],
+            "parent_canonical_id": None,
+            "source_row": 15,
+            "warnings": [],
+        },
+        {
+            "canonical_id": "Q15",
+            "raw_id": "Q15",
+            "question_text": "Rate involvement",
+            "type_hint": "values_range",
+            "value_range": (1, 4),
+            "options": [
+                (1, "Directly involved in decision making AND budget"),
+                (2, "Directly involved in decision making OR budget"),
+                (3, "Indirectly involved"),
+                (4, "Not involved"),
+            ],
+            "sub_columns": [
+                ("Q15r1", "Overall company strategy"),
+                ("Q15r2", "Go-to-market strategy"),
+                ("Q15r3", "Partner strategy"),
+            ],
+            "parent_canonical_id": None,
+            "source_row": 20,
+            "warnings": [],
+        },
+        {
+            "canonical_id": "Q4r98oe",
+            "raw_id": "[Q4r98oe]",
+            "question_text": "Other industry",
+            "type_hint": "open_text",
+            "value_range": None,
+            "options": [],
+            "sub_columns": [],
+            "parent_canonical_id": "Q4",
+            "source_row": 30,
+            "warnings": [],
+        },
+        {
+            "canonical_id": "vQTIME_MINUTES",
+            "raw_id": "[vQTIME_MINUTES]",
+            "question_text": "Survey length in minutes",
+            "type_hint": "values_range",
+            "value_range": (-99999999999999, 999999999999999),
+            "options": [],
+            "sub_columns": [],
+            "parent_canonical_id": None,
+            "source_row": 35,
+            "warnings": [],
+        },
+        {
+            "canonical_id": "QUnknown",
+            "raw_id": "QUnknown",
+            "question_text": "Missing type hint",
+            "type_hint": None,
+            "value_range": None,
+            "options": [],
+            "sub_columns": [],
+            "parent_canonical_id": None,
+            "source_row": 40,
+            "warnings": ["header followed by blank row, no type hint"],
+        },
+        {
+            "canonical_id": "QMissingRaw",
+            "raw_id": "QMissingRaw",
+            "question_text": "Single select missing from raw",
+            "type_hint": "values_range",
+            "value_range": (1, 2),
+            "options": [(1, "Yes"), (2, "No")],
+            "sub_columns": [],
+            "parent_canonical_id": None,
+            "source_row": 45,
+            "warnings": [],
+        },
+        {
+            "canonical_id": "QOther",
+            "raw_id": "QOther",
+            "question_text": "Pick an option",
+            "type_hint": "values_range",
+            "value_range": (1, 98),
+            "options": [(1, "No"), (98, "Other (please specify)")],
+            "sub_columns": [],
+            "parent_canonical_id": None,
+            "source_row": 50,
+            "warnings": [],
+        },
+    ],
+    "source_path": "classifier_datamap.xlsx",
+    "sheet_name": "Sheet1",
+    "total_rows_in_sheet": 50,
+    "parser_warnings": [],
+}
+
+RAW_COLUMNS = [
+    "record",
+    "Q3",
+    "Q53r1",
+    "Q53r2",
+    "Q33r1",
+    "Q33r2",
+    "Q15r1",
+    "Q15r2",
+    "Q4r98oe",
+    "vQTIME_MINUTES",
+    "QOther",
+]
+
+
+def classify_test_schema():
+    return classify_questions(
+        CLASSIFIER_DATA_MAP,
+        RAW_COLUMNS,
+        respondent_id_column="record",
+        total_respondents=20,
+        source_rawdata_path="raw.csv",
+    )
+
+
+class TestQuestionClassifier(unittest.TestCase):
+    def test_single_select_classification(self) -> None:
+        schema = classify_test_schema()
+        question = schema.get_question("Q3")
+
+        self.assertIsNotNone(question)
+        self.assertIs(question.question_type, QuestionType.SINGLE_SELECT)
+        self.assertEqual(question.raw_columns, ("Q3",))
+        self.assertEqual(question.option_map, {1: "Yes", 2: "No"})
+
+    def test_multi_select_binary_classification(self) -> None:
+        schema = classify_test_schema()
+        question = schema.get_question("Q53")
+
+        self.assertIsNotNone(question)
+        self.assertIs(question.question_type, QuestionType.MULTI_SELECT_BINARY)
+        self.assertEqual(question.raw_columns, ("Q53r1", "Q53r2"))
+        self.assertEqual(
+            question.option_map,
+            {"Q53r1": "Knowledge gap", "Q53r2": "Alignment gap"},
+        )
+
+    def test_numeric_allocation_classification(self) -> None:
+        schema = classify_test_schema()
+        question = schema.get_question("Q33")
+
+        self.assertIsNotNone(question)
+        self.assertIs(question.question_type, QuestionType.NUMERIC_ALLOCATION)
+        self.assertEqual(question.raw_columns, ("Q33r1", "Q33r2"))
+
+    def test_grid_single_select_classification(self) -> None:
+        schema = classify_test_schema()
+        question = schema.get_question("Q15")
+
+        self.assertIsNotNone(question)
+        self.assertIs(question.question_type, QuestionType.GRID_SINGLE_SELECT)
+        self.assertEqual(
+            question.option_map,
+            {
+                1: "Directly involved in decision making AND budget",
+                2: "Directly involved in decision making OR budget",
+                3: "Indirectly involved",
+                4: "Not involved",
+            },
+        )
+
+    def test_open_text_classification(self) -> None:
+        schema = classify_test_schema()
+        question = schema.get_question("Q4r98oe")
+
+        self.assertIsNotNone(question)
+        self.assertIs(question.question_type, QuestionType.OPEN_TEXT)
+        self.assertEqual(question.parent_question_id, "Q4")
+
+    def test_metadata_columns_classified_correctly(self) -> None:
+        schema = classify_test_schema()
+        record = schema.get_question("record")
+        timing = schema.get_question("vQTIME_MINUTES")
+
+        self.assertIsNotNone(record)
+        self.assertIsNotNone(timing)
+        self.assertIs(record.question_type, QuestionType.METADATA_OR_ID)
+        self.assertIs(timing.question_type, QuestionType.METADATA_OR_ID)
+
+    def test_unknown_when_type_hint_is_none(self) -> None:
+        schema = classify_test_schema()
+        question = schema.get_question("QUnknown")
+
+        self.assertIsNotNone(question)
+        self.assertIs(question.question_type, QuestionType.UNKNOWN)
+
+    def test_raw_column_not_found_sets_ineligible(self) -> None:
+        schema = classify_test_schema()
+        question = schema.get_question("QMissingRaw")
+
+        self.assertIsNotNone(question)
+        self.assertFalse(question.analysis_eligible)
+        self.assertEqual(question.exclusion_reason, "raw column not found in data")
+
+    def test_grid_row_labels_match_raw_columns(self) -> None:
+        schema = classify_test_schema()
+        question = schema.get_question("Q15")
+
+        self.assertIsNotNone(question)
+        self.assertEqual(question.raw_columns, ("Q15r1", "Q15r2"))
+        self.assertEqual(
+            question.grid_row_labels,
+            {
+                "Q15r1": "Overall company strategy",
+                "Q15r2": "Go-to-market strategy",
+            },
+        )
+
+    def test_option_other_code_detected(self) -> None:
+        schema = classify_test_schema()
+        question = schema.get_question("QOther")
+
+        self.assertIsNotNone(question)
+        self.assertEqual(question.option_other_code, 98)
+
+    def test_survey_schema_canonical_ids_unique(self) -> None:
+        schema = classify_test_schema()
+        canonical_ids = [question.canonical_id for question in schema.questions]
+
+        self.assertEqual(len(canonical_ids), len(set(canonical_ids)))
+        self.assertEqual(schema.respondent_id_column, "record")
+        self.assertEqual(schema.total_respondents, 20)
+
+
+if __name__ == "__main__":
+    unittest.main()
