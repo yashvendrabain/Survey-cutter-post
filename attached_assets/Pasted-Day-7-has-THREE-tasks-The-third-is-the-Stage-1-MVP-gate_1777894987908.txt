@@ -1,0 +1,198 @@
+Day 7 has THREE tasks. The third is the Stage 1 MVP gate.
+
+PATH: cd artifacts/survey-insight-engine
+
+TASK 1 — Save Codex's exporter and run unit tests.
+
+When Codex delivers, save the files and run:
+
+  cd artifacts/survey-insight-engine
+  python -m unittest tests.test_excel_exporter -v
+
+Plus full regression:
+  python -m unittest tests.test_calculation_log -v
+  python -m unittest tests.test_calc_primitives -v
+  python -m unittest tests.test_single_select -v
+  python -m unittest tests.test_multi_select -v
+  python -m unittest tests.test_numeric -v
+  python -m unittest tests.test_grid -v
+  python -m unittest tests.test_single_cut_engine -v
+
+Paste each output in full.
+
+TASK 2 — Run the FULL pipeline on the real file and 
+download the workbook.
+
+  cd artifacts/survey-insight-engine && python -c "
+  import time
+  from src.datamap_parser import parse_datamap
+  from src.raw_decoder import decode_raw_data
+  from src.question_classifier import classify_questions
+  from src.calculation_log import CalculationLog
+  from src.single_cut import compute_single_cuts
+  from src.excel_exporter import export_single_cuts
+  
+  dm = parse_datamap('sample_data/Datamap_sample.xlsx')
+  df, qr = decode_raw_data(
+      'sample_data/Rawdata_sample.xlsx', dm)
+  schema = classify_questions(
+      dm, df.columns.tolist(),
+      respondent_id_column='record',
+      total_respondents=len(df),
+      source_rawdata_path='sample_data/Rawdata_sample.xlsx'
+  )
+  log = CalculationLog()
+  
+  start = time.time()
+  results, skips = compute_single_cuts(schema, df, log)
+  print(f'Engine: {time.time() - start:.2f}s')
+  
+  start = time.time()
+  export_single_cuts(
+      results=results,
+      skips=skips,
+      schema=schema,
+      quality_report=qr,
+      log=log,
+      output_path='outputs/survey_analysis.xlsx',
+  )
+  print(f'Export: {time.time() - start:.2f}s')
+  
+  import os
+  size = os.path.getsize('outputs/survey_analysis.xlsx')
+  print(f'File size: {size / 1024:.1f} KB')
+  "
+  
+Paste the output. Confirm the file exists at 
+artifacts/survey-insight-engine/outputs/survey_analysis.xlsx 
+and tell me the file size.
+
+TASK 3 — Stage 1 MVP validation gate.
+
+Open survey_analysis.xlsx in any Excel viewer. Verify:
+
+A. Structure check — all expected sheets present:
+   Run_Summary, Question_Metadata, Single_Cut_Index, 
+   Skip_Log, at least 50 SC_ sheets, Calculation_Log, 
+   Filter_Log, Data_Quality, Warnings.
+   Paste the full list of sheet names.
+
+B. Run a Python check that confirms key invariants:
+
+  cd artifacts/survey-insight-engine && python -c "
+  from openpyxl import load_workbook
+  wb = load_workbook(
+      'outputs/survey_analysis.xlsx', read_only=True)
+  
+  print('=== SHEETS ===')
+  print(f'Total: {len(wb.sheetnames)}')
+  sc_sheets = [s for s in wb.sheetnames 
+               if s.startswith('SC_')]
+  print(f'SC_ sheets: {len(sc_sheets)}')
+  
+  print()
+  print('=== SINGLE_CUT_INDEX SAMPLE ===')
+  ws = wb['Single_Cut_Index']
+  for i, row in enumerate(ws.iter_rows(values_only=True)):
+      if i > 6: break
+      print(row)
+  
+  print()
+  print('=== CALCULATION_LOG SIZE ===')
+  ws = wb['Calculation_Log']
+  rows = list(ws.iter_rows(values_only=True))
+  print(f'Rows (incl header): {len(rows)}')
+  print(f'Header: {rows[0]}')
+  print(f'First data row: {rows[1]}')
+  
+  print()
+  print('=== A SC SHEET (first SC_ sheet) ===')
+  ws = wb[sc_sheets[0]]
+  for i, row in enumerate(ws.iter_rows(values_only=True)):
+      if i > 12: break
+      print(row)
+  "
+
+  Paste the full output.
+
+C. Manual reconciliation — pick 5 single-select questions, 
+   3 multi-select or grid sub-rows, and 2 numeric/allocation 
+   questions from the workbook. For each, compute the 
+   expected value by hand (or with a one-line pandas 
+   command on the raw DataFrame) and compare to the value 
+   in the SC sheet.
+
+  Run this verification script that does it programmatically:
+  
+  cd artifacts/survey-insight-engine && python -c "
+  import pandas as pd
+  from src.datamap_parser import parse_datamap
+  from src.raw_decoder import decode_raw_data
+  from src.question_classifier import classify_questions
+  from src.calculation_log import CalculationLog
+  from src.single_cut import compute_single_cuts
+  from src.models import QuestionType
+  
+  dm = parse_datamap('sample_data/Datamap_sample.xlsx')
+  df, qr = decode_raw_data(
+      'sample_data/Rawdata_sample.xlsx', dm)
+  schema = classify_questions(
+      dm, df.columns.tolist(),
+      respondent_id_column='record',
+      total_respondents=len(df),
+      source_rawdata_path='sample_data/Rawdata_sample.xlsx'
+  )
+  log = CalculationLog()
+  results, skips = compute_single_cuts(schema, df, log)
+  
+  print('=== SINGLE-SELECT RECONCILIATION ===')
+  ss_results = [r for r in results 
+                if r.question_type == QuestionType.SINGLE_SELECT
+                and r.valid_n > 0][:5]
+  
+  for r in ss_results:
+      col = r.question_id
+      # Compute expected from raw data directly
+      vc = df[col].value_counts(dropna=True)
+      total = int(df[col].notna().sum())
+      print(f'\n{col}:')
+      print(f'  expected valid_n: {total}')
+      print(f'  result valid_n:   {r.valid_n}')
+      print(f'  match: {total == r.valid_n}')
+      
+      for code, payload in list(r.distribution.items())[:3]:
+          expected_count = int(vc.get(code, 0))
+          expected_rate = expected_count / total
+          print(f'  code {code}: '
+                f'expected count={expected_count} '
+                f'rate={expected_rate:.10f}')
+          print(f'           '
+                f'actual   count={payload[\"count\"]} '
+                f'rate={payload[\"rate\"]:.10f}')
+          print(f'           '
+                f'match: '
+                f'{expected_count == payload[\"count\"]} '
+                f'rate equal: '
+                f'{abs(expected_rate - payload[\"rate\"]) < 1e-10}')
+  
+  print('\n=== NUMERIC RECONCILIATION ===')
+  num_results = [r for r in results 
+                 if r.question_type == QuestionType.DIRECT_NUMERIC
+                 and r.valid_n > 0][:2]
+  for r in num_results:
+      col = r.question_id
+      series = pd.to_numeric(df[col], errors='coerce')
+      print(f'\n{col}:')
+      print(f'  expected mean: {series.mean():.10f}')
+      print(f'  actual mean:   {r.mean:.10f}')
+      print(f'  match: '
+            f'{abs(series.mean() - r.mean) < 1e-10}')
+  "
+  
+  Paste the full output. Every "match" must be True. If 
+  any are False, paste it raw and we triage.
+
+CONSTRAINTS
+- Do not modify any file Codex writes.
+- Do not adjust expected values.
+- Run all three tasks sequentially.
