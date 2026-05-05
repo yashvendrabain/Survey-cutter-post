@@ -408,6 +408,36 @@ class SkipRecord:
         _require_non_empty_string(self.skip_reason, "skip_reason")
 
 
+@dataclass(frozen=True, slots=True)
+class CrossCutSpec:
+    """Describes a cross cut to be computed."""
+
+    cross_cut_id: str
+    title: str
+    analysis_type: AnalysisType
+    source_question_ids: tuple[str, ...]
+    filter_expr: str | None = None
+    filter_mask_description: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_non_empty_string(self.cross_cut_id, "cross_cut_id")
+        _require_non_empty_string(self.title, "title")
+        if not self.source_question_ids:
+            raise ValueError("source_question_ids must be non-empty")
+        if (
+            self.analysis_type is AnalysisType.CROSS_TAB
+            and len(self.source_question_ids) != 2
+        ):
+            raise ValueError("CROSS_TAB requires exactly 2 source questions")
+        if (
+            self.analysis_type is AnalysisType.EXPECTED_VS_REALIZED
+            and len(self.source_question_ids) != 2
+        ):
+            raise ValueError(
+                "EXPECTED_VS_REALIZED requires exactly 2 source questions"
+            )
+
+
 def _require_distribution_payload(
     payload: Any, rate_key: str, container_name: str
 ) -> None:

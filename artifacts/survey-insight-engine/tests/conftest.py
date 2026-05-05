@@ -14,6 +14,7 @@ RAW_DECODER_CSV_PATH = FIXTURE_DIR / "raw_decoder_fixture.csv"
 RAW_DECODER_XLSX_PATH = FIXTURE_DIR / "raw_decoder_fixture.xlsx"
 RAW_DECODER_NO_ID_CSV_PATH = FIXTURE_DIR / "raw_decoder_no_id_fixture.csv"
 GOLDEN_30_RESPONDENTS_PATH = FIXTURE_DIR / "golden_30_respondents.csv"
+CROSS_CUT_30_RESPONDENTS_PATH = FIXTURE_DIR / "cross_cut_30_respondents.csv"
 
 
 def ensure_fixtures() -> None:
@@ -22,6 +23,7 @@ def ensure_fixtures() -> None:
     _build_missing_sheet_workbook(MISSING_SHEET_FIXTURE_PATH)
     _build_raw_decoder_fixtures()
     _build_golden_30_respondents_fixture()
+    _build_cross_cut_30_respondents_fixture()
 
 
 def _build_minimal_datamap(path: Path) -> None:
@@ -273,6 +275,52 @@ def _build_golden_30_respondents_fixture() -> None:
         )
 
     _write_csv(GOLDEN_30_RESPONDENTS_PATH, headers, rows)
+
+
+def _build_cross_cut_30_respondents_fixture() -> None:
+    headers = [
+        "respondent_id",
+        "Q_SEG_1",
+        "Q_TGT_1",
+        "Q_NUM_3",
+        "Q_EXP_1",
+        "Q_REAL_1",
+    ]
+    q_seg_1 = [1] * 10 + [2] * 10 + [3] * 10
+    q_tgt_1 = (
+        [1, 1, 1, 1, 1, 2, 2, 2, 2, 2]
+        + [1, 2, 3, 4, 1, 2, 3, 4, 1, 2]
+        + [3, 3, 3, 3, 3, 4, 4, 4, 4, 4]
+    )
+    q_num_3 = (
+        [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+        + [5, 15, 25, 35, 45, 55, 65, 75, 85, 95]
+        + [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    )
+
+    expected_base = [10 + (5 * index) for index in range(20)]
+    realized_base = [value - 5 for value in expected_base]
+    q_exp_1: list[int | str] = expected_base + [""] * 10
+    q_real_1: list[int | str] = realized_base + [""] * 10
+    for index in [0, 1, 2, 3, 4]:
+        q_exp_1[index] = ""
+    for index in [3, 4, 5, 6, 7]:
+        q_real_1[index] = ""
+
+    rows = []
+    for index in range(30):
+        rows.append(
+            [
+                f"C{index + 1:03d}",
+                str(q_seg_1[index]),
+                str(q_tgt_1[index]),
+                str(q_num_3[index]),
+                str(q_exp_1[index]),
+                str(q_real_1[index]),
+            ]
+        )
+
+    _write_csv(CROSS_CUT_30_RESPONDENTS_PATH, headers, rows)
 
 
 ensure_fixtures()
