@@ -185,8 +185,8 @@ def _run_cross_cut_specs(specs: list[Any]) -> None:
 
 def _render_header() -> None:
     app = _require_streamlit()
-    app.set_page_config(page_title=APP_NAME, layout="wide")
-    app.title(f"{APP_NAME} {VERSION}")
+    app.set_page_config(page_title="Survey Insight engine", layout="wide")
+    app.title("Survey Insight engine")
     app.caption(
         "Upload raw survey data and a data map to produce audited "
         "single-cut and cross-cut analysis in Excel."
