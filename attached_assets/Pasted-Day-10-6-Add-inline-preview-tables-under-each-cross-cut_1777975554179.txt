@@ -1,0 +1,290 @@
+Day 10.6. Add inline preview tables under each cross cut 
+result. Counts only — no percentages. UI-only change.
+
+PATH: cd artifacts/survey-insight-engine
+
+CONTEXT
+
+After the user clicks "Run cross cut" (manual builder) or 
+"Run this" (suggestion), a cross cut result gets added to 
+st.session_state['cross_cut_results']. Currently the result 
+shows just a title and metadata. Add a counts-only preview 
+table directly below.
+
+The preview is a quick "is this useful?" view. Decisions:
+
+  - COUNTS ONLY. No percentages anywhere in the preview, 
+    regardless of the spec's display_mode. Preview is for 
+    quick scanning.
+  - The full display (with percentages per the chosen 
+    display_mode) is in the downloaded workbook. The 
+    preview is intentionally minimal.
+  - Each preview is collapsible (st.expander defaulted to 
+    open) so the user can hide it if scrolling becomes 
+    cumbersome.
+
+CHANGES TO app.py
+
+1. In the cross cut results display section, for each 
+   result in st.session_state['cross_cut_results'], render a 
+   preview block below the existing card metadata.
+
+2. The preview block depends on result.analysis_type. 
+   Implement four small renderers:
+
+     def _preview_cross_tab(result):
+         ct = result.result_table
+         a, b = result.source_question_ids
+         counts = ct['counts']  
+           # nested dict {row_code: {col_code: count}}
+         row_label_map = ct['row_label_map']
+         col_label_map = ct['column_label_map']
+         
+         # Build a DataFrame: rows = row codes, 
+         # columns = col codes
+         import pandas as pd
+         row_codes = sorted(counts.keys())
+         col_codes = sorted({
+             c for row in counts.values() for c in row.keys()})
+         df = pd.DataFrame(
+             index=[row_label_map.get(rc, str(rc)) 
+                    for rc in row_codes],
+             columns=[col_label_map.get(cc, str(cc)) 
+                      for cc in col_codes],
+             data=[
+                 [counts.get(rc, {}).get(cc, 0) 
+                  for cc in col_codes]
+                 for rc in row_codes
+             ],
+         )
+         df.index.name = f"↓ {a}"
+         df.columns.name = f"→ {b}"
+         st.caption(f"Rows: {a}   Columns: {b}")
+         st.dataframe(df, use_container_width=True)
+         st.caption(
+             f"Grand total: {ct['grand_total']:,} responses")
+
+     def _preview_segment_profile(result):
+         rt = result.result_table
+         st.caption(
+             f"Filter: {rt.get('filter_expr', 
+                                '<no filter>')}  ·  "
+             f"Filter N: {rt.get('filter_n', 0):,}")
+         
+         tr = rt.get('target_result', {})
+         # The target result was a dict-serialised single cut 
+         # of one of: SingleSelect, MultiSelect, Numeric, Grid. 
+         # Detect by keys.
+         if 'distribution' in tr:
+             # SingleSelect target
+             rows = []
+             for code, payload in sorted(
+                     tr['distribution'].items(), 
+                     key=lambda x: str(x[0])):
+                 rows.append({
+                     'Code': code,
+                     'Label': payload.get('label', ''),
+                     'Count': payload.get('count', 0),
+                 })
+             import pandas as pd
+             df = pd.DataFrame(rows)
+             st.dataframe(df, use_container_width=True, 
+                          hide_index=True)
+         elif 'selections' in tr:
+             # MultiSelect target
+             rows = []
+             for sub_id, payload in tr['selections'].items():
+                 rows.append({
+                     'Sub-column': sub_id,
+                     'Label': payload.get('label', ''),
+                     'Count': payload.get('count', 0),
+                 })
+             # Sort by count desc
+             rows.sort(key=lambda r: r['Count'], reverse=True)
+             import pandas as pd
+             df = pd.DataFrame(rows)
+             st.dataframe(df, use_container_width=True, 
+                          hide_index=True)
+         elif 'mean' in tr:
+             # Numeric target — for COUNTS-ONLY preview, just 
+             # show valid_n and missing_n
+             import pandas as pd
+             df = pd.DataFrame([
+                 {'Statistic': 'Valid N', 
+                  'Count': tr.get('valid_n', 0)},
+                 {'Statistic': 'Missing N', 
+                  'Count': tr.get('missing_n', 0)},
+             ])
+             st.dataframe(df, use_container_width=True, 
+                          hide_index=True)
+             st.caption(
+                 "Numeric statistics (mean, median, std) "
+                 "in the downloaded workbook.")
+         elif 'rows' in tr:
+             # Grid target
+             st.caption(
+                 f"Grid with {len(tr['rows'])} rows. "
+                 f"Per-row counts:")
+             import pandas as pd
+             grid_rows = []
+             for sub_id, row_result in tr['rows'].items():
+                 dist = row_result.get('distribution', {})
+                 row_dict = {'Row': sub_id}
+                 for code, payload in dist.items():
+                     row_dict[
+                         f"{code}: {payload.get('label', '')}"
+                     ] = payload.get('count', 0)
+                 grid_rows.append(row_dict)
+             df = pd.DataFrame(grid_rows)
+             st.dataframe(df, use_container_width=True, 
+                          hide_index=True)
+         else:
+             st.info(
+                 "Preview not available for this target type.")
+
+     def _preview_group_comparison(result):
+         rt = result.result_table
+         seg_q = rt['segment_question_id']
+         met_q = rt['metric_question_id']
+         st.caption(
+             f"Metric: {met_q}   Segments: {seg_q}")
+         
+         rows = []
+         for seg_val, seg_data in rt['per_segment'].items():
+             rows.append({
+                 'Segment': seg_data.get(
+                     'label', str(seg_val)),
+                 'N': seg_data.get('n', 0),
+             })
+         # Add overall row
+         rows.append({
+             'Segment': 'Overall',
+             'N': rt['overall'].get('valid_n', 
+                                    rt['overall'].get('n', 0)),
+         })
+         import pandas as pd
+         df = pd.DataFrame(rows)
+         st.dataframe(df, use_container_width=True, 
+                      hide_index=True)
+         st.caption(
+             "Group means in the downloaded workbook.")
+
+     def _preview_expected_vs_realized(result):
+         rt = result.result_table
+         exp_q = rt['expected_question_id']
+         real_q = rt['realized_question_id']
+         st.caption(
+             f"Expected: {exp_q}   Realized: {real_q}")
+         
+         import pandas as pd
+         df = pd.DataFrame([
+             {'Metric': 'Paired N', 'Count': rt['paired_n']},
+             {'Metric': 'Expected valid N', 
+              'Count': rt['expected'].get('valid_n', 0)},
+             {'Metric': 'Realized valid N', 
+              'Count': rt['realized'].get('valid_n', 0)},
+         ])
+         st.dataframe(df, use_container_width=True, 
+                      hide_index=True)
+         st.caption(
+             "Mean expected, mean realized, gap statistics "
+             "in the downloaded workbook.")
+
+3. Wire the dispatch right after the cross cut card 
+   metadata. The structure of each result block becomes:
+
+     # Existing card metadata
+     col_check, col_title = st.columns([1, 11])
+     with col_check:
+         selected = st.checkbox(
+             "Include in cross-cut workbook",
+             value=True,
+             key=f"cc_select_{result.cross_cut_id}",
+             label_visibility="collapsed",
+         )
+     with col_title:
+         st.markdown(f"**{result.synthetic_question_title}**")
+         st.caption(
+             f"Type: {result.analysis_type.value}  ·  "
+             f"Display: {result.display_mode}  ·  "
+             f"{len(result.audit_records)} audit records")
+
+     # NEW: counts-only preview, collapsible, defaulted open
+     with st.expander(
+         "Preview (counts only)", expanded=True):
+         try:
+             at = result.analysis_type
+             from src.models import AnalysisType
+             if at == AnalysisType.CROSS_TAB:
+                 _preview_cross_tab(result)
+             elif at == AnalysisType.SEGMENT_PROFILE:
+                 _preview_segment_profile(result)
+             elif at == AnalysisType.GROUP_COMPARISON:
+                 _preview_group_comparison(result)
+             elif at == AnalysisType.EXPECTED_VS_REALIZED:
+                 _preview_expected_vs_realized(result)
+             else:
+                 st.info(
+                     "Preview not implemented for "
+                     f"{at.value}.")
+         except Exception as e:
+             st.error(
+                 f"Could not render preview: {type(e).__name__}: "
+                 f"{e}")
+
+     # Existing warnings if any
+     if result.warnings:
+         with st.expander("Warnings"):
+             for w in result.warnings:
+                 st.write(f"• {w}")
+
+     st.divider()
+
+4. Robustness:
+   - Every preview helper wraps DataFrame construction 
+     defensively. If a result_table key is missing, fall 
+     back to st.info and don't crash.
+   - The preview must NEVER raise an uncaught exception — 
+     wrap the whole dispatch in try/except as shown.
+
+VERIFY
+
+  python -c "import app"  # must import cleanly
+
+Restart workflow.
+
+In the preview pane:
+
+  1. Upload sample files
+  2. Run analysis
+  3. Run a CROSS_TAB cross cut from suggestions — confirm 
+     a counts-only table appears below the card with row 
+     and column headers showing question canonical IDs and 
+     question labels in the cells
+  4. Run a SEGMENT_PROFILE manually — confirm filter info 
+     in the caption and a counts table appropriate to the 
+     target type
+  5. Run a GROUP_COMPARISON — confirm a small Segment | N 
+     table with an Overall row
+  6. Run an EXPECTED_VS_REALIZED — confirm a 3-row table 
+     showing paired N + per-question valid N
+  7. Confirm none of the previews show percentages 
+     anywhere
+  8. Confirm the existing checkbox + Generate cross-cut 
+     workbook flow still works
+  9. Confirm the existing single-cut workbook download 
+     still works
+
+Paste a description of what worked, what didn't, and any 
+console errors.
+
+CONSTRAINTS
+  - Do not modify any module in src/.
+  - Do not change result data structures or write any 
+    calculation logic.
+  - The preview is read-only against result.result_table.
+  - No percentages anywhere in the preview, period.
+
+COMMIT MESSAGE
+"Day 10.6: inline counts-only preview under each cross cut 
+ result"

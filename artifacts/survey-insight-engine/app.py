@@ -390,6 +390,157 @@ def _render_manual_cross_cut() -> None:
         app.error(f"{type(exc).__name__}: {exc}")
 
 
+def _preview_cross_tab(result: Any) -> None:
+    import pandas as pd
+    st = _require_streamlit()
+    ct = result.result_table
+    a, b = result.source_question_ids
+    counts = ct.get("counts", {})
+    row_label_map = ct.get("row_label_map", {})
+    col_label_map = ct.get("column_label_map", {})
+    row_codes = sorted(counts.keys(), key=lambda v: str(v))
+    col_codes = sorted(
+        {c for row in counts.values() if isinstance(row, dict) for c in row.keys()},
+        key=lambda v: str(v),
+    )
+    df = pd.DataFrame(
+        index=[row_label_map.get(rc, str(rc)) for rc in row_codes],
+        columns=[col_label_map.get(cc, str(cc)) for cc in col_codes],
+        data=[
+            [counts.get(rc, {}).get(cc, 0) for cc in col_codes]
+            for rc in row_codes
+        ],
+    )
+    df.index.name = f"\u2193 {a}"
+    df.columns.name = f"\u2192 {b}"
+    st.caption(f"Rows: {a}   Columns: {b}")
+    st.dataframe(df, use_container_width=True)
+    st.caption(f"Grand total: {ct.get('grand_total', 0):,} responses")
+
+
+def _preview_segment_profile(result: Any) -> None:
+    import pandas as pd
+    st = _require_streamlit()
+    rt = result.result_table
+    st.caption(
+        f"Filter: {rt.get('filter_expr', '<no filter>')}  \u00b7  "
+        f"Filter N: {rt.get('filter_n', 0):,}"
+    )
+    tr = rt.get("target_result", {}) or {}
+    if "distribution" in tr:
+        rows = [
+            {
+                "Code": code,
+                "Label": payload.get("label", ""),
+                "Count": payload.get("count", 0),
+            }
+            for code, payload in sorted(
+                tr["distribution"].items(), key=lambda x: str(x[0])
+            )
+        ]
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    elif "selections" in tr:
+        rows = [
+            {
+                "Sub-column": sub_id,
+                "Label": payload.get("label", ""),
+                "Count": payload.get("count", 0),
+            }
+            for sub_id, payload in tr["selections"].items()
+        ]
+        rows.sort(key=lambda r: r["Count"], reverse=True)
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    elif "mean" in tr:
+        df = pd.DataFrame(
+            [
+                {"Statistic": "Valid N", "Count": tr.get("valid_n", 0)},
+                {"Statistic": "Missing N", "Count": tr.get("missing_n", 0)},
+            ]
+        )
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.caption(
+            "Numeric statistics (mean, median, std) in the downloaded workbook."
+        )
+    elif "rows" in tr:
+        st.caption(f"Grid with {len(tr['rows'])} rows. Per-row counts:")
+        grid_rows = []
+        for sub_id, row_result in tr["rows"].items():
+            dist = row_result.get("distribution", {}) if isinstance(row_result, dict) else {}
+            row_dict: dict[str, Any] = {"Row": sub_id}
+            for code, payload in dist.items():
+                row_dict[f"{code}: {payload.get('label', '')}"] = payload.get("count", 0)
+            grid_rows.append(row_dict)
+        st.dataframe(pd.DataFrame(grid_rows), use_container_width=True, hide_index=True)
+    else:
+        st.info("Preview not available for this target type.")
+
+
+def _preview_group_comparison(result: Any) -> None:
+    import pandas as pd
+    st = _require_streamlit()
+    rt = result.result_table
+    seg_q = rt.get("segment_question_id", "")
+    met_q = rt.get("metric_question_id", "")
+    st.caption(f"Metric: {met_q}   Segments: {seg_q}")
+    rows = []
+    for seg_val, seg_data in (rt.get("per_segment", {}) or {}).items():
+        rows.append(
+            {
+                "Segment": seg_data.get("label", str(seg_val)) if isinstance(seg_data, dict) else str(seg_val),
+                "N": seg_data.get("n", 0) if isinstance(seg_data, dict) else 0,
+            }
+        )
+    overall = rt.get("overall", {}) or {}
+    rows.append(
+        {
+            "Segment": "Overall",
+            "N": overall.get("valid_n", overall.get("n", 0)),
+        }
+    )
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.caption("Group means in the downloaded workbook.")
+
+
+def _preview_expected_vs_realized(result: Any) -> None:
+    import pandas as pd
+    st = _require_streamlit()
+    rt = result.result_table
+    exp_q = rt.get("expected_question_id", "")
+    real_q = rt.get("realized_question_id", "")
+    st.caption(f"Expected: {exp_q}   Realized: {real_q}")
+    df = pd.DataFrame(
+        [
+            {"Metric": "Paired N", "Count": rt.get("paired_n", 0)},
+            {"Metric": "Expected valid N", "Count": (rt.get("expected", {}) or {}).get("valid_n", 0)},
+            {"Metric": "Realized valid N", "Count": (rt.get("realized", {}) or {}).get("valid_n", 0)},
+        ]
+    )
+    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.caption(
+        "Mean expected, mean realized, gap statistics in the downloaded workbook."
+    )
+
+
+def _render_cross_cut_preview(result: Any) -> None:
+    app = _require_streamlit()
+    from src.models import AnalysisType
+    with app.expander("Preview (counts only)", expanded=True):
+        try:
+            at = result.analysis_type
+            if at == AnalysisType.CROSS_TAB:
+                _preview_cross_tab(result)
+            elif at == AnalysisType.SEGMENT_PROFILE:
+                _preview_segment_profile(result)
+            elif at == AnalysisType.GROUP_COMPARISON:
+                _preview_group_comparison(result)
+            elif at == AnalysisType.EXPECTED_VS_REALIZED:
+                _preview_expected_vs_realized(result)
+            else:
+                app.info(f"Preview not implemented for {at.value}.")
+        except Exception as exc:  # noqa: BLE001
+            app.error(f"Could not render preview: {type(exc).__name__}: {exc}")
+
+
 def _render_cross_cut_results() -> None:
     app = _require_streamlit()
     results = app.session_state["cross_cut_results"]
@@ -409,16 +560,33 @@ def _render_cross_cut_results() -> None:
     app.write("Cross-cut results")
     for result in results:
         with app.container():
-            app.markdown(f"**{result.cross_cut_id}** — {result.synthetic_question_title}")
-            app.caption(
-                f"{result.analysis_type.value} | "
-                f"{', '.join(result.source_question_ids)}"
-            )
-            app.checkbox(
-                "Include in download",
-                value=True,
-                key=f"cc_select_{result.cross_cut_id}",
-            )
+            col_check, col_title = app.columns([1, 11])
+            with col_check:
+                app.checkbox(
+                    "Include in cross-cut workbook",
+                    value=True,
+                    key=f"cc_select_{result.cross_cut_id}",
+                    label_visibility="collapsed",
+                )
+            with col_title:
+                app.markdown(
+                    f"**{result.cross_cut_id}** — {result.synthetic_question_title}"
+                )
+                app.caption(
+                    f"Type: {result.analysis_type.value}  \u00b7  "
+                    f"Display: {result.display_mode}  \u00b7  "
+                    f"{len(result.audit_records)} audit records  \u00b7  "
+                    f"{', '.join(result.source_question_ids)}"
+                )
+
+            _render_cross_cut_preview(result)
+
+            if result.warnings:
+                with app.expander("Warnings"):
+                    for warning in result.warnings:
+                        app.write(f"\u2022 {warning}")
+
+            app.divider()
 
     selected_results = [
         result
