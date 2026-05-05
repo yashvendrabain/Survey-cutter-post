@@ -1,0 +1,340 @@
+Day 10.5. Stage 2 polish. Codex has delivered four changes:
+  1. Question text in suggestion labels (not canonical IDs)
+  2. New export_cross_cuts_only function for selected-only 
+     workbook download
+  3. Axis labels on every CC sheet (which question is rows, 
+     which is columns)
+  4. Display mode toggle on CrossCutSpec (counts / row% / 
+     col% / both / all)
+
+PATH: cd artifacts/survey-insight-engine
+
+There are FOUR tasks. Run them in order. Stop and paste 
+output if any fail.
+
+
+TASK 1 — Save Codex's files
+
+Save these files (Codex pastes them, you save them 
+verbatim, no edits):
+  - src/cross_cut_suggestions.py        (updated)
+  - src/cross_cut_engine.py             (updated for display_mode 
+                                         field on result)
+  - src/excel_exporter.py               (updated; new 
+                                         export_cross_cuts_only 
+                                         function added)
+  - src/models.py                       (updated; CrossCutSpec 
+                                         and CrossCutResult get 
+                                         display_mode field)
+  - tests/test_cross_cut_suggestions.py (updated)
+  - tests/test_cross_cut_engine.py      (updated)
+  - tests/test_excel_exporter.py        (updated)
+
+If any file is split into chunks ("part 1/N", "part 2/N"), 
+concatenate before saving.
+
+After saving, verify line counts and imports:
+  cd artifacts/survey-insight-engine
+  wc -l src/cross_cut_suggestions.py src/cross_cut_engine.py \
+        src/excel_exporter.py src/models.py
+  python -c "
+  from src.cross_cut_suggestions import suggest_cross_cuts
+  from src.cross_cut_engine import compute_cross_cuts
+  from src.excel_exporter import (
+      export_single_cuts, export_cross_cuts_only)
+  from src.models import CrossCutSpec, CrossCutResult
+  spec = CrossCutSpec(
+      cross_cut_id='X', title='t',
+      analysis_type=__import__('src.models', 
+          fromlist=['AnalysisType']).AnalysisType.CROSS_TAB,
+      source_question_ids=('a', 'b'),
+      display_mode='all')
+  print('imports OK; display_mode=', spec.display_mode)
+  "
+
+Paste outputs.
+
+
+TASK 2 — Run all tests
+
+Full suite — must all pass green:
+  python -m unittest tests.test_cross_cut_suggestions -v
+  python -m unittest tests.test_cross_cut_engine -v
+  python -m unittest tests.test_excel_exporter -v
+  python -m unittest tests.test_calc_primitives -v
+  python -m unittest tests.test_single_select -v
+  python -m unittest tests.test_multi_select -v
+  python -m unittest tests.test_numeric -v
+  python -m unittest tests.test_grid -v
+  python -m unittest tests.test_single_cut_engine -v
+
+Paste each output. Stop here if any fail.
+
+
+TASK 3 — Update app.py for the four changes
+
+Three UI changes are needed in app.py.
+
+CHANGE 3A — Manual builder gains a Display Mode dropdown
+
+The cross cut manual builder currently has 3 columns 
+(Q1, Q2, Analysis type). Add a 4th column:
+
+  col4: st.selectbox(
+      "Display mode",
+      options=[
+          ("Counts + Row % + Column %", "all"),
+          ("Counts + Row %",            "both"),
+          ("Counts only",               "counts"),
+          ("Row % only",                "row_pct"),
+          ("Column % only",             "col_pct"),
+      ],
+      format_func=lambda x: x[0],
+      index=0,
+      key="manual_display_mode",
+      help=("Display mode applies to CROSS_TAB and "
+            "SEGMENT_PROFILE only; ignored for GROUP_COMPARISON "
+            "and EXPECTED_VS_REALIZED."),
+  )
+
+When the analysis type selected is GROUP_COMPARISON or 
+EXPECTED_VS_REALIZED, the dropdown should still render but 
+its value is ignored — pass display_mode="all" to the spec 
+in those cases. Show a small inline caption like 
+"Display mode N/A for this analysis type" when applicable.
+
+When building the CrossCutSpec on Run click, pass:
+  display_mode=selected_mode_value
+
+If the user has chosen e.g. ("Counts only", "counts") via 
+format_func, selected_mode_value is the second element of 
+the tuple.
+
+CHANGE 3B — Suggestion rows gain a per-suggestion display 
+mode dropdown
+
+Each suggestion row currently has a "Run this" button. Add a 
+small selectbox before the button:
+
+  cols = st.columns([4, 2, 1])
+  with cols[0]: st.write(f"**{spec.title}**")
+  with cols[0]: st.caption(reason)
+  with cols[1]: 
+      sugg_mode = st.selectbox(
+          "Display",
+          options=[
+              ("All",         "all"),
+              ("Counts + Row %", "both"),
+              ("Counts",      "counts"),
+              ("Row %",       "row_pct"),
+              ("Column %",    "col_pct"),
+          ],
+          format_func=lambda x: x[0],
+          key=f"sugg_mode_{spec.cross_cut_id}",
+          label_visibility="collapsed",
+      )
+  with cols[2]:
+      if st.button("Run this", 
+                    key=f"run_sugg_{spec.cross_cut_id}"):
+          # Rebuild the spec with the chosen display_mode
+          new_spec = CrossCutSpec(
+              cross_cut_id=spec.cross_cut_id,
+              title=spec.title,
+              analysis_type=spec.analysis_type,
+              source_question_ids=spec.source_question_ids,
+              filter_expr=spec.filter_expr,
+              filter_mask_description=spec.filter_mask_description,
+              display_mode=sugg_mode[1],
+          )
+          # ... existing run logic with new_spec
+
+Defaults to "All" so users get the full Day 10 behaviour 
+unless they explicitly downsize.
+
+CHANGE 3C — Selection checkboxes per cross cut + new 
+download button
+
+In the cross cut results display section, each cross cut 
+card gains a checkbox:
+  
+  selected = st.checkbox(
+      "Include in cross-cut workbook",
+      value=True,
+      key=f"cc_select_{result.cross_cut_id}",
+  )
+
+Default all newly added cross cuts to ticked.
+
+Show the display_mode of each result as a small badge near 
+the title:
+  st.caption(f"Display: {result.display_mode}")
+
+Below the results section, add a NEW "Download cross-cut 
+workbook" button that bundles only the ticked results:
+
+  selected_cc_results = [
+      r for r in st.session_state['cross_cut_results']
+      if st.session_state.get(
+          f"cc_select_{r.cross_cut_id}", True)
+  ]
+  
+  if st.button(
+      "Generate cross-cut workbook",
+      disabled=(len(selected_cc_results) == 0),
+      help=(
+          f"{len(selected_cc_results)} cross cuts selected"
+          if selected_cc_results else
+          "Tick at least one cross cut to enable"
+      ),
+  ):
+      from src.excel_exporter import export_cross_cuts_only
+      cc_path = '/tmp/cross_cut_analysis.xlsx'
+      try:
+          export_cross_cuts_only(
+              cross_cut_results=selected_cc_results,
+              schema=st.session_state['schema'],
+              log=st.session_state['log'],
+              output_path=cc_path,
+          )
+          with open(cc_path, 'rb') as f:
+              st.download_button(
+                  label="Download cross-cut workbook",
+                  data=f.read(),
+                  file_name="cross_cut_analysis.xlsx",
+                  mime=("application/vnd.openxmlformats-"
+                        "officedocument.spreadsheetml.sheet"),
+              )
+      except Exception as e:
+          st.error(f"Cross-cut export failed: {e}")
+          import traceback
+          with st.expander("Show full traceback"):
+              st.code(traceback.format_exc())
+
+CHANGE 3D — Keep the original single-cut workbook download 
+EXACTLY as it is
+
+The existing single-cut workbook button must continue to 
+work and continue to include cross cuts inline (as Day 10 
+established). Two downloads are now available side by side:
+
+  - "Download single-cut workbook" — full pipeline output 
+    with cross cuts inline (existing behaviour, unchanged)
+  - "Download cross-cut workbook" — selected cross cuts only, 
+    separate file (new)
+
+Make the labelling clear so users understand the difference. 
+A short caption near the buttons:
+  "Choose download: full workbook (single cuts + cross cuts 
+   inline) or cross cuts only (just the cross cuts you've 
+   ticked)."
+
+VERIFY app.py imports cleanly:
+  python -c "import app"
+
+Restart the Streamlit workflow.
+
+
+TASK 4 — Live UI verification
+
+In the Streamlit preview pane, confirm each of the following 
+works. For each item, paste a one-line yes/no with any 
+observed problem:
+
+  4.1  Upload sample_data/Datamap_sample.xlsx and 
+       sample_data/Rawdata_sample.xlsx
+  4.2  Click "Run analysis" — single cuts complete, summary 
+       tiles render, single-cut download button appears
+  4.3  Tick "Show suggested cross cuts" — suggestions list 
+       appears
+  4.4  Confirm suggestion titles use QUESTION TEXT (in 
+       quotes), not canonical IDs like "Q61"
+  4.5  Run a CROSS_TAB suggestion with display mode "Counts 
+       only" — result card shows counts only
+  4.6  Run the same CROSS_TAB suggestion (or another) with 
+       display mode "All" — result card shows counts + 
+       row% + col%
+  4.7  Use the manual builder to run a SEGMENT_PROFILE 
+       cross cut with display mode "Row % only"
+  4.8  Use the manual builder to run a GROUP_COMPARISON 
+       cross cut — display mode dropdown is N/A for this 
+       type but doesn't crash
+  4.9  Confirm each cross cut card has a checkbox 
+       "Include in cross-cut workbook", all default ticked
+  4.10 Untick one of the cross cut cards
+  4.11 Click "Generate cross-cut workbook" → 
+       "Download cross-cut workbook" button becomes available 
+       → click it → file downloads
+  4.12 Open the downloaded cross-cut workbook in Excel/openpyxl 
+       and verify:
+         a. The unticked cross cut is NOT present
+         b. Each CC sheet has axis labels at the top showing 
+            which question is rows / columns / filter / target
+         c. The display mode of each cross cut is honoured 
+            (only the requested blocks are shown)
+         d. Run_Summary lists "Workbook type: Cross cuts only"
+  4.13 Re-tick the previously unticked card, click 
+       Generate again → re-download → confirm the workbook 
+       now has all selected cross cuts
+  4.14 Click "Download single-cut workbook" (the original 
+       download) → confirm it still works and contains all 
+       three cross cuts inline (regardless of which were 
+       ticked for the cross-cut-only workbook)
+
+Use this Python snippet to inspect the cross-cut workbook 
+structure programmatically — paste output:
+
+  cd artifacts/survey-insight-engine && python -c "
+  from openpyxl import load_workbook
+  wb = load_workbook(
+      '/tmp/cross_cut_analysis.xlsx', read_only=True)
+  print('Sheets:', wb.sheetnames)
+  cc_sheets = [s for s in wb.sheetnames if s.startswith('CC_')]
+  print(f'CC sheets: {len(cc_sheets)}')
+  for s in cc_sheets:
+      ws = wb[s]
+      first_rows = list(ws.iter_rows(
+          values_only=True, max_row=10))
+      print(f'\n=== {s} (first 10 rows) ===')
+      for row in first_rows:
+          print('  ', row)
+  "
+
+The output should show:
+  - Each CC sheet has axis-label rows at the top 
+    (Rows/Columns/Filter/Target headers with question text)
+  - Body content reflects the display_mode chosen
+
+
+CONSTRAINTS
+
+  - Do NOT modify any module Codex authored.
+  - Do NOT break the existing single-cut workbook download.
+  - Checkbox state must persist across reruns 
+    (st.session_state keyed correctly).
+  - Display mode ignored types (GROUP_COMPARISON, 
+    EXPECTED_VS_REALIZED) must not crash when display_mode 
+    is set.
+  - On any uncaught exception in the new download flow, 
+    show st.error with traceback in an expander, but the 
+    app must keep running.
+
+
+COMMIT MESSAGES (separately if your environment supports it)
+  "Day 10.5: integrate question-text suggestions and 
+   display-mode UI"
+  "Day 10.5: add cross-cut-only workbook download with 
+   selection"
+
+
+WHEN YOU FINISH
+
+Reply with:
+  - import test result
+  - all 9 test suite outputs
+  - app.py import + workflow restart status
+  - 14 Live UI verification line items, each yes/no 
+    + observed issue if any
+  - openpyxl introspection output for the cross-cut workbook
+
+If anything is unclear, stop and ask before improvising. 
+Do not modify Codex's source files.
