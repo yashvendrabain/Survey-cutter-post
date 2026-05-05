@@ -1,0 +1,134 @@
+Day 8 standby. Codex is building the cross cut engine 
+today. Verification only.
+
+PATH: cd artifacts/survey-insight-engine
+
+When Codex delivers, I will paste the files. You will:
+
+1. Save each file. Note: src/models.py is being MODIFIED 
+   (one new CrossCutSpec dataclass added). Codex pastes 
+   only the addition with surrounding context — apply 
+   carefully without disturbing other classes.
+
+2. Run the new test suite plus full regression:
+     cd artifacts/survey-insight-engine
+     python -m unittest tests.test_cross_cut_engine -v
+     python -m unittest tests.test_calc_primitives -v
+     python -m unittest tests.test_single_select -v
+     python -m unittest tests.test_multi_select -v
+     python -m unittest tests.test_numeric -v
+     python -m unittest tests.test_grid -v
+     python -m unittest tests.test_single_cut_engine -v
+     python -m unittest tests.test_excel_exporter -v
+   Paste each output in full.
+
+3. Run a programmatic cross cut check on the real file. 
+   This builds 4 manual CrossCutSpecs (one per analysis 
+   type) and runs them:
+
+     cd artifacts/survey-insight-engine && python -c "
+     from src.datamap_parser import parse_datamap
+     from src.raw_decoder import decode_raw_data
+     from src.question_classifier import classify_questions
+     from src.calculation_log import CalculationLog
+     from src.cross_cut_engine import compute_cross_cuts
+     from src.models import CrossCutSpec, AnalysisType, QuestionType
+     
+     dm = parse_datamap('sample_data/Datamap_sample.xlsx')
+     df, qr = decode_raw_data(
+         'sample_data/Rawdata_sample.xlsx', dm)
+     schema = classify_questions(
+         dm, df.columns.tolist(),
+         respondent_id_column='record',
+         total_respondents=len(df),
+         source_rawdata_path='sample_data/Rawdata_sample.xlsx'
+     )
+     log = CalculationLog()
+     
+     # Find candidate questions for each analysis type
+     ss_questions = [
+         q.canonical_id for q in schema.questions
+         if q.question_type == QuestionType.SINGLE_SELECT
+         and q.analysis_eligible and q.option_map
+     ]
+     num_questions = [
+         q.canonical_id for q in schema.questions
+         if q.question_type == QuestionType.DIRECT_NUMERIC
+         and q.analysis_eligible
+     ]
+     
+     specs = []
+     
+     # CROSS_TAB: first two SS questions
+     if len(ss_questions) >= 2:
+         specs.append(CrossCutSpec(
+             cross_cut_id='CT_01',
+             title=f'{ss_questions[0]} x {ss_questions[1]}',
+             analysis_type=AnalysisType.CROSS_TAB,
+             source_question_ids=(ss_questions[0], ss_questions[1]),
+         ))
+     
+     # SEGMENT_PROFILE: first SS as filter, second as target
+     if len(ss_questions) >= 2:
+         filter_q = ss_questions[0]
+         filter_val = list(
+             schema.get_question(filter_q).option_map.keys())[0]
+         specs.append(CrossCutSpec(
+             cross_cut_id='SP_01',
+             title=f'Profile of {ss_questions[1]} '
+                   f'within {filter_q}',
+             analysis_type=AnalysisType.SEGMENT_PROFILE,
+             source_question_ids=(filter_q, ss_questions[1]),
+             filter_expr=f'{filter_q} == {filter_val}',
+         ))
+     
+     # GROUP_COMPARISON: first SS segment x first numeric metric
+     if ss_questions and num_questions:
+         specs.append(CrossCutSpec(
+             cross_cut_id='GC_01',
+             title=f'{num_questions[0]} by {ss_questions[0]}',
+             analysis_type=AnalysisType.GROUP_COMPARISON,
+             source_question_ids=(ss_questions[0], num_questions[0]),
+         ))
+     
+     # EXPECTED_VS_REALIZED: first two numeric questions
+     if len(num_questions) >= 2:
+         specs.append(CrossCutSpec(
+             cross_cut_id='EVR_01',
+             title=f'{num_questions[0]} vs {num_questions[1]}',
+             analysis_type=AnalysisType.EXPECTED_VS_REALIZED,
+             source_question_ids=(num_questions[0], num_questions[1]),
+         ))
+     
+     print(f'Built {len(specs)} cross cut specs')
+     results, skips = compute_cross_cuts(specs, schema, df, log)
+     print(f'Results: {len(results)}, Skips: {len(skips)}')
+     print(f'Audit log records: {len(log)}')
+     
+     for r in results:
+         print(f'\n=== {r.cross_cut_id}: '
+               f'{r.synthetic_question_title} ===')
+         print(f'  type: {r.analysis_type.value}')
+         print(f'  audits: {len(r.audit_records)}')
+         # Show top-level keys of result_table
+         if isinstance(r.result_table, dict):
+             for k in list(r.result_table.keys())[:5]:
+                 v = r.result_table[k]
+                 if isinstance(v, dict):
+                     print(f'  {k}: dict with '
+                           f'{len(v)} keys')
+                 elif isinstance(v, (int, float)):
+                     print(f'  {k}: {v}')
+                 else:
+                     print(f'  {k}: '
+                           f'{str(v)[:50]}')
+     
+     for s in skips:
+         print(f'\nSKIP {s.canonical_id}: '
+               f'{s.skip_reason} - {s.details}')
+     "
+
+   Paste the full output. We're looking for: 4 results 
+   produced, 0 skips, audit records populated, no exceptions.
+
+4. Do not modify any file Codex writes.
