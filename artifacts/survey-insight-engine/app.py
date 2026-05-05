@@ -133,7 +133,7 @@ def _run_pipeline(raw_data_path: str, datamap_path: str, status: Any) -> None:
 def _render_header() -> None:
     app = _require_streamlit()
     app.set_page_config(page_title=APP_NAME, layout="wide")
-    app.title(f"{APP_NAME} {VERSION}")
+    app.title(APP_NAME)
     app.caption(
         "Upload raw survey data and a data map to produce audited "
         "single-cut analysis in Excel."
