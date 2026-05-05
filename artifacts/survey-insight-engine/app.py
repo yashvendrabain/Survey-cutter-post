@@ -597,21 +597,28 @@ def _render_suggestions(eligible: tuple[Any, ...]) -> None:
         return
 
     for idx, suggestion in enumerate(suggestions):
+        # suggest_cross_cuts() returns list[tuple[CrossCutSpec, str]]
+        if isinstance(suggestion, tuple) and len(suggestion) >= 2:
+            spec, reason = suggestion[0], suggestion[1]
+        else:
+            spec = getattr(suggestion, "spec", suggestion)
+            reason = getattr(suggestion, "reason", "") or getattr(
+                suggestion, "rationale", ""
+            )
+        title = getattr(spec, "title", None) or getattr(
+            spec, "cross_cut_id", f"Suggestion {idx + 1}"
+        )
+        atype = getattr(spec, "analysis_type", None)
+        atype_name = atype.name if atype is not None else "?"
+
         with app.container(border=True):
             cols = app.columns([4, 1])
             with cols[0]:
-                title = getattr(suggestion, "title", None) or getattr(
-                    suggestion, "cross_cut_id", f"Suggestion {idx + 1}"
-                )
-                reason = getattr(suggestion, "reason", "") or getattr(
-                    suggestion, "rationale", ""
-                )
-                app.markdown(f"**{title}**")
+                app.markdown(f"**{title}**  &nbsp; `{atype_name}`")
                 if reason:
                     app.caption(reason)
             with cols[1]:
                 if app.button("Run this", key=f"sugg_run_{idx}"):
-                    spec = getattr(suggestion, "spec", suggestion)
                     result, error = _run_one_cross_cut(spec)
                     if error:
                         app.error(error)
