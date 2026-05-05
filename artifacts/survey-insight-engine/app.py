@@ -35,6 +35,7 @@ SESSION_DEFAULTS = {
     "output_path": None,
     "run_complete": False,
     "cross_cut_results": [],
+    "cross_cut_skips": [],
     "dataframe": None,
 }
 
@@ -110,6 +111,12 @@ def _run_pipeline(raw_data_path: str, datamap_path: str, status: Any) -> None:
     log = CalculationLog()
     results, skips = compute_single_cuts(schema, dataframe, log)
 
+    # Clear any prior session cross-cut state BEFORE export so a new pipeline
+    # run never carries stale cross-cut artifacts from a previous dataset.
+    app = _require_streamlit()
+    app.session_state["cross_cut_results"] = []
+    app.session_state["cross_cut_skips"] = []
+
     status.update(label="Exporting workbook...", state="running")
     output_path = "/tmp/survey_analysis.xlsx"
     export_single_cuts(
@@ -119,9 +126,10 @@ def _run_pipeline(raw_data_path: str, datamap_path: str, status: Any) -> None:
         quality_report=quality_report,
         log=log,
         output_path=output_path,
+        cross_cut_results=[],
+        cross_cut_skips=[],
     )
 
-    app = _require_streamlit()
     app.session_state["results"] = results
     app.session_state["skips"] = skips
     app.session_state["schema"] = schema
@@ -130,8 +138,32 @@ def _run_pipeline(raw_data_path: str, datamap_path: str, status: Any) -> None:
     app.session_state["log"] = log
     app.session_state["output_path"] = output_path
     app.session_state["run_complete"] = True
-    app.session_state["cross_cut_results"] = []
     status.update(label="Analysis complete.", state="complete")
+
+
+def _reexport_workbook() -> None:
+    """Re-write the Excel workbook with the current single + cross-cut state."""
+    from src.excel_exporter import export_single_cuts
+
+    app = _require_streamlit()
+    if not app.session_state.get("run_complete"):
+        return
+    output_path = app.session_state.get("output_path")
+    if not output_path:
+        return
+    try:
+        export_single_cuts(
+            results=app.session_state["results"],
+            skips=app.session_state["skips"],
+            schema=app.session_state["schema"],
+            quality_report=app.session_state["quality_report"],
+            log=app.session_state["log"],
+            output_path=output_path,
+            cross_cut_results=app.session_state.get("cross_cut_results", []),
+            cross_cut_skips=app.session_state.get("cross_cut_skips", []),
+        )
+    except Exception as exc:  # noqa: BLE001
+        app.warning(f"Could not refresh workbook: {type(exc).__name__}: {exc}")
 
 
 def _render_header() -> None:
@@ -395,7 +427,10 @@ def _run_one_cross_cut(spec: Any) -> tuple[Any | None, str | None]:
         results, skips = compute_cross_cuts([spec], schema, dataframe, log)
     except Exception as exc:  # noqa: BLE001
         return None, f"{type(exc).__name__}: {exc}"
+    # Capture any skips into session state so the exporter records them.
     if skips:
+        app.session_state.setdefault("cross_cut_skips", []).extend(skips)
+        _reexport_workbook()
         s = skips[0]
         return None, f"{s.skip_reason}: {s.details or ''}".strip(": ")
     if not results:
@@ -561,6 +596,7 @@ def _render_manual_builder(eligible: tuple[Any, ...]) -> None:
                 app.error(error)
             elif result is not None:
                 app.session_state["cross_cut_results"].append(result)
+                _reexport_workbook()
                 app.rerun()
         except Exception as exc:  # noqa: BLE001
             app.error(f"{type(exc).__name__}: {exc}")
@@ -624,6 +660,7 @@ def _render_suggestions(eligible: tuple[Any, ...]) -> None:
                         app.error(error)
                     elif result is not None:
                         app.session_state["cross_cut_results"].append(result)
+                        _reexport_workbook()
                         app.rerun()
 
 
@@ -650,6 +687,7 @@ def _render_cross_cut_results() -> None:
                 app.json(result.result_table)
             if app.button("Remove", key=f"cc_remove_{result.cross_cut_id}_{idx}"):
                 app.session_state["cross_cut_results"].pop(idx)
+                _reexport_workbook()
                 app.rerun()
 
 
