@@ -424,7 +424,11 @@ def _preview_expected_vs_realized(result: Any) -> None:
 def _render_cross_cut_preview(result: Any) -> None:
     app = _require_streamlit()
     from src.models import AnalysisType
-    with app.expander("Preview (counts only)", expanded=True):
+    if app.checkbox(
+        "Show preview (counts only)",
+        value=True,
+        key=f"cc_preview_{result.cross_cut_id}",
+    ):
         try:
             at = result.analysis_type
             if at == AnalysisType.CROSS_TAB:
@@ -705,7 +709,10 @@ def _render_single_cut_card(result: Any, spec: Any) -> None:
                     app.rerun()
                 except Exception as exc:  # noqa: BLE001
                     app.error(f"Filter failed: {type(exc).__name__}: {exc}")
-                    with app.expander("Show traceback"):
+                    if app.checkbox(
+                        "Show technical details",
+                        key=f"show_tb_{spec.canonical_id}_{hash(str(exc))}",
+                    ):
                         app.code(traceback.format_exc())
 
         app.divider()
@@ -1223,7 +1230,10 @@ def _section_cross_cuts() -> None:
             )
             _render_cross_cut_preview(result)
             if result.warnings:
-                with app.expander("Warnings"):
+                if app.checkbox(
+                    f"Show {len(result.warnings)} warning(s)",
+                    key=f"cc_warn_{result.cross_cut_id}",
+                ):
                     for warning in result.warnings:
                         app.write(f"\u2022 {warning}")
             cb_col, rm_col = app.columns([3, 1])
