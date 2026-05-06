@@ -709,9 +709,13 @@ def _render_single_cut_card(result: Any, spec: Any) -> None:
                     app.rerun()
                 except Exception as exc:  # noqa: BLE001
                     app.error(f"Filter failed: {type(exc).__name__}: {exc}")
+                    import hashlib
+                    exc_digest = hashlib.sha1(
+                        str(exc).encode("utf-8")
+                    ).hexdigest()[:10]
                     if app.checkbox(
                         "Show technical details",
-                        key=f"show_tb_{spec.canonical_id}_{hash(str(exc))}",
+                        key=f"show_tb_{spec.canonical_id}_{exc_digest}",
                     ):
                         app.code(traceback.format_exc())
 
