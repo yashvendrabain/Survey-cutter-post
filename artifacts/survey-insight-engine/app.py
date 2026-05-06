@@ -54,6 +54,7 @@ SESSION_DEFAULTS = {
     "output_path": None,
     "raw_data_path_label": None,
     "datamap_path_label": None,
+    "load_report": None,
     "cross_cut_results": [],
     "cross_cut_skips": [],
     "cross_cut_suggestions": [],
@@ -130,21 +131,37 @@ def _cleanup_temp_files(*paths: str | None) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _run_pipeline(raw_data_path: str, datamap_path: str, status: Any) -> None:
+def _run_pipeline(
+    data_map: Any,
+    dataframe: Any,
+    load_report: Any,
+    status: Any,
+) -> None:
     from src.calculation_log import CalculationLog
     from src.cross_cut_suggestions import suggest_cross_cuts
-    from src.datamap_parser import parse_datamap
     from src.excel_exporter import export_single_cuts
-    from src.models import GlobalFilterState
+    from src.models import DataQualityReport, GlobalFilterState
     from src.question_classifier import classify_questions
-    from src.raw_decoder import decode_raw_data
     from src.single_cut import compute_single_cuts
 
-    status.update(label=PIPELINE_STAGES[0], state="running")
-    data_map = parse_datamap(datamap_path)
-
-    status.update(label=PIPELINE_STAGES[1], state="running")
-    dataframe, quality_report = decode_raw_data(raw_data_path, data_map)
+    status.update(label=PIPELINE_STAGES[0], state="complete")
+    status.update(label=PIPELINE_STAGES[1], state="complete")
+    # The unified io layer parses + decodes upstream and discards the
+    # decoder's quality report. Reconstruct a minimal one so downstream
+    # exporters don't crash while still surfacing parser-side warnings.
+    parser_warnings = tuple(
+        f"parser: {w}" for w in (load_report.parser_warnings or [])
+    )
+    quality_report = DataQualityReport(
+        total_rows=int(len(dataframe)),
+        total_columns=int(len(dataframe.columns)),
+        columns_in_datamap=int(len(dataframe.columns)),
+        columns_not_in_datamap=tuple(),
+        per_column_missing_pct={col: 0.0 for col in dataframe.columns},
+        per_column_out_of_range_pct={col: 0.0 for col in dataframe.columns},
+        coercion_log=tuple(),
+        warnings=parser_warnings,
+    )
 
     status.update(label=PIPELINE_STAGES[2], state="running")
     schema = classify_questions(
@@ -152,7 +169,7 @@ def _run_pipeline(raw_data_path: str, datamap_path: str, status: Any) -> None:
         dataframe.columns.tolist(),
         respondent_id_column="record",
         total_respondents=len(dataframe),
-        source_rawdata_path=raw_data_path,
+        source_rawdata_path=load_report.raw_data_source,
     )
 
     status.update(label=PIPELINE_STAGES[3], state="running")
@@ -910,13 +927,20 @@ def _render_sidebar() -> None:
     )
 
     sb.markdown("### Status")
-    files_uploaded = (
-        app.session_state.get("raw_data_path_label") is not None
-        and app.session_state.get("datamap_path_label") is not None
-    )
-    sb.write(
-        "\u2705 Files uploaded" if files_uploaded else "\u23f3 Waiting for upload"
-    )
+    has_load_report = app.session_state.get("load_report") is not None
+    files_selected = app.session_state.get("raw_data_path_label") is not None
+    if has_load_report:
+        sb.write("\u2705 Inputs loaded")
+    elif files_selected:
+        sb.write("\u23f3 Files selected \u2014 click Run analysis")
+    else:
+        sb.write("\u23f3 Waiting for upload")
+
+    load_report = app.session_state.get("load_report")
+    if load_report is not None:
+        sb.caption(f"Input: {load_report.scenario.replace('_', ' ')}")
+        sb.caption(f"Data source: {load_report.raw_data_source}")
+        sb.caption(f"Map source: {load_report.datamap_source}")
 
     if app.session_state["run_complete"]:
         results_count = len(app.session_state["results"])
@@ -958,34 +982,70 @@ def _section_upload() -> None:
     app = _require_streamlit()
     app.header(SECTION_UPLOAD, anchor="section-1")
     app.markdown(
-        "Upload your raw survey responses and the matching data map. The "
-        "data map describes question IDs and answer codes."
+        "Drop **any combination** of files \u2014 the tool detects what "
+        "you've uploaded automatically."
     )
 
-    raw_col, datamap_col = app.columns(2)
-    with raw_col:
-        raw_upload = app.file_uploader(
-            "Raw survey data",
-            type=["csv", "xlsx"],
-            key="raw_data_upload",
-            help="Your raw survey responses, one row per respondent.",
-        )
-        app.caption(_upload_status(raw_upload))
-    with datamap_col:
-        datamap_upload = app.file_uploader(
-            "Data map",
-            type=["xlsx"],
-            key="datamap_upload",
-            help="The data map describing question codes and answer options.",
-        )
-        app.caption(_upload_status(datamap_upload))
+    uploaded_files = app.file_uploader(
+        "Upload your survey files",
+        type=["csv", "xlsx", "docx"],
+        accept_multiple_files=True,
+        key="unified_upload",
+        help=(
+            "**Three scenarios are supported:**\n\n"
+            "1. Raw data (.csv or .xlsx) + data map (.xlsx) \u2014 two "
+            "separate files\n\n"
+            "2. Combined .xlsx with raw data and data map on separate "
+            "sheets\n\n"
+            "3. Raw data (.csv or .xlsx) + Word survey document (.docx) "
+            "\u2014 tool auto-builds the data map from the Word doc"
+        ),
+    )
 
-    if raw_upload is not None:
-        app.session_state["raw_data_path_label"] = raw_upload.name
-    if datamap_upload is not None:
-        app.session_state["datamap_path_label"] = datamap_upload.name
+    detected_scenario: str | None = None
+    docx_only = False
+    if uploaded_files:
+        names = [f.name for f in uploaded_files]
+        app.caption(f"Uploaded: {', '.join(names)}")
+        try:
+            from src.io import _detect_scenario
+            detected_scenario = _detect_scenario(uploaded_files)
+        except Exception:
+            detected_scenario = None
+        scenario_labels = {
+            "A_separate_files":
+                "\u2713 Two-file input detected (raw data + data map)",
+            "B_combined_xlsx":
+                "\u2713 Combined Excel detected (data + map on separate sheets)",
+            "C_word_datamap":
+                "\u2713 Word survey document detected (data map will be parsed "
+                "from Word file)",
+        }
+        if detected_scenario in scenario_labels:
+            app.info(scenario_labels[detected_scenario])
 
-    ready = raw_upload is not None and datamap_upload is not None
+        # Scenario C without raw data: graceful handling, no exception.
+        docx_files = [f for f in uploaded_files if f.name.lower().endswith(".docx")]
+        non_docx = [f for f in uploaded_files if not f.name.lower().endswith(".docx")]
+        docx_only = bool(docx_files) and not non_docx
+
+    # Update legacy status labels for the sidebar "files uploaded" indicator.
+    if uploaded_files:
+        app.session_state["raw_data_path_label"] = ", ".join(
+            f.name for f in uploaded_files
+        )
+        app.session_state["datamap_path_label"] = ", ".join(
+            f.name for f in uploaded_files
+        )
+
+    if docx_only:
+        app.warning(
+            "Data map will be parsed from the Word document, but no raw "
+            "data file was uploaded. Please also upload your raw data "
+            "(.csv or .xlsx) to run the analysis."
+        )
+
+    ready = bool(uploaded_files) and not docx_only
     centre_left, centre_mid, centre_right = app.columns([2, 3, 2])
     with centre_mid:
         run_clicked = app.button(
@@ -996,21 +1056,23 @@ def _section_upload() -> None:
         )
 
     if run_clicked:
-        raw_data_path = None
-        datamap_path = None
+        from src.io import load_survey_inputs
+
         app.session_state["run_complete"] = False
         try:
-            raw_data_path = _write_upload_to_temp(raw_upload)
-            datamap_path = _write_upload_to_temp(datamap_upload)
             with app.status("Starting analysis...", expanded=True) as status:
-                _run_pipeline(raw_data_path, datamap_path, status)
+                status.update(label="Loading uploaded files...", state="running")
+                data_map, raw_df, load_report = load_survey_inputs(uploaded_files)
+                app.session_state["data_map"] = data_map
+                app.session_state["load_report"] = load_report
+                for note in load_report.detection_notes:
+                    app.caption(f"\u2139\ufe0f {note}")
+                _run_pipeline(data_map, raw_df, load_report, status)
         except Exception as exc:  # noqa: BLE001
             app.session_state["run_complete"] = False
             app.error(f"{type(exc).__name__}: {exc}")
             with app.expander("Show full traceback"):
                 app.code(traceback.format_exc())
-        finally:
-            _cleanup_temp_files(raw_data_path, datamap_path)
 
     if app.session_state["run_complete"]:
         schema = app.session_state["schema"]
