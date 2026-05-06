@@ -79,10 +79,21 @@ def _require_streamlit() -> Any:
     return st
 
 
+CROSS_CUT_ENGINE_VERSION = "day14.5"
+
+
 def _initialise_session_state() -> None:
     app = _require_streamlit()
     for key, value in SESSION_DEFAULTS.items():
         app.session_state.setdefault(key, value)
+    stamped = app.session_state.get("cross_cut_engine_version")
+    if stamped != CROSS_CUT_ENGINE_VERSION:
+        app.session_state["cross_cut_results"] = []
+        app.session_state["cross_cut_skips"] = []
+        app.session_state["cross_cut_only_bytes"] = None
+        app.session_state["filtered_results"] = {}
+        app.session_state["filtered_workbook_bytes"] = None
+        app.session_state["cross_cut_engine_version"] = CROSS_CUT_ENGINE_VERSION
 
 
 def _upload_status(uploaded_file: Any | None) -> str:
@@ -296,6 +307,8 @@ def _preview_cross_tab(result: Any) -> None:
     ct = result.result_table
     a, b = result.source_question_ids
     counts = ct.get("counts", {})
+    row_pct = ct.get("row_pct", {})
+    column_pct = ct.get("column_pct", {})
     row_label_map = ct.get("row_label_map", {})
     col_label_map = ct.get("column_label_map", {})
     row_codes = sorted(counts.keys(), key=lambda v: str(v))
@@ -303,19 +316,43 @@ def _preview_cross_tab(result: Any) -> None:
         {c for row in counts.values() if isinstance(row, dict) for c in row.keys()},
         key=lambda v: str(v),
     )
+
+    display_mode = app.radio(
+        "Display",
+        options=["Counts", "Row %", "Column %"],
+        horizontal=True,
+        key=f"preview_mode_{result.cross_cut_id}",
+    )
+    if display_mode == "Row %":
+        source = row_pct
+    elif display_mode == "Column %":
+        source = column_pct
+    else:
+        source = counts
+
     df = pd.DataFrame(
         index=[row_label_map.get(rc, str(rc)) for rc in row_codes],
         columns=[col_label_map.get(cc, str(cc)) for cc in col_codes],
         data=[
-            [counts.get(rc, {}).get(cc, 0) for cc in col_codes]
+            [source.get(rc, {}).get(cc, 0) for cc in col_codes]
             for rc in row_codes
         ],
     )
     df.index.name = f"\u2193 {a}"
     df.columns.name = f"\u2192 {b}"
     app.caption(f"Rows: {a}   Columns: {b}")
-    app.dataframe(df, use_container_width=True)
+    if display_mode == "Counts":
+        app.dataframe(df, use_container_width=True)
+    else:
+        app.dataframe(
+            df.style.format("{:.1%}"),
+            use_container_width=True,
+        )
     app.caption(f"Grand total: {ct.get('grand_total', 0):,} responses")
+    app.caption(
+        "Tip: hover the table to use the built-in toolbar "
+        "(search, fullscreen, download as CSV)."
+    )
 
 
 def _preview_segment_profile(result: Any) -> None:
@@ -340,16 +377,25 @@ def _preview_segment_profile(result: Any) -> None:
         ]
         app.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
     elif "selections" in tr:
-        rows = [
-            {
-                "Sub-column": sub_id,
-                "Label": payload.get("label", ""),
-                "Count": payload.get("count", 0),
-            }
-            for sub_id, payload in tr["selections"].items()
-        ]
-        rows.sort(key=lambda r: r["Count"], reverse=True)
+        rows = []
+        for sub_id, payload in tr["selections"].items():
+            label = payload.get("label", "") or ""
+            label_lower = label.lower()
+            if "unchecked" in label_lower or "not selected" in label_lower:
+                continue
+            rows.append(
+                {
+                    "Sub-column": sub_id,
+                    "Label": label,
+                    "Selected count": payload.get("count", 0),
+                }
+            )
+        rows.sort(key=lambda r: r["Selected count"], reverse=True)
         app.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        app.caption(
+            "Selected counts only. Unchecked counts remain in the audit trail "
+            "of the downloaded workbook."
+        )
     elif "mean" in tr:
         df = pd.DataFrame(
             [
@@ -502,17 +548,26 @@ def _render_single_cut_result(result: Any, spec: Any) -> None:
             pd.DataFrame(rows), use_container_width=True, hide_index=True
         )
     elif isinstance(result, MultiSelectResult):
-        rows = [
-            {
-                "Sub-column": sub_id,
-                "Label": payload.get("label", ""),
-                "Count": payload.get("count", 0),
-            }
-            for sub_id, payload in result.selections.items()
-        ]
-        rows.sort(key=lambda r: r["Count"], reverse=True)
+        rows = []
+        for sub_id, payload in result.selections.items():
+            label = payload.get("label", "") or ""
+            label_lower = label.lower()
+            if "unchecked" in label_lower or "not selected" in label_lower:
+                continue
+            rows.append(
+                {
+                    "Sub-column": sub_id,
+                    "Label": label,
+                    "Selected count": payload.get("count", 0),
+                }
+            )
+        rows.sort(key=lambda r: r["Selected count"], reverse=True)
         app.dataframe(
             pd.DataFrame(rows), use_container_width=True, hide_index=True
+        )
+        app.caption(
+            "Selected counts only. Unchecked counts remain in the audit trail "
+            "of the downloaded workbook."
         )
     elif isinstance(result, NumericResult):
         rows = [
