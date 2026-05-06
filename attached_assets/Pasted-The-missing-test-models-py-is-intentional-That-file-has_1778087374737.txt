@@ -1,0 +1,125 @@
+The missing test_models.py is intentional. That file has 
+never existed — model validation runs through downstream 
+tests. 152 passes is the full test suite. Don't ask Codex 
+for a dedicated file. Treat tests as complete.
+
+Now run the real-file sanity check:
+
+cd artifacts/survey-insight-engine && python -c "
+from src.datamap_parser import parse_datamap
+from src.raw_decoder import decode_raw_data
+from src.question_classifier import classify_questions
+from src.calculation_log import CalculationLog
+from src.filtered_single_cut import compute_filtered_single_cut
+from src.models import FilterSpec, QuestionType
+
+dm = parse_datamap('sample_data/Datamap_sample.xlsx')
+df, qr = decode_raw_data(
+    'sample_data/Rawdata_sample.xlsx', dm)
+schema = classify_questions(
+    dm, df.columns.tolist(),
+    respondent_id_column='record',
+    total_respondents=len(df),
+    source_rawdata_path='sample_data/Rawdata_sample.xlsx'
+)
+log = CalculationLog()
+
+print('=== DEMOGRAPHIC QUESTIONS DETECTED ===')
+demos = schema.demographic_questions()
+print(f'count: {len(demos)}')
+for q in demos[:15]:
+    print(f'  {q.canonical_id}: '
+          f'{q.question_text[:70]}  '
+          f'(opts={len(q.option_map)})')
+
+if not demos:
+    print('NO DEMOGRAPHICS DETECTED — listing all SINGLE_SELECT '
+          'questions for keyword review:')
+    ss = [q for q in schema.questions
+          if q.question_type == QuestionType.SINGLE_SELECT
+          and q.analysis_eligible
+          and 2 <= len(q.option_map) <= 12]
+    for q in ss[:25]:
+        print(f'  {q.canonical_id}: {q.question_text[:80]}')
+    raise SystemExit('stop here, keyword tuning needed')
+
+num_qs = [q for q in schema.questions
+          if q.question_type == QuestionType.DIRECT_NUMERIC
+          and q.analysis_eligible]
+ss_qs = [q for q in schema.questions
+         if q.question_type == QuestionType.SINGLE_SELECT
+         and q.analysis_eligible and q.option_map
+         and not q.is_demographic]
+
+if not num_qs and not ss_qs:
+    print('no usable target question available')
+    raise SystemExit()
+
+demo = demos[0]
+target = num_qs[0] if num_qs else ss_qs[0]
+print(f'\\nUsing demographic: {demo.canonical_id} '
+      f'({demo.question_text[:60]})')
+print(f'Using target:       {target.canonical_id} '
+      f'({target.question_text[:60]}, '
+      f'{target.question_type.value})')
+
+# Test 1: filter with value
+first_value = list(demo.option_map.keys())[0]
+first_label = demo.option_map[first_value]
+print(f'\\n=== TEST 1: {target.canonical_id} '
+      f'filtered by {demo.canonical_id} == {first_value} '
+      f'({first_label}) ===')
+result = compute_filtered_single_cut(
+    target.canonical_id,
+    [FilterSpec(filter_question_id=demo.canonical_id,
+                filter_value=first_value)],
+    schema, df, log,
+)
+print(f'dispatch_mode: {result.dispatch_mode}')
+print(f'filtered_n: {result.filtered_n}')
+print(f'warnings: {result.warnings}')
+if result.single_cut_result:
+    sc = result.single_cut_result
+    print(f'valid_n / missing_n: {sc.valid_n} / {sc.missing_n}')
+    if hasattr(sc, 'mean'):
+        print(f'mean: {sc.mean:.4f}')
+    elif hasattr(sc, 'distribution'):
+        print('distribution preview (first 3 codes):')
+        for code, payload in list(sc.distribution.items())[:3]:
+            print(f'  {code}: count={payload[\"count\"]} '
+                  f'rate={payload[\"rate\"]:.4f}')
+
+# Test 2: filter without value (breakdown)
+print(f'\\n=== TEST 2: {target.canonical_id} '
+      f'broken down by {demo.canonical_id} (no value) ===')
+result = compute_filtered_single_cut(
+    target.canonical_id,
+    [FilterSpec(filter_question_id=demo.canonical_id,
+                filter_value=None)],
+    schema, df, log,
+)
+print(f'dispatch_mode: {result.dispatch_mode}')
+print(f'filtered_n: {result.filtered_n}')
+if result.cross_cut_result:
+    cc = result.cross_cut_result
+    print(f'cc analysis_type: {cc.analysis_type.value}')
+    rt = cc.result_table
+    if 'per_segment' in rt:
+        print('per_segment preview:')
+        for seg_val, seg_data in list(rt['per_segment'].items())[:5]:
+            label = seg_data.get('label', str(seg_val))
+            n = seg_data.get('n', 0)
+            mean = seg_data.get('mean', None)
+            line = f'  {label}: n={n}'
+            if mean is not None:
+                line += f' mean={mean:.4f}'
+            print(line)
+    elif 'counts' in rt:
+        print(f'cross-tab grand_total: {rt[\"grand_total\"]}')
+
+print('\\n=== AUDIT LOG ===')
+print(f'records: {len(log)}')
+"
+
+Paste the full output. Stop and don't commit yet — I want 
+to read what we get.
