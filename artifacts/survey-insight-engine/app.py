@@ -1,4 +1,4 @@
-"""Streamlit entry point for the Survey Insight Engine."""
+"""Streamlit entry point for the Survey Analysis Engine."""
 
 from __future__ import annotations
 
@@ -19,29 +19,55 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-try:
-    from config import APP_NAME, VERSION
-except (ModuleNotFoundError, ImportError):  # pragma: no cover - target app provides config.
-    APP_NAME = "Survey Insight Engine"
-    VERSION = "Stage 2"
+from src.ui_constants import (
+    APP_TAGLINE,
+    APP_TITLE,
+    EMPTY_NO_CROSS_CUTS,
+    EMPTY_NO_RESULTS,
+    PIPELINE_STAGES,
+    SECTION_CROSS_CUTS,
+    SECTION_DOWNLOADS,
+    SECTION_GLOBAL_FILTER,
+    SECTION_RESULTS,
+    SECTION_UPLOAD,
+    STATUS_GLOBAL_FILTER_ACTIVE,
+    STATUS_GLOBAL_FILTER_INACTIVE,
+    TOOLTIP_BREAKDOWN,
+    TOOLTIP_CROSS_CUT_SUGGESTIONS,
+    TOOLTIP_GLOBAL_FILTER,
+    TOOLTIP_PER_QUESTION_FILTER,
+    TOOLTIP_THREE_DOWNLOADS,
+)
 
 
 SESSION_DEFAULTS = {
-    "dataframe": None,
+    "decoded_df": None,
+    "active_df": None,
+    "global_filter_state": None,
+    "global_filter_stats": None,
+    "global_filter_rows": [],
     "results": [],
     "skips": [],
     "schema": None,
     "quality_report": None,
     "log": None,
     "output_path": None,
+    "raw_data_path_label": None,
+    "datamap_path_label": None,
     "cross_cut_results": [],
     "cross_cut_skips": [],
     "cross_cut_suggestions": [],
     "cross_cut_only_bytes": None,
-    "run_complete": False,
     "filtered_results": {},
     "filtered_workbook_bytes": None,
+    "run_complete": False,
+    "ss_search": "",
 }
+
+
+# ---------------------------------------------------------------------------
+# Infrastructure helpers
+# ---------------------------------------------------------------------------
 
 
 def _require_streamlit() -> Any:
@@ -88,22 +114,28 @@ def _cleanup_temp_files(*paths: str | None) -> None:
             os.unlink(path)
 
 
+# ---------------------------------------------------------------------------
+# Pipeline orchestration
+# ---------------------------------------------------------------------------
+
+
 def _run_pipeline(raw_data_path: str, datamap_path: str, status: Any) -> None:
     from src.calculation_log import CalculationLog
     from src.cross_cut_suggestions import suggest_cross_cuts
     from src.datamap_parser import parse_datamap
     from src.excel_exporter import export_single_cuts
+    from src.models import GlobalFilterState
     from src.question_classifier import classify_questions
     from src.raw_decoder import decode_raw_data
     from src.single_cut import compute_single_cuts
 
-    status.update(label="Parsing data map...", state="running")
+    status.update(label=PIPELINE_STAGES[0], state="running")
     data_map = parse_datamap(datamap_path)
 
-    status.update(label="Decoding raw data...", state="running")
+    status.update(label=PIPELINE_STAGES[1], state="running")
     dataframe, quality_report = decode_raw_data(raw_data_path, data_map)
 
-    status.update(label="Classifying questions...", state="running")
+    status.update(label=PIPELINE_STAGES[2], state="running")
     schema = classify_questions(
         data_map,
         dataframe.columns.tolist(),
@@ -112,11 +144,11 @@ def _run_pipeline(raw_data_path: str, datamap_path: str, status: Any) -> None:
         source_rawdata_path=raw_data_path,
     )
 
-    status.update(label="Computing single cuts...", state="running")
+    status.update(label=PIPELINE_STAGES[3], state="running")
     log = CalculationLog()
     results, skips = compute_single_cuts(schema, dataframe, log)
 
-    status.update(label="Exporting workbook...", state="running")
+    status.update(label=PIPELINE_STAGES[4], state="running")
     output_path = "/tmp/survey_analysis.xlsx"
     export_single_cuts(
         results=results,
@@ -128,7 +160,11 @@ def _run_pipeline(raw_data_path: str, datamap_path: str, status: Any) -> None:
     )
 
     app = _require_streamlit()
-    app.session_state["dataframe"] = dataframe
+    app.session_state["decoded_df"] = dataframe
+    app.session_state["active_df"] = dataframe
+    app.session_state["global_filter_state"] = GlobalFilterState()
+    app.session_state["global_filter_stats"] = None
+    app.session_state["global_filter_rows"] = []
     app.session_state["results"] = results
     app.session_state["skips"] = skips
     app.session_state["schema"] = schema
@@ -139,6 +175,8 @@ def _run_pipeline(raw_data_path: str, datamap_path: str, status: Any) -> None:
     app.session_state["cross_cut_skips"] = []
     app.session_state["cross_cut_suggestions"] = suggest_cross_cuts(schema)
     app.session_state["cross_cut_only_bytes"] = None
+    app.session_state["filtered_results"] = {}
+    app.session_state["filtered_workbook_bytes"] = None
     app.session_state["run_complete"] = True
     status.update(label="Analysis complete.", state="complete")
 
@@ -169,7 +207,7 @@ def _run_cross_cut_specs(specs: list[Any]) -> None:
     results, skips = compute_cross_cuts(
         specs,
         app.session_state["schema"],
-        app.session_state["dataframe"],
+        app.session_state["active_df"],
         app.session_state["log"],
     )
     existing = {
@@ -185,119 +223,32 @@ def _run_cross_cut_specs(specs: list[Any]) -> None:
     _refresh_full_workbook()
 
 
-def _render_header() -> None:
+def _rerun_single_cuts_on_active_df() -> None:
+    """Recompute single cuts after the active DataFrame changed."""
+    from src.calculation_log import CalculationLog
+    from src.single_cut import compute_single_cuts
+
     app = _require_streamlit()
-    app.set_page_config(page_title="Survey Insight engine", layout="wide")
-    app.title("Survey Insight engine")
-    app.caption(
-        "Upload raw survey data and a data map to produce audited "
-        "single-cut and cross-cut analysis in Excel."
-    )
+    schema = app.session_state["schema"]
+    active_df = app.session_state["active_df"]
+
+    log = CalculationLog()
+    results, skips = compute_single_cuts(schema, active_df, log)
+
+    app.session_state["log"] = log
+    app.session_state["results"] = results
+    app.session_state["skips"] = skips
+    app.session_state["cross_cut_results"] = []
+    app.session_state["cross_cut_skips"] = []
+    app.session_state["cross_cut_only_bytes"] = None
+    app.session_state["filtered_results"] = {}
+    app.session_state["filtered_workbook_bytes"] = None
+    _refresh_full_workbook()
 
 
-def _render_upload_section() -> tuple[Any | None, Any | None]:
-    app = _require_streamlit()
-    app.subheader("Upload files")
-    raw_col, datamap_col = app.columns(2)
-
-    with raw_col:
-        raw_upload = app.file_uploader(
-            "Raw survey data",
-            type=["csv", "xlsx"],
-            key="raw_data_upload",
-        )
-        app.caption(_upload_status(raw_upload))
-
-    with datamap_col:
-        datamap_upload = app.file_uploader(
-            "Data map",
-            type=["xlsx"],
-            key="datamap_upload",
-        )
-        app.caption(_upload_status(datamap_upload))
-
-    return raw_upload, datamap_upload
-
-
-def _handle_run(raw_upload: Any | None, datamap_upload: Any | None) -> None:
-    app = _require_streamlit()
-    app.subheader("Run analysis")
-    ready_to_run = raw_upload is not None and datamap_upload is not None
-
-    if not app.button(
-        "Run analysis",
-        type="primary",
-        disabled=not ready_to_run,
-    ):
-        return
-
-    raw_data_path = None
-    datamap_path = None
-    app.session_state["run_complete"] = False
-
-    try:
-        raw_data_path = _write_upload_to_temp(raw_upload)
-        datamap_path = _write_upload_to_temp(datamap_upload)
-        with app.status("Starting analysis...", expanded=True) as status:
-            _run_pipeline(raw_data_path, datamap_path, status)
-    except Exception as exc:  # noqa: BLE001 - UI must show any pipeline failure.
-        app.session_state["run_complete"] = False
-        app.error(f"{type(exc).__name__}: {exc}")
-        with app.expander("Show full traceback"):
-            app.code(traceback.format_exc())
-    finally:
-        _cleanup_temp_files(raw_data_path, datamap_path)
-
-
-def _skip_rows(skips: list[Any]) -> list[dict[str, Any]]:
-    return [
-        {
-            "Canonical ID": skip.canonical_id,
-            "Type": skip.question_type.value,
-            "Reason": skip.skip_reason,
-            "Details": skip.details or "",
-        }
-        for skip in skips
-    ]
-
-
-def _result_rows(results: list[Any]) -> list[dict[str, Any]]:
-    return [
-        {
-            "Canonical ID": result.question_id,
-            "Type": result.question_type.value,
-            "Valid N": result.valid_n,
-            "Missing N": result.missing_n,
-        }
-        for result in results
-    ]
-
-
-def _cross_cut_rows(results: list[Any]) -> list[dict[str, Any]]:
-    return [
-        {
-            "Cross Cut ID": result.cross_cut_id,
-            "Title": result.synthetic_question_title,
-            "Type": result.analysis_type.value,
-            "Source Questions": ", ".join(result.source_question_ids),
-            "Warnings": " | ".join(result.warnings),
-        }
-        for result in results
-    ]
-
-
-def _audit_rows(records: tuple[Any, ...]) -> list[dict[str, Any]]:
-    return [
-        {
-            "Metric": record.metric_name,
-            "Question": record.source_question_id,
-            "Source Columns": ", ".join(record.source_columns),
-            "Formula": record.formula,
-            "Value": record.value_raw,
-            "Valid N": record.valid_n,
-        }
-        for record in records[:100]
-    ]
+# ---------------------------------------------------------------------------
+# Schema helpers
+# ---------------------------------------------------------------------------
 
 
 def _eligible_question_options() -> list[str]:
@@ -319,82 +270,29 @@ def _question_label_map() -> dict[str, str]:
     }
 
 
-def _render_suggested_cross_cuts() -> None:
-    app = _require_streamlit()
-    suggestions = app.session_state["cross_cut_suggestions"]
-    if not suggestions:
-        app.write("No rule-based suggestions available for this schema.")
-        return
+def _eligible_filter_questions() -> list[Any]:
+    """Categorical questions with int-coded option maps usable as filters."""
+    schema = _require_streamlit().session_state["schema"]
+    if schema is None:
+        return []
+    eligible = []
+    for spec in schema.questions:
+        if not spec.option_map:
+            continue
+        if not all(isinstance(key, int) for key in spec.option_map):
+            continue
+        eligible.append(spec)
+    return eligible
 
-    for index, (spec, reason) in enumerate(suggestions[:15], start=1):
-        col_text, col_button = app.columns([4, 1])
-        col_text.write(f"{index}. {spec.title}")
-        col_text.caption(reason)
-        if col_button.button("Run", key=f"run_suggestion_{spec.cross_cut_id}"):
-            _run_cross_cut_specs([spec])
-            app.success(f"Ran {spec.cross_cut_id}")
 
-
-def _render_manual_cross_cut() -> None:
-    from src.models import AnalysisType, CrossCutSpec
-
-    app = _require_streamlit()
-    options = _eligible_question_options()
-    labels = _question_label_map()
-    if len(options) < 2:
-        app.write("At least two analysis-eligible questions are required.")
-        return
-
-    with app.form("manual_cross_cut_form"):
-        analysis_type_name = app.selectbox(
-            "Analysis type",
-            [
-                AnalysisType.CROSS_TAB.value,
-                AnalysisType.SEGMENT_PROFILE.value,
-                AnalysisType.GROUP_COMPARISON.value,
-                AnalysisType.EXPECTED_VS_REALIZED.value,
-            ],
-        )
-        first = app.selectbox(
-            "First source question",
-            options,
-            format_func=lambda value: labels.get(value, value),
-        )
-        second = app.selectbox(
-            "Second source question",
-            options,
-            index=1,
-            format_func=lambda value: labels.get(value, value),
-        )
-        filter_expr = app.text_input(
-            "Filter expression for segment profile",
-            value=f"{first} == 1",
-            help="Required only for SEGMENT_PROFILE. Supports equality, e.g. Q3 == 1.",
-        )
-        submitted = app.form_submit_button("Run manual cross cut")
-
-    if not submitted:
-        return
-
-    analysis_type = AnalysisType(analysis_type_name)
-    try:
-        spec = CrossCutSpec(
-            cross_cut_id=f"MANUAL_{analysis_type.value}_{first}_{second}",
-            title=f"{analysis_type.value}: {first} x {second}",
-            analysis_type=analysis_type,
-            source_question_ids=(first, second),
-            filter_expr=filter_expr if analysis_type is AnalysisType.SEGMENT_PROFILE else None,
-            filter_mask_description=filter_expr if analysis_type is AnalysisType.SEGMENT_PROFILE else None,
-        )
-        _run_cross_cut_specs([spec])
-        app.success(f"Ran {spec.cross_cut_id}")
-    except Exception as exc:  # noqa: BLE001 - UI must show invalid manual specs.
-        app.error(f"{type(exc).__name__}: {exc}")
+# ---------------------------------------------------------------------------
+# Cross-cut preview helpers (preserved from Day 10.6)
+# ---------------------------------------------------------------------------
 
 
 def _preview_cross_tab(result: Any) -> None:
     import pandas as pd
-    st = _require_streamlit()
+    app = _require_streamlit()
     ct = result.result_table
     a, b = result.source_question_ids
     counts = ct.get("counts", {})
@@ -415,16 +313,16 @@ def _preview_cross_tab(result: Any) -> None:
     )
     df.index.name = f"\u2193 {a}"
     df.columns.name = f"\u2192 {b}"
-    st.caption(f"Rows: {a}   Columns: {b}")
-    st.dataframe(df, use_container_width=True)
-    st.caption(f"Grand total: {ct.get('grand_total', 0):,} responses")
+    app.caption(f"Rows: {a}   Columns: {b}")
+    app.dataframe(df, use_container_width=True)
+    app.caption(f"Grand total: {ct.get('grand_total', 0):,} responses")
 
 
 def _preview_segment_profile(result: Any) -> None:
     import pandas as pd
-    st = _require_streamlit()
+    app = _require_streamlit()
     rt = result.result_table
-    st.caption(
+    app.caption(
         f"Filter: {rt.get('filter_expr', '<no filter>')}  \u00b7  "
         f"Filter N: {rt.get('filter_n', 0):,}"
     )
@@ -440,7 +338,7 @@ def _preview_segment_profile(result: Any) -> None:
                 tr["distribution"].items(), key=lambda x: str(x[0])
             )
         ]
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        app.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
     elif "selections" in tr:
         rows = [
             {
@@ -451,7 +349,7 @@ def _preview_segment_profile(result: Any) -> None:
             for sub_id, payload in tr["selections"].items()
         ]
         rows.sort(key=lambda r: r["Count"], reverse=True)
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        app.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
     elif "mean" in tr:
         df = pd.DataFrame(
             [
@@ -459,12 +357,12 @@ def _preview_segment_profile(result: Any) -> None:
                 {"Statistic": "Missing N", "Count": tr.get("missing_n", 0)},
             ]
         )
-        st.dataframe(df, use_container_width=True, hide_index=True)
-        st.caption(
+        app.dataframe(df, use_container_width=True, hide_index=True)
+        app.caption(
             "Numeric statistics (mean, median, std) in the downloaded workbook."
         )
     elif "rows" in tr:
-        st.caption(f"Grid with {len(tr['rows'])} rows. Per-row counts:")
+        app.caption(f"Grid with {len(tr['rows'])} rows. Per-row counts:")
         grid_rows = []
         for sub_id, row_result in tr["rows"].items():
             dist = row_result.get("distribution", {}) if isinstance(row_result, dict) else {}
@@ -472,18 +370,18 @@ def _preview_segment_profile(result: Any) -> None:
             for code, payload in dist.items():
                 row_dict[f"{code}: {payload.get('label', '')}"] = payload.get("count", 0)
             grid_rows.append(row_dict)
-        st.dataframe(pd.DataFrame(grid_rows), use_container_width=True, hide_index=True)
+        app.dataframe(pd.DataFrame(grid_rows), use_container_width=True, hide_index=True)
     else:
-        st.info("Preview not available for this target type.")
+        app.info("Preview not available for this target type.")
 
 
 def _preview_group_comparison(result: Any) -> None:
     import pandas as pd
-    st = _require_streamlit()
+    app = _require_streamlit()
     rt = result.result_table
     seg_q = rt.get("segment_question_id", "")
     met_q = rt.get("metric_question_id", "")
-    st.caption(f"Metric: {met_q}   Segments: {seg_q}")
+    app.caption(f"Metric: {met_q}   Segments: {seg_q}")
     rows = []
     for seg_val, seg_data in (rt.get("per_segment", {}) or {}).items():
         rows.append(
@@ -499,17 +397,17 @@ def _preview_group_comparison(result: Any) -> None:
             "N": overall.get("valid_n", overall.get("n", 0)),
         }
     )
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-    st.caption("Group means in the downloaded workbook.")
+    app.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    app.caption("Group means in the downloaded workbook.")
 
 
 def _preview_expected_vs_realized(result: Any) -> None:
     import pandas as pd
-    st = _require_streamlit()
+    app = _require_streamlit()
     rt = result.result_table
     exp_q = rt.get("expected_question_id", "")
     real_q = rt.get("realized_question_id", "")
-    st.caption(f"Expected: {exp_q}   Realized: {real_q}")
+    app.caption(f"Expected: {exp_q}   Realized: {real_q}")
     df = pd.DataFrame(
         [
             {"Metric": "Paired N", "Count": rt.get("paired_n", 0)},
@@ -517,8 +415,8 @@ def _preview_expected_vs_realized(result: Any) -> None:
             {"Metric": "Realized valid N", "Count": (rt.get("realized", {}) or {}).get("valid_n", 0)},
         ]
     )
-    st.dataframe(df, use_container_width=True, hide_index=True)
-    st.caption(
+    app.dataframe(df, use_container_width=True, hide_index=True)
+    app.caption(
         "Mean expected, mean realized, gap statistics in the downloaded workbook."
     )
 
@@ -541,6 +439,11 @@ def _render_cross_cut_preview(result: Any) -> None:
                 app.info(f"Preview not implemented for {at.value}.")
         except Exception as exc:  # noqa: BLE001
             app.error(f"Could not render preview: {type(exc).__name__}: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Single-cut display helpers (preserved from Day 12)
+# ---------------------------------------------------------------------------
 
 
 def _format_filter(filter_spec: Any) -> str:
@@ -620,146 +523,178 @@ def _render_single_cut_result(result: Any, spec: Any) -> None:
         app.info("Preview not available for this result type.")
 
 
+# ---------------------------------------------------------------------------
+# Per-question multi-row filter panel (Day 14)
+# ---------------------------------------------------------------------------
+
+
+def _find_q_index(q_id: str | None, options: list[tuple[str, Any]]) -> int:
+    for i, (_label, value) in enumerate(options):
+        if value == q_id:
+            return i
+    return 0
+
+
+def _purge_widget_keys(*prefixes: str) -> None:
+    """Delete widget-state keys with the given prefixes.
+
+    Streamlit's selectbox honors the ``index=`` arg only on the first render
+    of a given key; once that key exists in ``session_state`` the stored value
+    overrides ``index=``. When the list of rows changes (add/delete), the
+    index-based keys point at the wrong rows, so we purge them and let the
+    row-state seed the next render.
+    """
+    app = _require_streamlit()
+    for key in list(app.session_state.keys()):
+        if any(key.startswith(prefix) for prefix in prefixes):
+            del app.session_state[key]
+
+
 def _render_single_cut_card(result: Any, spec: Any) -> None:
+    from src.filtered_single_cut import compute_filtered_single_cut
     from src.models import FilterSpec
 
     app = _require_streamlit()
     schema = app.session_state["schema"]
     short_text = (spec.question_text or "")[:80]
 
-    with app.expander(
-        f"{spec.canonical_id}: {short_text}", expanded=False
-    ):
-        app.markdown("**Filters**")
-        cols = app.columns([3, 3, 3, 3, 2])
+    expander_label = f"{spec.canonical_id} \u2014 {short_text}"
+    with app.expander(expander_label, expanded=False):
+        app.caption(
+            f"Type: {spec.question_type.value}  \u00b7  "
+            f"Valid N: {result.valid_n:,}  \u00b7  "
+            f"Missing: {result.missing_n:,}"
+        )
 
-        demo_questions = schema.demographic_questions()
-        demo_options = [("None", None)] + [
+        app.markdown("**Filters for this question**")
+        app.caption(TOOLTIP_PER_QUESTION_FILTER)
+
+        filter_key = f"filters_{spec.canonical_id}"
+        if filter_key not in app.session_state:
+            app.session_state[filter_key] = []
+        filter_rows: list[tuple[str | None, Any]] = app.session_state[filter_key]
+
+        eligible = _eligible_filter_questions()
+        question_options: list[tuple[str, Any]] = [("None", None)] + [
             (
                 f"{q.canonical_id}: {(q.question_text or '')[:50]}",
                 q.canonical_id,
             )
-            for q in demo_questions
+            for q in eligible
+            if q.canonical_id != spec.canonical_id
         ]
-        with cols[0]:
-            demo_pick = app.selectbox(
-                "Demographic dimension",
-                options=demo_options,
-                format_func=lambda x: x[0],
-                index=0,
-                key=f"demo_q_{spec.canonical_id}",
-            )
 
-        demo_q_id = demo_pick[1]
-        with cols[1]:
-            if demo_q_id:
-                demo_q = schema.get_question(demo_q_id)
-                value_options = [("All values (breakdown)", None)] + [
-                    (f"{value}: {label}", value)
-                    for value, label in demo_q.option_map.items()
-                ]
-                demo_value_pick = app.selectbox(
-                    "Demographic value",
-                    options=value_options,
+        new_rows: list[tuple[str | None, Any]] = []
+        delete_index: int | None = None
+        for i, (q_id, val) in enumerate(filter_rows):
+            cols = app.columns([4, 4, 1])
+            with cols[0]:
+                q_pick = app.selectbox(
+                    "Filter question",
+                    options=question_options,
                     format_func=lambda x: x[0],
-                    index=0,
-                    key=f"demo_v_{spec.canonical_id}",
+                    index=_find_q_index(q_id, question_options),
+                    key=f"{filter_key}_q_{i}",
+                    label_visibility="visible" if i == 0 else "collapsed",
                 )
-            else:
-                demo_value_pick = ("", None)
-                app.selectbox(
-                    "Demographic value",
-                    options=[("Select a dimension first", None)],
-                    format_func=lambda x: x[0],
-                    disabled=True,
-                    key=f"demo_v_{spec.canonical_id}_disabled",
-                )
-
-        all_eligible = schema.analysis_eligible_questions()
-        custom_options = [("None", None)] + [
-            (
-                f"{q.canonical_id}: {(q.question_text or '')[:50]}",
-                q.canonical_id,
-            )
-            for q in all_eligible
-            if q.option_map
-            and not q.is_demographic
-            and q.canonical_id != spec.canonical_id
-        ]
-        with cols[2]:
-            custom_pick = app.selectbox(
-                "Custom filter (any question)",
-                options=custom_options,
-                format_func=lambda x: x[0],
-                index=0,
-                key=f"custom_q_{spec.canonical_id}",
-            )
-
-        custom_q_id = custom_pick[1]
-        with cols[3]:
-            if custom_q_id:
-                custom_q = schema.get_question(custom_q_id)
-                cv_options = [("All values (breakdown)", None)] + [
-                    (f"{value}: {label}", value)
-                    for value, label in custom_q.option_map.items()
-                ]
-                custom_value_pick = app.selectbox(
-                    "Custom value",
-                    options=cv_options,
-                    format_func=lambda x: x[0],
-                    index=0,
-                    key=f"custom_v_{spec.canonical_id}",
-                )
-            else:
-                custom_value_pick = ("", None)
-                app.selectbox(
-                    "Custom value",
-                    options=[("Select a dimension first", None)],
-                    format_func=lambda x: x[0],
-                    disabled=True,
-                    key=f"custom_v_{spec.canonical_id}_disabled",
-                )
-
-        with cols[4]:
-            apply_filter = app.button(
-                "Apply",
-                key=f"apply_filter_{spec.canonical_id}",
-                disabled=(demo_pick[1] is None and custom_pick[1] is None),
-            )
-
-        if apply_filter:
-            filters = []
-            if demo_pick[1] is not None:
-                filters.append(
-                    FilterSpec(
-                        filter_question_id=demo_pick[1],
-                        filter_value=demo_value_pick[1],
+            picked_q_id = q_pick[1]
+            with cols[1]:
+                if picked_q_id is not None:
+                    q_spec = schema.get_question(picked_q_id)
+                    value_options: list[tuple[str, Any]] = [
+                        ("All values (breakdown)", None)
+                    ] + [
+                        (f"{value}: {label}", value)
+                        for value, label in q_spec.option_map.items()
+                    ]
+                    v_index = 0
+                    for vi, (_lbl, v) in enumerate(value_options):
+                        if v == val:
+                            v_index = vi
+                            break
+                    v_pick = app.selectbox(
+                        "Value",
+                        options=value_options,
+                        format_func=lambda x: x[0],
+                        index=v_index,
+                        key=f"{filter_key}_v_{i}",
+                        label_visibility="visible" if i == 0 else "collapsed",
+                        help=TOOLTIP_BREAKDOWN if i == 0 else None,
                     )
-                )
-            if custom_pick[1] is not None:
-                filters.append(
-                    FilterSpec(
-                        filter_question_id=custom_pick[1],
-                        filter_value=custom_value_pick[1],
+                    new_val = v_pick[1]
+                else:
+                    app.selectbox(
+                        "Value",
+                        options=[("Pick a question first", None)],
+                        format_func=lambda x: x[0],
+                        disabled=True,
+                        key=f"{filter_key}_v_disabled_{i}",
+                        label_visibility="visible" if i == 0 else "collapsed",
                     )
+                    new_val = None
+            with cols[2]:
+                if i == 0:
+                    app.markdown("&nbsp;", unsafe_allow_html=True)
+                if app.button(
+                    "\u2715",
+                    key=f"{filter_key}_del_{i}",
+                    help="Remove this filter",
+                ):
+                    delete_index = i
+            new_rows.append((picked_q_id, new_val))
+
+        app.session_state[filter_key] = new_rows
+
+        if delete_index is not None:
+            new_rows.pop(delete_index)
+            app.session_state[filter_key] = new_rows
+            _purge_widget_keys(f"{filter_key}_q_", f"{filter_key}_v_")
+            app.rerun()
+
+        cols_btn = app.columns([2, 2, 4])
+        with cols_btn[0]:
+            if app.button("+ Add filter", key=f"{filter_key}_add"):
+                app.session_state[filter_key] = new_rows + [(None, None)]
+                _purge_widget_keys(f"{filter_key}_q_", f"{filter_key}_v_")
+                app.rerun()
+        with cols_btn[1]:
+            apply_clicked = app.button(
+                "Apply filters",
+                key=f"{filter_key}_apply",
+                type="primary",
+                disabled=not any(q is not None for q, _v in new_rows),
+            )
+
+        if apply_clicked:
+            specs = [
+                FilterSpec(filter_question_id=q, filter_value=v)
+                for q, v in new_rows
+                if q is not None
+            ]
+            seen: set[str] = set()
+            duplicate = next(
+                (f.filter_question_id for f in specs if f.filter_question_id in seen
+                 or seen.add(f.filter_question_id)),
+                None,
+            )
+            breakdowns = [f for f in specs if f.filter_value is None]
+            if duplicate is not None:
+                app.error(
+                    f"Duplicate filter on {duplicate}. "
+                    "Each filter question can only be used once per card."
                 )
-            breakdowns = [f for f in filters if f.filter_value is None]
-            if len(breakdowns) > 1:
+            elif len(breakdowns) > 1:
                 app.error(
                     "Only one breakdown filter at a time. "
-                    "Either pick a value for one of them or remove it."
+                    "Pick a value for at least all but one of the breakdowns."
                 )
             else:
                 try:
-                    from src.filtered_single_cut import (
-                        compute_filtered_single_cut,
-                    )
-
                     filtered_result = compute_filtered_single_cut(
                         spec.canonical_id,
-                        filters,
+                        specs,
                         schema,
-                        app.session_state["dataframe"],
+                        app.session_state["active_df"],
                         app.session_state["log"],
                     )
                     app.session_state.setdefault("filtered_results", {})
@@ -781,9 +716,7 @@ def _render_single_cut_card(result: Any, spec: Any) -> None:
         if filtered is not None:
             app.info(
                 "Filtered: "
-                + ", ".join(
-                    _format_filter(f) for f in filtered.filters_applied
-                )
+                + ", ".join(_format_filter(f) for f in filtered.filters_applied)
                 + f"  \u00b7  N = {filtered.filtered_n:,}"
             )
             for warning in filtered.warnings:
@@ -801,228 +734,709 @@ def _render_single_cut_card(result: Any, spec: Any) -> None:
                 "Clear filters", key=f"clear_filter_{spec.canonical_id}"
             ):
                 del app.session_state["filtered_results"][spec.canonical_id]
+                app.session_state[filter_key] = []
                 app.session_state["filtered_workbook_bytes"] = None
                 app.rerun()
         else:
             _render_single_cut_result(result, spec)
 
 
-def _render_single_cut_cards() -> None:
+# ---------------------------------------------------------------------------
+# Cross-cut helpers (preserved)
+# ---------------------------------------------------------------------------
+
+
+def _render_suggested_cross_cuts() -> None:
     app = _require_streamlit()
+    suggestions = app.session_state["cross_cut_suggestions"]
+    if not suggestions:
+        app.write("No rule-based suggestions available for this schema.")
+        return
+
+    for index, (spec, reason) in enumerate(suggestions[:15], start=1):
+        col_text, col_button = app.columns([4, 1])
+        col_text.write(f"{index}. {spec.title}")
+        col_text.caption(reason)
+        if col_button.button("Run this", key=f"run_suggestion_{spec.cross_cut_id}"):
+            _run_cross_cut_specs([spec])
+            app.success(f"Ran {spec.cross_cut_id}")
+
+
+def _render_manual_cross_cut() -> None:
+    from src.models import AnalysisType, CrossCutSpec
+
+    app = _require_streamlit()
+    options = _eligible_question_options()
+    labels = _question_label_map()
+    if len(options) < 2:
+        app.write("At least two analysis-eligible questions are required.")
+        return
+
+    with app.form("manual_cross_cut_form"):
+        analysis_type_name = app.selectbox(
+            "Analysis type",
+            [
+                AnalysisType.CROSS_TAB.value,
+                AnalysisType.SEGMENT_PROFILE.value,
+                AnalysisType.GROUP_COMPARISON.value,
+                AnalysisType.EXPECTED_VS_REALIZED.value,
+            ],
+        )
+        first = app.selectbox(
+            "First source question",
+            options,
+            format_func=lambda value: labels.get(value, value),
+        )
+        second = app.selectbox(
+            "Second source question",
+            options,
+            index=1,
+            format_func=lambda value: labels.get(value, value),
+        )
+        filter_expr = app.text_input(
+            "Filter expression for segment profile",
+            value=f"{first} == 1",
+            help="Required only for SEGMENT_PROFILE. Supports equality, e.g. Q3 == 1.",
+        )
+        submitted = app.form_submit_button("Run manual cross cut", type="primary")
+
+    if not submitted:
+        return
+
+    analysis_type = AnalysisType(analysis_type_name)
+    try:
+        spec = CrossCutSpec(
+            cross_cut_id=f"MANUAL_{analysis_type.value}_{first}_{second}",
+            title=f"{analysis_type.value}: {first} x {second}",
+            analysis_type=analysis_type,
+            source_question_ids=(first, second),
+            filter_expr=filter_expr if analysis_type is AnalysisType.SEGMENT_PROFILE else None,
+            filter_mask_description=filter_expr if analysis_type is AnalysisType.SEGMENT_PROFILE else None,
+        )
+        _run_cross_cut_specs([spec])
+        app.success(f"Ran {spec.cross_cut_id}")
+    except Exception as exc:  # noqa: BLE001
+        app.error(f"{type(exc).__name__}: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Sidebar
+# ---------------------------------------------------------------------------
+
+
+def _render_sidebar() -> None:
+    app = _require_streamlit()
+    sb = app.sidebar
+    sb.title(APP_TITLE)
+    sb.caption(APP_TAGLINE)
+
+    sb.markdown("### Sections")
+    sb.markdown(
+        "\n".join(
+            [
+                f"- [{SECTION_UPLOAD}](#section-1)",
+                f"- [{SECTION_GLOBAL_FILTER}](#section-2)",
+                f"- [{SECTION_RESULTS}](#section-3)",
+                f"- [{SECTION_CROSS_CUTS}](#section-4)",
+                f"- [{SECTION_DOWNLOADS}](#section-5)",
+            ]
+        )
+    )
+
+    sb.markdown("### Status")
+    files_uploaded = (
+        app.session_state.get("raw_data_path_label") is not None
+        and app.session_state.get("datamap_path_label") is not None
+    )
+    sb.write(
+        "\u2705 Files uploaded" if files_uploaded else "\u23f3 Waiting for upload"
+    )
+
+    if app.session_state["run_complete"]:
+        results_count = len(app.session_state["results"])
+        sb.write(f"\u2705 Analysis complete \u2014 {results_count} results")
+    else:
+        sb.write("\u23f3 No analysis run yet")
+
+    gf_state = app.session_state.get("global_filter_state")
+    if gf_state is not None and gf_state.is_active():
+        stats = app.session_state.get("global_filter_stats") or {}
+        rows_after = stats.get("rows_after", 0)
+        rows_before = stats.get("rows_before", 0)
+        sb.write(
+            f"{STATUS_GLOBAL_FILTER_ACTIVE} \u2014 {rows_after:,} of "
+            f"{rows_before:,} respondents"
+        )
+    else:
+        sb.write(STATUS_GLOBAL_FILTER_INACTIVE)
+
+    with sb.expander("Need help?"):
+        sb.markdown(
+            "- **Upload** a CSV or XLSX of raw responses and the data map XLSX.\n"
+            "- **Global filter** restricts every analysis to a subset of "
+            "respondents.\n"
+            "- **Per-question filters** layer on top of the global filter for "
+            "ad-hoc slices.\n"
+            "- **Cross cuts** combine two questions; tick the suggestion box "
+            "for ideas.\n"
+            "- **Download** the workbook(s) at the bottom."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Section 1 — Upload
+# ---------------------------------------------------------------------------
+
+
+def _section_upload() -> None:
+    app = _require_streamlit()
+    app.header(SECTION_UPLOAD, anchor="section-1")
+    app.markdown(
+        "Upload your raw survey responses and the matching data map. The "
+        "data map describes question IDs and answer codes."
+    )
+
+    raw_col, datamap_col = app.columns(2)
+    with raw_col:
+        raw_upload = app.file_uploader(
+            "Raw survey data",
+            type=["csv", "xlsx"],
+            key="raw_data_upload",
+            help="Your raw survey responses, one row per respondent.",
+        )
+        app.caption(_upload_status(raw_upload))
+    with datamap_col:
+        datamap_upload = app.file_uploader(
+            "Data map",
+            type=["xlsx"],
+            key="datamap_upload",
+            help="The data map describing question codes and answer options.",
+        )
+        app.caption(_upload_status(datamap_upload))
+
+    if raw_upload is not None:
+        app.session_state["raw_data_path_label"] = raw_upload.name
+    if datamap_upload is not None:
+        app.session_state["datamap_path_label"] = datamap_upload.name
+
+    ready = raw_upload is not None and datamap_upload is not None
+    centre_left, centre_mid, centre_right = app.columns([2, 3, 2])
+    with centre_mid:
+        run_clicked = app.button(
+            "Run analysis",
+            type="primary",
+            disabled=not ready,
+            use_container_width=True,
+        )
+
+    if run_clicked:
+        raw_data_path = None
+        datamap_path = None
+        app.session_state["run_complete"] = False
+        try:
+            raw_data_path = _write_upload_to_temp(raw_upload)
+            datamap_path = _write_upload_to_temp(datamap_upload)
+            with app.status("Starting analysis...", expanded=True) as status:
+                _run_pipeline(raw_data_path, datamap_path, status)
+        except Exception as exc:  # noqa: BLE001
+            app.session_state["run_complete"] = False
+            app.error(f"{type(exc).__name__}: {exc}")
+            with app.expander("Show full traceback"):
+                app.code(traceback.format_exc())
+        finally:
+            _cleanup_temp_files(raw_data_path, datamap_path)
+
+    if app.session_state["run_complete"]:
+        schema = app.session_state["schema"]
+        results = app.session_state["results"]
+        skips = app.session_state["skips"]
+        log = app.session_state["log"]
+        m1, m2, m3, m4 = app.columns(4)
+        m1.metric("Total questions", len(schema.questions))
+        m2.metric("Single cuts produced", len(results))
+        m3.metric("Skipped", len(skips))
+        m4.metric("Audit records", len(log))
+
+
+# ---------------------------------------------------------------------------
+# Section 2 — Global filter
+# ---------------------------------------------------------------------------
+
+
+def _apply_global_filter_action(rows: list[tuple[str | None, Any]]) -> None:
+    from src.global_filter import apply_global_filter
+    from src.models import FilterSpec, GlobalFilterState
+
+    app = _require_streamlit()
+    specs = tuple(
+        FilterSpec(filter_question_id=q, filter_value=v)
+        for q, v in rows
+        if q is not None and v is not None
+    )
+
+    try:
+        state = GlobalFilterState(filters=specs)
+    except ValueError as exc:
+        app.error(f"Invalid global filter: {exc}")
+        return
+
+    try:
+        filtered_df, stats = apply_global_filter(
+            app.session_state["decoded_df"], state
+        )
+    except ValueError as exc:
+        app.error(f"Could not apply global filter: {exc}")
+        return
+
+    app.session_state["global_filter_state"] = state
+    app.session_state["global_filter_stats"] = stats
+    app.session_state["active_df"] = filtered_df
+    _rerun_single_cuts_on_active_df()
+    app.rerun()
+
+
+def _clear_global_filter_action() -> None:
+    from src.models import GlobalFilterState
+
+    app = _require_streamlit()
+    app.session_state["global_filter_state"] = GlobalFilterState()
+    app.session_state["global_filter_stats"] = None
+    app.session_state["global_filter_rows"] = []
+    app.session_state["active_df"] = app.session_state["decoded_df"]
+    _rerun_single_cuts_on_active_df()
+    app.rerun()
+
+
+def _section_global_filter() -> None:
+    app = _require_streamlit()
+    app.header(SECTION_GLOBAL_FILTER, anchor="section-2")
+
+    if not app.session_state["run_complete"]:
+        app.caption(
+            "Run an analysis first \u2014 the global filter becomes available "
+            "once the data is loaded."
+        )
+        return
+
+    app.markdown(TOOLTIP_GLOBAL_FILTER)
+
+    schema = app.session_state["schema"]
+    gf_state = app.session_state.get("global_filter_state")
+    stats = app.session_state.get("global_filter_stats") or {}
+
+    if gf_state is not None and gf_state.is_active():
+        rows_before = stats.get("rows_before", 0)
+        rows_after = stats.get("rows_after", 0)
+        app.info(
+            f"\U0001F535 Global filter active: {gf_state.description()}. "
+            f"All analyses below restricted to {rows_after:,} of "
+            f"{rows_before:,} respondents."
+        )
+    else:
+        app.caption(
+            f"No global filter. All analyses run on the full "
+            f"{schema.total_respondents:,} respondents."
+        )
+
+    eligible = _eligible_filter_questions()
+    if not eligible:
+        app.warning("No categorical questions available to use as global filters.")
+        return
+
+    question_options: list[tuple[str, Any]] = [("None", None)] + [
+        (
+            f"{q.canonical_id}: {(q.question_text or '')[:50]}",
+            q.canonical_id,
+        )
+        for q in eligible
+    ]
+
+    rows: list[tuple[str | None, Any]] = list(
+        app.session_state.get("global_filter_rows", [])
+    )
+    if not rows:
+        rows = [(None, None)]
+
+    new_rows: list[tuple[str | None, Any]] = []
+    delete_index: int | None = None
+    for i, (q_id, val) in enumerate(rows):
+        cols = app.columns([4, 4, 1])
+        with cols[0]:
+            q_pick = app.selectbox(
+                "Filter question",
+                options=question_options,
+                format_func=lambda x: x[0],
+                index=_find_q_index(q_id, question_options),
+                key=f"gf_q_{i}",
+                label_visibility="visible" if i == 0 else "collapsed",
+            )
+        picked_q_id = q_pick[1]
+        with cols[1]:
+            if picked_q_id is not None:
+                q_spec = schema.get_question(picked_q_id)
+                value_options: list[tuple[str, Any]] = [("Pick a value", None)] + [
+                    (f"{value}: {label}", value)
+                    for value, label in q_spec.option_map.items()
+                ]
+                v_index = 0
+                for vi, (_lbl, v) in enumerate(value_options):
+                    if v == val:
+                        v_index = vi
+                        break
+                v_pick = app.selectbox(
+                    "Value",
+                    options=value_options,
+                    format_func=lambda x: x[0],
+                    index=v_index,
+                    key=f"gf_v_{i}",
+                    label_visibility="visible" if i == 0 else "collapsed",
+                )
+                new_val = v_pick[1]
+            else:
+                app.selectbox(
+                    "Value",
+                    options=[("Pick a question first", None)],
+                    format_func=lambda x: x[0],
+                    disabled=True,
+                    key=f"gf_v_disabled_{i}",
+                    label_visibility="visible" if i == 0 else "collapsed",
+                )
+                new_val = None
+        with cols[2]:
+            if i == 0:
+                app.markdown("&nbsp;", unsafe_allow_html=True)
+            if app.button("\u2715", key=f"gf_del_{i}", help="Remove this filter"):
+                delete_index = i
+        new_rows.append((picked_q_id, new_val))
+
+    app.session_state["global_filter_rows"] = new_rows
+
+    if delete_index is not None:
+        new_rows.pop(delete_index)
+        app.session_state["global_filter_rows"] = new_rows
+        _purge_widget_keys("gf_q_", "gf_v_")
+        app.rerun()
+
+    btn_cols = app.columns([2, 2, 2, 4])
+    with btn_cols[0]:
+        if app.button("+ Add another filter", key="gf_add"):
+            app.session_state["global_filter_rows"] = new_rows + [(None, None)]
+            _purge_widget_keys("gf_q_", "gf_v_")
+            app.rerun()
+    with btn_cols[1]:
+        complete_rows = [(q, v) for q, v in new_rows if q is not None and v is not None]
+        if app.button(
+            "Apply global filter",
+            key="gf_apply",
+            type="primary",
+            disabled=not complete_rows,
+        ):
+            _apply_global_filter_action(new_rows)
+    with btn_cols[2]:
+        if gf_state is not None and gf_state.is_active():
+            if app.button("Clear global filter", key="gf_clear"):
+                _clear_global_filter_action()
+
+
+# ---------------------------------------------------------------------------
+# Section 3 — Single cuts
+# ---------------------------------------------------------------------------
+
+
+def _section_single_cuts() -> None:
+    app = _require_streamlit()
+    app.header(SECTION_RESULTS, anchor="section-3")
+
+    if not app.session_state["run_complete"]:
+        app.info(EMPTY_NO_RESULTS)
+        return
+
     results = app.session_state["results"]
     schema = app.session_state["schema"]
-    if not results or schema is None:
-        return
-    app.subheader("Single cuts")
+
+    app.text_input(
+        "Search questions",
+        placeholder="Filter by ID or text",
+        key="ss_search",
+        help="Case-insensitive substring match on canonical ID or question text.",
+    )
+    needle = (app.session_state.get("ss_search") or "").strip().lower()
+
+    matched = 0
     for result in results:
         spec = schema.get_question(result.question_id)
         if spec is None:
             continue
+        if needle:
+            haystack = f"{spec.canonical_id} {spec.question_text or ''}".lower()
+            if needle not in haystack:
+                continue
+        matched += 1
         _render_single_cut_card(result, spec)
 
+    if needle and matched == 0:
+        app.caption(f"No questions match '{needle}'.")
+    else:
+        app.caption(f"Showing {matched} of {len(results)} single cuts.")
 
-def _render_filtered_workbook_download() -> None:
+
+# ---------------------------------------------------------------------------
+# Section 4 — Cross cuts
+# ---------------------------------------------------------------------------
+
+
+def _section_cross_cuts() -> None:
     app = _require_streamlit()
-    filtered_results = app.session_state.get("filtered_results", {})
-    selected = [
-        result
-        for canonical_id, result in filtered_results.items()
-        if app.session_state.get(f"fsc_select_{canonical_id}", True)
-    ]
-    if app.button(
-        "Generate filtered workbook",
-        disabled=(len(selected) == 0),
-        help=(
-            f"{len(selected)} filtered analyses selected"
-            if selected
-            else "Apply at least one filter to enable"
-        ),
+    app.header(SECTION_CROSS_CUTS, anchor="section-4")
+
+    if not app.session_state["run_complete"]:
+        app.info(EMPTY_NO_CROSS_CUTS)
+        return
+
+    if app.checkbox(
+        "Show suggested cross cuts",
+        key="show_suggested_cross_cuts",
+        help=TOOLTIP_CROSS_CUT_SUGGESTIONS,
     ):
-        from src.excel_exporter import export_filtered_single_cuts
-
-        fsc_path = "/tmp/filtered_single_cuts.xlsx"
-        try:
-            export_filtered_single_cuts(
-                filtered_results=selected,
-                schema=app.session_state["schema"],
-                log=app.session_state["log"],
-                output_path=fsc_path,
-            )
-            with open(fsc_path, "rb") as workbook_file:
-                app.session_state["filtered_workbook_bytes"] = (
-                    workbook_file.read()
-                )
-        except Exception as exc:  # noqa: BLE001
-            app.error(f"Filtered export failed: {type(exc).__name__}: {exc}")
-            with app.expander("Show traceback"):
-                app.code(traceback.format_exc())
-
-    if app.session_state.get("filtered_workbook_bytes"):
-        app.download_button(
-            label="Download filtered workbook",
-            data=app.session_state["filtered_workbook_bytes"],
-            file_name="filtered_single_cuts.xlsx",
-            mime=(
-                "application/vnd.openxmlformats-officedocument."
-                "spreadsheetml.sheet"
-            ),
-        )
-
-
-def _render_cross_cut_results() -> None:
-    app = _require_streamlit()
-    results = app.session_state["cross_cut_results"]
-
-    app.subheader("Cross cuts")
-    if app.checkbox("Show suggested cross cuts", key="show_suggested_cross_cuts"):
         with app.expander("Suggested cross cuts", expanded=True):
             _render_suggested_cross_cuts()
 
-    with app.expander("Run manual cross cut"):
+    with app.expander("Run a manual cross cut"):
         _render_manual_cross_cut()
 
+    results = app.session_state["cross_cut_results"]
     if not results:
-        app.write("No cross cuts have been run yet.")
+        app.caption("No cross cuts run yet. Build one above to populate this list.")
         return
 
-    app.write("Cross-cut results")
+    app.markdown("**Cross-cut results**")
     for result in results:
-        with app.container():
-            col_check, col_title = app.columns([1, 11])
-            with col_check:
-                app.checkbox(
-                    "Include in cross-cut workbook",
-                    value=True,
-                    key=f"cc_select_{result.cross_cut_id}",
-                    label_visibility="collapsed",
-                )
-            with col_title:
-                app.markdown(
-                    f"**{result.cross_cut_id}** — {result.synthetic_question_title}"
-                )
-                app.caption(
-                    f"Type: {result.analysis_type.value}  \u00b7  "
-                    f"Display: {result.display_mode}  \u00b7  "
-                    f"{len(result.audit_records)} audit records  \u00b7  "
-                    f"{', '.join(result.source_question_ids)}"
-                )
-
+        with app.expander(
+            f"{result.cross_cut_id} \u2014 {result.synthetic_question_title}",
+            expanded=False,
+        ):
+            app.caption(
+                f"Type: {result.analysis_type.value}  \u00b7  "
+                f"Display: {result.display_mode}  \u00b7  "
+                f"{len(result.audit_records)} audit records  \u00b7  "
+                f"{', '.join(result.source_question_ids)}"
+            )
             _render_cross_cut_preview(result)
-
             if result.warnings:
                 with app.expander("Warnings"):
                     for warning in result.warnings:
                         app.write(f"\u2022 {warning}")
-
-            app.divider()
-
-    selected_results = [
-        result
-        for result in app.session_state["cross_cut_results"]
-        if app.session_state.get(f"cc_select_{result.cross_cut_id}", True)
-    ]
-
-    if app.button(
-        "Download selected cross cuts",
-        disabled=(len(selected_results) == 0),
-        help=(
-            f"{len(selected_results)} cross cuts selected"
-            if selected_results
-            else "Tick at least one cross cut to enable download"
-        ),
-    ):
-        from src.excel_exporter import export_cross_cuts_only
-
-        cc_output_path = "/tmp/cross_cuts.xlsx"
-        export_cross_cuts_only(
-            cross_cut_results=selected_results,
-            schema=app.session_state["schema"],
-            log=app.session_state["log"],
-            output_path=cc_output_path,
-        )
-        with open(cc_output_path, "rb") as file:
-            app.session_state["cross_cut_only_bytes"] = file.read()
-
-    if app.session_state["cross_cut_only_bytes"]:
-        app.download_button(
-            label="Download cross-cut workbook",
-            data=app.session_state["cross_cut_only_bytes"],
-            file_name="cross_cut_analysis.xlsx",
-            mime=(
-                "application/vnd.openxmlformats-officedocument."
-                "spreadsheetml.sheet"
-            ),
-        )
-
-    with app.expander("View cross-cut results table"):
-        app.dataframe(_cross_cut_rows(results), use_container_width=True)
+            cb_col, rm_col = app.columns([3, 1])
+            with cb_col:
+                app.checkbox(
+                    "Include in cross-cut workbook",
+                    value=app.session_state.get(
+                        f"cc_select_{result.cross_cut_id}", True
+                    ),
+                    key=f"cc_select_{result.cross_cut_id}",
+                )
+            with rm_col:
+                if app.button(
+                    "Remove",
+                    key=f"cc_remove_{result.cross_cut_id}",
+                    help="Remove this cross cut from the session",
+                ):
+                    app.session_state["cross_cut_results"] = [
+                        r
+                        for r in app.session_state["cross_cut_results"]
+                        if r.cross_cut_id != result.cross_cut_id
+                    ]
+                    app.session_state["cross_cut_only_bytes"] = None
+                    _refresh_full_workbook()
+                    app.rerun()
 
 
-def _render_results_section() -> None:
+# ---------------------------------------------------------------------------
+# Section 5 — Downloads
+# ---------------------------------------------------------------------------
+
+
+def _section_downloads() -> None:
     app = _require_streamlit()
+    app.header(SECTION_DOWNLOADS, anchor="section-5")
+
     if not app.session_state["run_complete"]:
+        app.info("Run an analysis to generate downloadable workbooks.")
         return
 
-    results = app.session_state["results"]
-    skips = app.session_state["skips"]
-    schema = app.session_state["schema"]
-    quality_report = app.session_state["quality_report"]
-    log = app.session_state["log"]
-    output_path = app.session_state["output_path"]
+    output_path = app.session_state.get("output_path")
+    cross_cut_results = app.session_state.get("cross_cut_results", [])
+    selected_cross_cuts = [
+        r
+        for r in cross_cut_results
+        if app.session_state.get(f"cc_select_{r.cross_cut_id}", True)
+    ]
+    filtered_results = app.session_state.get("filtered_results", {})
+    selected_filtered = [
+        r
+        for cid, r in filtered_results.items()
+        if app.session_state.get(f"fsc_select_{cid}", True)
+    ]
 
-    app.subheader("Results")
-    total_col, results_col, skips_col, audit_col = app.columns(4)
-    total_col.metric("Total questions analysed", len(schema.questions))
-    results_col.metric("Results produced", len(results))
-    skips_col.metric("Skipped questions", len(skips))
-    audit_col.metric("Audit log records", len(log))
-
-    if output_path and os.path.exists(output_path):
-        with open(output_path, "rb") as workbook_file:
-            workbook_bytes = workbook_file.read()
-        app.download_button(
-            label="Download Excel workbook",
-            data=workbook_bytes,
-            file_name="survey_analysis.xlsx",
-            mime=(
-                "application/vnd.openxmlformats-officedocument."
-                "spreadsheetml.sheet"
-            ),
+    # Invalidate cached workbook bytes if the selection signature changed
+    # (otherwise the user could click Download and get an outdated workbook
+    # that was generated against a previous selection).
+    cc_signature = tuple(sorted(r.cross_cut_id for r in selected_cross_cuts))
+    if app.session_state.get("cross_cut_only_signature") != cc_signature:
+        app.session_state["cross_cut_only_bytes"] = None
+    fsc_signature = tuple(
+        sorted(
+            cid
+            for cid in filtered_results
+            if app.session_state.get(f"fsc_select_{cid}", True)
         )
-
-    _render_filtered_workbook_download()
-    app.caption(
-        "Three workbook downloads: full single-cut workbook (unfiltered + "
-        "cross cuts inline), cross-cut-only workbook (selected cross cuts), "
-        "filtered workbook (selected filtered single cuts)."
     )
+    if app.session_state.get("filtered_workbook_signature") != fsc_signature:
+        app.session_state["filtered_workbook_bytes"] = None
 
-    _render_single_cut_cards()
-    _render_cross_cut_results()
+    col_full, col_cc, col_fsc = app.columns(3)
 
-    with app.expander("View quality warnings"):
-        if quality_report.warnings:
-            for warning in quality_report.warnings:
-                app.write(warning)
+    with col_full:
+        app.markdown("**Single-cut workbook**")
+        app.caption("All single cuts + cross cuts inline.")
+        if output_path and os.path.exists(output_path):
+            with open(output_path, "rb") as workbook_file:
+                workbook_bytes = workbook_file.read()
+            app.download_button(
+                label="Download single-cut workbook",
+                data=workbook_bytes,
+                file_name="survey_analysis.xlsx",
+                mime=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
+                use_container_width=True,
+            )
         else:
-            app.write("No warnings")
+            app.button(
+                "Download single-cut workbook",
+                disabled=True,
+                use_container_width=True,
+            )
 
-    with app.expander("View skipped questions"):
-        app.dataframe(_skip_rows(skips), use_container_width=True)
+    with col_cc:
+        app.markdown("**Cross-cut-only workbook**")
+        app.caption("Just the cross cuts you've ticked above.")
+        if app.button(
+            "Generate cross-cut workbook",
+            disabled=(len(selected_cross_cuts) == 0),
+            use_container_width=True,
+            key="gen_cc_workbook",
+            help=(
+                f"{len(selected_cross_cuts)} cross cuts selected"
+                if selected_cross_cuts
+                else "Tick at least one cross cut to enable"
+            ),
+        ):
+            from src.excel_exporter import export_cross_cuts_only
 
-    with app.expander("View results preview"):
-        app.dataframe(_result_rows(results), use_container_width=True)
+            cc_path = "/tmp/cross_cuts.xlsx"
+            try:
+                export_cross_cuts_only(
+                    cross_cut_results=selected_cross_cuts,
+                    schema=app.session_state["schema"],
+                    log=app.session_state["log"],
+                    output_path=cc_path,
+                )
+                with open(cc_path, "rb") as f:
+                    app.session_state["cross_cut_only_bytes"] = f.read()
+                app.session_state["cross_cut_only_signature"] = cc_signature
+            except Exception as exc:  # noqa: BLE001
+                app.error(f"Cross-cut export failed: {type(exc).__name__}: {exc}")
+                with app.expander("Show traceback"):
+                    app.code(traceback.format_exc())
+        if app.session_state.get("cross_cut_only_bytes"):
+            app.download_button(
+                label="Download cross-cut workbook",
+                data=app.session_state["cross_cut_only_bytes"],
+                file_name="cross_cut_analysis.xlsx",
+                mime=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
+                use_container_width=True,
+            )
 
-    with app.expander("View audit log"):
-        app.dataframe(_audit_rows(log.all_records()), use_container_width=True)
+    with col_fsc:
+        app.markdown("**Filtered workbook**")
+        app.caption("Per-question filtered analyses you've ticked.")
+        if app.button(
+            "Generate filtered workbook",
+            disabled=(len(selected_filtered) == 0),
+            use_container_width=True,
+            key="gen_fsc_workbook",
+            help=(
+                f"{len(selected_filtered)} filtered analyses selected"
+                if selected_filtered
+                else "Apply at least one per-question filter to enable"
+            ),
+        ):
+            from src.excel_exporter import export_filtered_single_cuts
+
+            fsc_path = "/tmp/filtered_single_cuts.xlsx"
+            try:
+                export_filtered_single_cuts(
+                    filtered_results=selected_filtered,
+                    schema=app.session_state["schema"],
+                    log=app.session_state["log"],
+                    output_path=fsc_path,
+                )
+                with open(fsc_path, "rb") as f:
+                    app.session_state["filtered_workbook_bytes"] = f.read()
+                app.session_state["filtered_workbook_signature"] = fsc_signature
+            except Exception as exc:  # noqa: BLE001
+                app.error(f"Filtered export failed: {type(exc).__name__}: {exc}")
+                with app.expander("Show traceback"):
+                    app.code(traceback.format_exc())
+        if app.session_state.get("filtered_workbook_bytes"):
+            app.download_button(
+                label="Download filtered workbook",
+                data=app.session_state["filtered_workbook_bytes"],
+                file_name="filtered_single_cuts.xlsx",
+                mime=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
+                use_container_width=True,
+            )
+
+    app.caption(TOOLTIP_THREE_DOWNLOADS)
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 
 def main() -> None:
+    app = _require_streamlit()
+    app.set_page_config(
+        page_title=APP_TITLE,
+        page_icon="\U0001F4CA",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
     _initialise_session_state()
-    _render_header()
-    raw_upload, datamap_upload = _render_upload_section()
-    _handle_run(raw_upload, datamap_upload)
-    _render_results_section()
+    _render_sidebar()
+
+    app.title(APP_TITLE)
+    app.caption(APP_TAGLINE)
+    app.divider()
+
+    _section_upload()
+    app.divider()
+    _section_global_filter()
+    app.divider()
+    _section_single_cuts()
+    app.divider()
+    _section_cross_cuts()
+    app.divider()
+    _section_downloads()
 
 
 if __name__ == "__main__":
