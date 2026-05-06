@@ -21,6 +21,8 @@ from src.models import (
     AnalysisType,
     CrossCutResult,
     DataQualityReport,
+    FilteredSingleCutResult,
+    FilterSpec,
     GridSingleSelectResult,
     MultiSelectResult,
     NumericResult,
@@ -132,6 +134,28 @@ def export_cross_cuts_only(
         )
     _write_calculation_log(workbook, log, formats)
     _write_filter_log(workbook, cross_cut_results, cc_sheet_names, formats)
+    workbook.close()
+
+
+def export_filtered_single_cuts(
+    filtered_results: list[FilteredSingleCutResult],
+    schema: SurveySchema,
+    log: CalculationLog,
+    output_path: str,
+) -> None:
+    """Write a workbook of filtered single-cut analyses."""
+
+    workbook = _create_workbook(output_path)
+    formats = _make_formats(workbook)
+    used_sheet_names: set[str] = set()
+    fsc_sheet_names = _filtered_sheet_names(filtered_results, used_sheet_names)
+
+    _write_filtered_run_summary(workbook, filtered_results, schema, log, formats)
+    _write_filtered_cut_index(workbook, filtered_results, fsc_sheet_names, schema, formats)
+    for index, result in enumerate(filtered_results):
+        _write_fsc_sheet(workbook, result, schema, formats, fsc_sheet_names[index])
+    _write_filtered_calculation_log(workbook, filtered_results, log, formats)
+    _write_filtered_filter_log(workbook, filtered_results, fsc_sheet_names, schema, formats)
     workbook.close()
 
 
@@ -529,6 +553,184 @@ def _write_cross_cut_index(
         _write(ws, row_index, 7, " | ".join(result.warnings))
     ws.freeze_panes(1, 0)
     _autofit(ws)
+
+
+def _write_filtered_run_summary(
+    workbook: Any,
+    filtered_results: list[FilteredSingleCutResult],
+    schema: SurveySchema,
+    log: CalculationLog,
+    formats: dict[str, Any],
+) -> None:
+    ws = workbook.add_worksheet("Run_Summary")
+    rows = [
+        ("Workbook type:", "Filtered single cuts"),
+        ("Source datamap:", schema.source_datamap_path),
+        ("Source raw data:", schema.source_rawdata_path),
+        ("Run timestamp:", schema.parsed_at.isoformat()),
+        ("Filtered analyses included:", len(filtered_results)),
+        ("Audit log records:", len(log)),
+    ]
+    for row_index, (label, value) in enumerate(rows):
+        _write(ws, row_index, 0, label, formats["bold"])
+        _write(ws, row_index, 1, value)
+    ws.set_column(0, 0, 30)
+    _autofit(ws)
+
+
+def _write_filtered_cut_index(
+    workbook: Any,
+    filtered_results: list[FilteredSingleCutResult],
+    fsc_sheet_names: dict[int, str],
+    schema: SurveySchema,
+    formats: dict[str, Any],
+) -> None:
+    ws = workbook.add_worksheet("Filtered_Cut_Index")
+    headers = [
+        "Sheet Name",
+        "Target Question",
+        "Filters Applied",
+        "Dispatch Mode",
+        "Filtered N",
+        "Warnings",
+    ]
+    _write_header_row(ws, 0, headers, formats)
+    for row_index, result in enumerate(filtered_results, start=1):
+        sheet_name = fsc_sheet_names[row_index - 1]
+        _write_url(
+            ws,
+            row_index,
+            0,
+            f"internal:'{_quote_sheet_name(sheet_name)}'!A1",
+            formats["link"],
+            sheet_name,
+        )
+        _write(ws, row_index, 1, result.target_question_id)
+        _write(
+            ws,
+            row_index,
+            2,
+            " | ".join(
+                _filter_description(filter_spec, schema, compact_breakdown=True)
+                for filter_spec in result.filters_applied
+            ),
+        )
+        _write(ws, row_index, 3, result.dispatch_mode)
+        _write(ws, row_index, 4, result.filtered_n, formats["count"])
+        _write(ws, row_index, 5, " | ".join(result.warnings))
+    ws.freeze_panes(1, 0)
+    _autofit(ws)
+
+
+def _write_fsc_sheet(
+    workbook: Any,
+    result: FilteredSingleCutResult,
+    schema: SurveySchema,
+    formats: dict[str, Any],
+    sheet_name: str,
+) -> None:
+    ws = workbook.add_worksheet(sheet_name)
+    target_spec = schema.get_question(result.target_question_id)
+    target_text = target_spec.question_text if target_spec else result.target_question_id
+
+    _write(ws, 0, 0, "Target question:", formats["bold"])
+    _write(ws, 1, 0, target_text)
+    _write(ws, 2, 0, "Target ID:", formats["bold"])
+    _write(ws, 3, 0, result.target_question_id)
+    _write(ws, 4, 0, "Filters applied:", formats["bold"])
+
+    row_index = 5
+    if result.filters_applied:
+        for filter_spec in result.filters_applied:
+            _write(
+                ws,
+                row_index,
+                0,
+                "  " + _filter_description(
+                    filter_spec,
+                    schema,
+                    compact_breakdown=False,
+                ),
+            )
+            row_index += 1
+    else:
+        _write(ws, row_index, 0, "  <none>")
+        row_index += 1
+
+    row_index += 1
+    _write(ws, row_index, 0, "Filtered N:", formats["bold"])
+    _write(ws, row_index, 1, result.filtered_n, formats["count"])
+    row_index += 1
+    _write(ws, row_index, 0, "Dispatch mode:", formats["bold"])
+    _write(ws, row_index, 1, result.dispatch_mode)
+    row_index += 2
+
+    if result.dispatch_mode == "single_cut_filtered":
+        if result.single_cut_result is None:
+            _write(ws, row_index, 0, "Missing filtered single-cut result", formats["bold"])
+            last_row = row_index
+        else:
+            last_row = _write_single_cut_result_body(
+                ws, result.single_cut_result, schema, formats, row_index
+            )
+    elif result.dispatch_mode == "cross_cut_breakdown":
+        if result.cross_cut_result is None:
+            _write(ws, row_index, 0, "Missing cross-cut breakdown result", formats["bold"])
+            last_row = row_index
+        else:
+            last_row = _write_cross_cut_result_body(
+                ws, result.cross_cut_result, schema, formats, row_index
+            )
+    else:
+        _write(ws, row_index, 0, "Unsupported filtered result mode", formats["bold"])
+        last_row = row_index
+
+    if result.warnings:
+        last_row += 2
+        _write(ws, last_row, 0, "Warnings:", formats["bold"])
+        for offset, warning in enumerate(result.warnings, start=1):
+            _write(ws, last_row + offset, 0, warning)
+
+    ws.freeze_panes(row_index, 0)
+    _autofit(ws)
+
+
+def _write_single_cut_result_body(
+    ws: Any,
+    result: SingleCutResult,
+    schema: SurveySchema,
+    formats: dict[str, Any],
+    start_row: int,
+) -> int:
+    if isinstance(result, GridSingleSelectResult):
+        return _write_grid_body(ws, result, schema, formats, start_row)
+    if isinstance(result, SingleSelectResult):
+        return _write_single_select_body(ws, result, formats, start_row)
+    if isinstance(result, MultiSelectResult):
+        return _write_multi_select_body(ws, result, formats, start_row)
+    if isinstance(result, NumericResult):
+        return _write_numeric_body(ws, result, formats, start_row)
+    _write(ws, start_row, 0, "Unsupported single-cut result type", formats["bold"])
+    return start_row
+
+
+def _write_cross_cut_result_body(
+    ws: Any,
+    result: CrossCutResult,
+    schema: SurveySchema,
+    formats: dict[str, Any],
+    start_row: int,
+) -> int:
+    if result.analysis_type is AnalysisType.CROSS_TAB:
+        return _write_cross_tab_body(ws, result, schema, formats, start_row)
+    if result.analysis_type is AnalysisType.SEGMENT_PROFILE:
+        return _write_segment_profile_body(ws, result, schema, formats, start_row)
+    if result.analysis_type is AnalysisType.GROUP_COMPARISON:
+        return _write_group_comparison_body(ws, result, schema, formats, start_row)
+    if result.analysis_type is AnalysisType.EXPECTED_VS_REALIZED:
+        return _write_expected_vs_realized_body(ws, result, schema, formats, start_row)
+    _write(ws, start_row, 0, "Unsupported cross-cut result type", formats["bold"])
+    return start_row
 
 
 def _write_cc_sheet(
@@ -982,6 +1184,51 @@ def _write_filter_log(
     _autofit(ws)
 
 
+def _write_filtered_calculation_log(
+    workbook: Any,
+    filtered_results: list[FilteredSingleCutResult],
+    log: CalculationLog,
+    formats: dict[str, Any],
+) -> None:
+    filtered_log = CalculationLog()
+    for record in _filtered_audit_records(filtered_results, log):
+        filtered_log.record(record)
+    _write_calculation_log(workbook, filtered_log, formats)
+
+
+def _write_filtered_filter_log(
+    workbook: Any,
+    filtered_results: list[FilteredSingleCutResult],
+    fsc_sheet_names: dict[int, str],
+    schema: SurveySchema,
+    formats: dict[str, Any],
+) -> None:
+    ws = workbook.add_worksheet("Filter_Log")
+    headers = ["Sheet Name", "Filter Question", "Filter Value", "Filter Description"]
+    _write_header_row(ws, 0, headers, formats)
+    row_index = 1
+    for result_index, result in enumerate(filtered_results):
+        sheet_name = fsc_sheet_names[result_index]
+        for filter_spec in result.filters_applied:
+            _write(ws, row_index, 0, sheet_name)
+            _write(ws, row_index, 1, filter_spec.filter_question_id)
+            _write(
+                ws,
+                row_index,
+                2,
+                "" if filter_spec.filter_value is None else filter_spec.filter_value,
+            )
+            _write(
+                ws,
+                row_index,
+                3,
+                _filter_description(filter_spec, schema, compact_breakdown=False),
+            )
+            row_index += 1
+    ws.freeze_panes(1, 0)
+    _autofit(ws)
+
+
 def _write_data_quality(
     workbook: Any,
     quality_report: DataQualityReport,
@@ -1120,6 +1367,80 @@ def _segment_profile_display_mode(display_mode: str) -> str:
 
 def _filter_log_entry_count(cross_cut_results: list[CrossCutResult]) -> int:
     return sum(1 for result in cross_cut_results if result.result_table.get("filter_expr"))
+
+
+def _filtered_sheet_names(
+    filtered_results: list[FilteredSingleCutResult],
+    used_sheet_names: set[str],
+) -> dict[int, str]:
+    target_counts: dict[str, int] = defaultdict(int)
+    for result in filtered_results:
+        target_counts[result.target_question_id] += 1
+
+    target_seen: dict[str, int] = defaultdict(int)
+    sheet_names: dict[int, str] = {}
+    for index, result in enumerate(filtered_results):
+        target_seen[result.target_question_id] += 1
+        base_name = f"FSC_{result.target_question_id}"
+        if target_counts[result.target_question_id] > 1:
+            base_name = f"{base_name}_{target_seen[result.target_question_id]:02d}"
+        sheet_names[index] = _unique_sheet_name(base_name, used_sheet_names)
+    return sheet_names
+
+
+def _filter_description(
+    filter_spec: FilterSpec,
+    schema: SurveySchema,
+    compact_breakdown: bool,
+) -> str:
+    if filter_spec.filter_value is None:
+        if compact_breakdown:
+            return f"{filter_spec.filter_question_id} (breakdown)"
+        return f"{filter_spec.filter_question_id} (breakdown - no specific value)"
+
+    label = _filter_option_label(filter_spec, schema)
+    if label:
+        return (
+            f"{filter_spec.filter_question_id} == {filter_spec.filter_value} "
+            f"({label})"
+        )
+    return f"{filter_spec.filter_question_id} == {filter_spec.filter_value}"
+
+
+def _filter_option_label(filter_spec: FilterSpec, schema: SurveySchema) -> str | None:
+    spec = schema.get_question(filter_spec.filter_question_id)
+    if spec is None:
+        return None
+    value = filter_spec.filter_value
+    if value in spec.option_map:
+        return str(spec.option_map[value])
+    value_as_string = str(value)
+    for option_code, label in spec.option_map.items():
+        if str(option_code) == value_as_string:
+            return str(label)
+    return None
+
+
+def _filtered_audit_records(
+    filtered_results: list[FilteredSingleCutResult],
+    log: CalculationLog,
+) -> tuple[AuditRecord, ...]:
+    source_ids = {
+        result.target_question_id
+        for result in filtered_results
+    }
+    for result in filtered_results:
+        for filter_spec in result.filters_applied:
+            source_ids.add(filter_spec.filter_question_id)
+
+    records = []
+    for record in log.all_records():
+        if record.source_question_id in source_ids:
+            records.append(record)
+            continue
+        if record.output_sheet.startswith(("FSC_", "CC_")):
+            records.append(record)
+    return tuple(records)
 
 
 def _cross_tab_column_codes(matrix: dict, column_label_map: dict) -> list[Any]:

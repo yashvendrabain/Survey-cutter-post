@@ -39,6 +39,8 @@ SESSION_DEFAULTS = {
     "cross_cut_suggestions": [],
     "cross_cut_only_bytes": None,
     "run_complete": False,
+    "filtered_results": {},
+    "filtered_workbook_bytes": None,
 }
 
 
@@ -541,6 +543,332 @@ def _render_cross_cut_preview(result: Any) -> None:
             app.error(f"Could not render preview: {type(exc).__name__}: {exc}")
 
 
+def _format_filter(filter_spec: Any) -> str:
+    if filter_spec.filter_value is None:
+        return f"{filter_spec.filter_question_id} (breakdown)"
+    return f"{filter_spec.filter_question_id} = {filter_spec.filter_value}"
+
+
+def _render_single_cut_result(result: Any, spec: Any) -> None:
+    """Counts-only display of a SingleCutResult."""
+    import pandas as pd
+    from src.models import (
+        GridSingleSelectResult,
+        MultiSelectResult,
+        NumericResult,
+        SingleSelectResult,
+    )
+
+    app = _require_streamlit()
+    app.caption(
+        f"Valid N: {result.valid_n:,}  \u00b7  Missing N: {result.missing_n:,}"
+    )
+    if isinstance(result, GridSingleSelectResult):
+        grid_rows: list[dict[str, Any]] = []
+        for sub_id, row_result in result.rows.items():
+            row_label = (
+                spec.grid_row_labels.get(sub_id, sub_id)
+                if spec.grid_row_labels
+                else sub_id
+            )
+            row_dict: dict[str, Any] = {"Row": row_label}
+            for code, payload in row_result.distribution.items():
+                row_dict[f"{code}: {payload.get('label', '')}"] = payload.get(
+                    "count", 0
+                )
+            grid_rows.append(row_dict)
+        app.dataframe(
+            pd.DataFrame(grid_rows), use_container_width=True, hide_index=True
+        )
+    elif isinstance(result, SingleSelectResult):
+        rows = [
+            {
+                "Code": code,
+                "Label": payload.get("label", ""),
+                "Count": payload.get("count", 0),
+            }
+            for code, payload in sorted(
+                result.distribution.items(), key=lambda kv: str(kv[0])
+            )
+        ]
+        app.dataframe(
+            pd.DataFrame(rows), use_container_width=True, hide_index=True
+        )
+    elif isinstance(result, MultiSelectResult):
+        rows = [
+            {
+                "Sub-column": sub_id,
+                "Label": payload.get("label", ""),
+                "Count": payload.get("count", 0),
+            }
+            for sub_id, payload in result.selections.items()
+        ]
+        rows.sort(key=lambda r: r["Count"], reverse=True)
+        app.dataframe(
+            pd.DataFrame(rows), use_container_width=True, hide_index=True
+        )
+    elif isinstance(result, NumericResult):
+        rows = [
+            {"Statistic": "Valid N", "Value": result.valid_n},
+            {"Statistic": "Missing N", "Value": result.missing_n},
+        ]
+        app.dataframe(
+            pd.DataFrame(rows), use_container_width=True, hide_index=True
+        )
+        app.caption("Mean, median, std and percentiles in the downloaded workbook.")
+    else:
+        app.info("Preview not available for this result type.")
+
+
+def _render_single_cut_card(result: Any, spec: Any) -> None:
+    from src.models import FilterSpec
+
+    app = _require_streamlit()
+    schema = app.session_state["schema"]
+    short_text = (spec.question_text or "")[:80]
+
+    with app.expander(
+        f"{spec.canonical_id}: {short_text}", expanded=False
+    ):
+        app.markdown("**Filters**")
+        cols = app.columns([3, 3, 3, 3, 2])
+
+        demo_questions = schema.demographic_questions()
+        demo_options = [("None", None)] + [
+            (
+                f"{q.canonical_id}: {(q.question_text or '')[:50]}",
+                q.canonical_id,
+            )
+            for q in demo_questions
+        ]
+        with cols[0]:
+            demo_pick = app.selectbox(
+                "Demographic dimension",
+                options=demo_options,
+                format_func=lambda x: x[0],
+                index=0,
+                key=f"demo_q_{spec.canonical_id}",
+            )
+
+        demo_q_id = demo_pick[1]
+        with cols[1]:
+            if demo_q_id:
+                demo_q = schema.get_question(demo_q_id)
+                value_options = [("All values (breakdown)", None)] + [
+                    (f"{value}: {label}", value)
+                    for value, label in demo_q.option_map.items()
+                ]
+                demo_value_pick = app.selectbox(
+                    "Demographic value",
+                    options=value_options,
+                    format_func=lambda x: x[0],
+                    index=0,
+                    key=f"demo_v_{spec.canonical_id}",
+                )
+            else:
+                demo_value_pick = ("", None)
+                app.selectbox(
+                    "Demographic value",
+                    options=[("Select a dimension first", None)],
+                    format_func=lambda x: x[0],
+                    disabled=True,
+                    key=f"demo_v_{spec.canonical_id}_disabled",
+                )
+
+        all_eligible = schema.analysis_eligible_questions()
+        custom_options = [("None", None)] + [
+            (
+                f"{q.canonical_id}: {(q.question_text or '')[:50]}",
+                q.canonical_id,
+            )
+            for q in all_eligible
+            if q.option_map
+            and not q.is_demographic
+            and q.canonical_id != spec.canonical_id
+        ]
+        with cols[2]:
+            custom_pick = app.selectbox(
+                "Custom filter (any question)",
+                options=custom_options,
+                format_func=lambda x: x[0],
+                index=0,
+                key=f"custom_q_{spec.canonical_id}",
+            )
+
+        custom_q_id = custom_pick[1]
+        with cols[3]:
+            if custom_q_id:
+                custom_q = schema.get_question(custom_q_id)
+                cv_options = [("All values (breakdown)", None)] + [
+                    (f"{value}: {label}", value)
+                    for value, label in custom_q.option_map.items()
+                ]
+                custom_value_pick = app.selectbox(
+                    "Custom value",
+                    options=cv_options,
+                    format_func=lambda x: x[0],
+                    index=0,
+                    key=f"custom_v_{spec.canonical_id}",
+                )
+            else:
+                custom_value_pick = ("", None)
+                app.selectbox(
+                    "Custom value",
+                    options=[("Select a dimension first", None)],
+                    format_func=lambda x: x[0],
+                    disabled=True,
+                    key=f"custom_v_{spec.canonical_id}_disabled",
+                )
+
+        with cols[4]:
+            apply_filter = app.button(
+                "Apply",
+                key=f"apply_filter_{spec.canonical_id}",
+                disabled=(demo_pick[1] is None and custom_pick[1] is None),
+            )
+
+        if apply_filter:
+            filters = []
+            if demo_pick[1] is not None:
+                filters.append(
+                    FilterSpec(
+                        filter_question_id=demo_pick[1],
+                        filter_value=demo_value_pick[1],
+                    )
+                )
+            if custom_pick[1] is not None:
+                filters.append(
+                    FilterSpec(
+                        filter_question_id=custom_pick[1],
+                        filter_value=custom_value_pick[1],
+                    )
+                )
+            breakdowns = [f for f in filters if f.filter_value is None]
+            if len(breakdowns) > 1:
+                app.error(
+                    "Only one breakdown filter at a time. "
+                    "Either pick a value for one of them or remove it."
+                )
+            else:
+                try:
+                    from src.filtered_single_cut import (
+                        compute_filtered_single_cut,
+                    )
+
+                    filtered_result = compute_filtered_single_cut(
+                        spec.canonical_id,
+                        filters,
+                        schema,
+                        app.session_state["dataframe"],
+                        app.session_state["log"],
+                    )
+                    app.session_state.setdefault("filtered_results", {})
+                    app.session_state["filtered_results"][
+                        spec.canonical_id
+                    ] = filtered_result
+                    app.session_state["filtered_workbook_bytes"] = None
+                    app.rerun()
+                except Exception as exc:  # noqa: BLE001
+                    app.error(f"Filter failed: {type(exc).__name__}: {exc}")
+                    with app.expander("Show traceback"):
+                        app.code(traceback.format_exc())
+
+        app.divider()
+
+        filtered = app.session_state.get("filtered_results", {}).get(
+            spec.canonical_id
+        )
+        if filtered is not None:
+            app.info(
+                "Filtered: "
+                + ", ".join(
+                    _format_filter(f) for f in filtered.filters_applied
+                )
+                + f"  \u00b7  N = {filtered.filtered_n:,}"
+            )
+            for warning in filtered.warnings:
+                app.warning(warning)
+            if filtered.dispatch_mode == "single_cut_filtered":
+                _render_single_cut_result(filtered.single_cut_result, spec)
+            elif filtered.dispatch_mode == "cross_cut_breakdown":
+                _render_cross_cut_preview(filtered.cross_cut_result)
+            app.checkbox(
+                "Include in filtered workbook download",
+                value=True,
+                key=f"fsc_select_{spec.canonical_id}",
+            )
+            if app.button(
+                "Clear filters", key=f"clear_filter_{spec.canonical_id}"
+            ):
+                del app.session_state["filtered_results"][spec.canonical_id]
+                app.session_state["filtered_workbook_bytes"] = None
+                app.rerun()
+        else:
+            _render_single_cut_result(result, spec)
+
+
+def _render_single_cut_cards() -> None:
+    app = _require_streamlit()
+    results = app.session_state["results"]
+    schema = app.session_state["schema"]
+    if not results or schema is None:
+        return
+    app.subheader("Single cuts")
+    for result in results:
+        spec = schema.get_question(result.question_id)
+        if spec is None:
+            continue
+        _render_single_cut_card(result, spec)
+
+
+def _render_filtered_workbook_download() -> None:
+    app = _require_streamlit()
+    filtered_results = app.session_state.get("filtered_results", {})
+    selected = [
+        result
+        for canonical_id, result in filtered_results.items()
+        if app.session_state.get(f"fsc_select_{canonical_id}", True)
+    ]
+    if app.button(
+        "Generate filtered workbook",
+        disabled=(len(selected) == 0),
+        help=(
+            f"{len(selected)} filtered analyses selected"
+            if selected
+            else "Apply at least one filter to enable"
+        ),
+    ):
+        from src.excel_exporter import export_filtered_single_cuts
+
+        fsc_path = "/tmp/filtered_single_cuts.xlsx"
+        try:
+            export_filtered_single_cuts(
+                filtered_results=selected,
+                schema=app.session_state["schema"],
+                log=app.session_state["log"],
+                output_path=fsc_path,
+            )
+            with open(fsc_path, "rb") as workbook_file:
+                app.session_state["filtered_workbook_bytes"] = (
+                    workbook_file.read()
+                )
+        except Exception as exc:  # noqa: BLE001
+            app.error(f"Filtered export failed: {type(exc).__name__}: {exc}")
+            with app.expander("Show traceback"):
+                app.code(traceback.format_exc())
+
+    if app.session_state.get("filtered_workbook_bytes"):
+        app.download_button(
+            label="Download filtered workbook",
+            data=app.session_state["filtered_workbook_bytes"],
+            file_name="filtered_single_cuts.xlsx",
+            mime=(
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            ),
+        )
+
+
 def _render_cross_cut_results() -> None:
     app = _require_streamlit()
     results = app.session_state["cross_cut_results"]
@@ -662,6 +990,14 @@ def _render_results_section() -> None:
             ),
         )
 
+    _render_filtered_workbook_download()
+    app.caption(
+        "Three workbook downloads: full single-cut workbook (unfiltered + "
+        "cross cuts inline), cross-cut-only workbook (selected cross cuts), "
+        "filtered workbook (selected filtered single cuts)."
+    )
+
+    _render_single_cut_cards()
     _render_cross_cut_results()
 
     with app.expander("View quality warnings"):

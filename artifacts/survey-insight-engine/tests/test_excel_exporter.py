@@ -13,13 +13,19 @@ import pandas as pd
 
 from src.calculation_log import CalculationLog
 from src.cross_cut_engine import compute_cross_cuts
-from src.excel_exporter import export_cross_cuts_only, export_single_cuts
+from src.excel_exporter import (
+    export_cross_cuts_only,
+    export_filtered_single_cuts,
+    export_single_cuts,
+)
 from src.models import (
     AuditRecord,
     AnalysisType,
     CrossCutSpec,
     DataQualityReport,
     DenominatorPolicy,
+    FilteredSingleCutResult,
+    FilterSpec,
     GridSingleSelectResult,
     MultiSelectResult,
     NumericResult,
@@ -399,6 +405,58 @@ def make_cross_cut_export_fixture():
     return results, skips, export_schema, quality_report, log, cross_results, cross_skips
 
 
+def make_filtered_export_fixture():
+    (
+        results,
+        _skips,
+        schema,
+        _quality_report,
+        log,
+        cross_results,
+        _cross_skips,
+    ) = make_cross_cut_export_fixture()
+    unrelated_audit = make_audit(
+        "rate_per_value",
+        "Q_UNRELATED_EXPORT",
+        ("Q_UNRELATED_EXPORT",),
+        1.0,
+        1,
+        0,
+    )
+    log.record(unrelated_audit)
+    filtered_results = [
+        FilteredSingleCutResult(
+            target_question_id="Q_SS_EXPORT",
+            filters_applied=(FilterSpec("Q_SEG_1", 1),),
+            dispatch_mode="single_cut_filtered",
+            single_cut_result=results[0],
+            cross_cut_result=None,
+            filtered_n=6,
+            audit_records=results[0].audit_records,
+            warnings=("Filtered sample size 6 is below reliability threshold (30); results may not be reliable.",),
+        ),
+        FilteredSingleCutResult(
+            target_question_id="Q_SS_EXPORT",
+            filters_applied=(FilterSpec("Q_SEG_1", 2),),
+            dispatch_mode="single_cut_filtered",
+            single_cut_result=replace(results[0], valid_n=4),
+            cross_cut_result=None,
+            filtered_n=4,
+            audit_records=results[0].audit_records,
+        ),
+        FilteredSingleCutResult(
+            target_question_id="Q_TGT_1",
+            filters_applied=(FilterSpec("Q_SEG_1"),),
+            dispatch_mode="cross_cut_breakdown",
+            single_cut_result=None,
+            cross_cut_result=cross_results[0],
+            filtered_n=30,
+            audit_records=cross_results[0].audit_records,
+        ),
+    ]
+    return filtered_results, schema, log
+
+
 def sheet_values(workbook_path: Path, sheet_name: str) -> list[object]:
     workbook = load_workbook(workbook_path, read_only=True, data_only=True)
     try:
@@ -466,6 +524,16 @@ class TestExcelExporter(unittest.TestCase):
             _cross_skips,
         ) = make_cross_cut_export_fixture()
         export_cross_cuts_only(cross_results, schema, log, str(output_path))
+        return output_path
+
+    def export_filtered_workbook(self) -> Path:
+        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = (
+            FIXTURE_DIR
+            / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
+        )
+        filtered_results, schema, log = make_filtered_export_fixture()
+        export_filtered_single_cuts(filtered_results, schema, log, str(output_path))
         return output_path
 
     def test_export_creates_file_at_path(self) -> None:
@@ -886,6 +954,97 @@ class TestExcelExporter(unittest.TestCase):
 
         self.assertNotIn("Cross_Cut_Index", workbook.sheetnames)
         self.assertFalse(any(name.startswith("CC_") for name in workbook.sheetnames))
+
+    def test_export_filtered_single_cuts_creates_file(self) -> None:
+        output_path = self.export_filtered_workbook()
+
+        self.assertTrue(output_path.exists())
+        self.assertGreater(output_path.stat().st_size, 0)
+
+    def test_filtered_cut_index_lists_all_results(self) -> None:
+        output_path = self.export_filtered_workbook()
+        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        self.addCleanup(workbook.close)
+        ws = workbook["Filtered_Cut_Index"]
+
+        self.assertEqual(ws.max_row, 4)
+        self.assertEqual(ws["A1"].value, "Sheet Name")
+        self.assertEqual(ws["B2"].value, "Q_SS_EXPORT")
+        self.assertEqual(ws["C2"].value, "Q_SEG_1 == 1 (Segment 1)")
+        self.assertEqual(ws["D4"].value, "cross_cut_breakdown")
+        self.assertEqual(ws["E4"].value, 30)
+
+    def test_fsc_sheet_for_single_cut_filtered_renders_correctly(self) -> None:
+        output_path = self.export_filtered_workbook()
+        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        self.addCleanup(workbook.close)
+        ws = workbook["FSC_Q_SS_EXPORT_01"]
+        values = sheet_values(output_path, "FSC_Q_SS_EXPORT_01")
+
+        self.assertEqual(ws["A1"].value, "Target question:")
+        self.assertEqual(ws["A4"].value, "Q_SS_EXPORT")
+        self.assertIn("  Q_SEG_1 == 1 (Segment 1)", values)
+        self.assertIn("Code", values)
+        self.assertIn("Yes", values)
+        self.assertIn(6, values)
+
+    def test_fsc_sheet_for_cross_cut_breakdown_renders_correctly(self) -> None:
+        output_path = self.export_filtered_workbook()
+        values = sheet_values(output_path, "FSC_Q_TGT_1")
+
+        self.assertIn("  Q_SEG_1 (breakdown - no specific value)", values)
+        self.assertIn("Rows (vertical): Q_SEG_1", values)
+        self.assertIn("Columns (horizontal): Q_TGT_1", values)
+        self.assertIn("Counts", values)
+
+    def test_fsc_sheet_naming_handles_duplicate_targets(self) -> None:
+        output_path = self.export_filtered_workbook()
+        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        self.addCleanup(workbook.close)
+
+        self.assertIn("FSC_Q_SS_EXPORT_01", workbook.sheetnames)
+        self.assertIn("FSC_Q_SS_EXPORT_02", workbook.sheetnames)
+        self.assertIn("FSC_Q_TGT_1", workbook.sheetnames)
+
+    def test_export_filtered_single_cuts_filter_log_populated(self) -> None:
+        output_path = self.export_filtered_workbook()
+        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        self.addCleanup(workbook.close)
+        rows = list(workbook["Filter_Log"].iter_rows(values_only=True))
+
+        self.assertEqual(rows[0], (
+            "Sheet Name",
+            "Filter Question",
+            "Filter Value",
+            "Filter Description",
+        ))
+        self.assertIn(
+            (
+                "FSC_Q_SS_EXPORT_01",
+                "Q_SEG_1",
+                1,
+                "Q_SEG_1 == 1 (Segment 1)",
+            ),
+            rows,
+        )
+        self.assertIn(
+            (
+                "FSC_Q_TGT_1",
+                "Q_SEG_1",
+                None,
+                "Q_SEG_1 (breakdown - no specific value)",
+            ),
+            rows,
+        )
+
+    def test_filtered_export_calculation_log_filtered_correctly(self) -> None:
+        output_path = self.export_filtered_workbook()
+        values = sheet_values(output_path, "Calculation_Log")
+
+        self.assertIn("Q_SS_EXPORT", values)
+        self.assertIn("CC_CC_TAB_EXPORT", values)
+        self.assertNotIn("Q_MS_EXPORT", values)
+        self.assertNotIn("Q_UNRELATED_EXPORT", values)
 
 
 if __name__ == "__main__":
