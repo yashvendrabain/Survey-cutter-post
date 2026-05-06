@@ -1,0 +1,407 @@
+Day 14. Major UI redesign. Almost no Codex code today (just a 
+constants file). Heavy app.py work.
+
+PATH: cd artifacts/survey-insight-engine
+
+There are FOUR tasks. Run in order.
+
+TASK 1 — Save Codex's constants file
+
+When Codex delivers src/ui_constants.py, save it. Verify:
+
+  python -c "from src.ui_constants import APP_TITLE; \
+    print('OK:', APP_TITLE)"
+
+Should print: OK: Survey Analysis Engine
+
+
+TASK 2 — Redesign app.py — overall structure
+
+Replace the app's overall layout with a structured five-
+section flow. Use st.set_page_config with:
+
+  st.set_page_config(
+      page_title="Survey Analysis Engine",
+      page_icon="📊",
+      layout="wide",
+      initial_sidebar_state="expanded",
+  )
+
+REMOVE the old chrome (any text saying "Day 1 shell", 
+"Survey Insight engine", or version numbers). Set the title 
+to APP_TITLE from ui_constants.
+
+LAYOUT — sidebar + main area
+
+The sidebar contains:
+  - App title and tagline
+  - Quick navigation links (anchors to each main section)
+  - Status indicators:
+      - "✓ Files uploaded" or "⏳ Waiting for upload"
+      - "✓ Analysis complete" or status of last run
+      - Global filter badge (active or not)
+  - A small help section: "Need help?" expander with brief 
+    instructions
+
+The main area is divided into five clearly numbered 
+sections, each with a header anchor:
+
+  st.header("1. Upload your survey")
+  st.header("2. Apply a global filter (optional)")
+  st.header("3. Explore single cuts")
+  st.header("4. Build cross cuts")
+  st.header("5. Download workbooks")
+
+Each section uses st.markdown for short instructional text 
+above its content. Tooltips on key controls use the 
+TOOLTIP_* constants from ui_constants via st.help() or 
+help= kwargs on widgets.
+
+Empty states must be handled — if the user hasn't run the 
+analysis yet, sections 3-5 should show a polite empty state 
+message instead of empty containers.
+
+
+TASK 3 — Section-by-section implementation
+
+SECTION 1 — Upload your survey
+
+Two columns side-by-side:
+  Left col: file uploader for raw data (CSV/XLSX), tooltip 
+    "Your raw survey responses, one row per respondent"
+  Right col: file uploader for data map (XLSX), tooltip 
+    "The data map describing question codes and answer options"
+
+Below the uploaders:
+  - Centered Run analysis button (large, primary color)
+  - Disabled until both files are uploaded
+  - When clicked: progress bar + status text using 
+    PIPELINE_STAGES
+
+After the run completes, show 4 metric tiles in a row:
+  Total questions  |  Single cuts produced  |  Skipped  |  
+  Audit records
+
+
+SECTION 2 — Global filter (optional)
+
+Only visible after Run analysis completes.
+
+Two-column layout per filter row:
+  - Question dropdown (all eligible categorical questions; 
+    label format "{canonical_id}: {question_text[:50]}")
+  - Value dropdown (populated based on question)
+
+Below the rows:
+  - "+ Add another filter" button — appends a new row 
+    with empty selectors
+  - "✕" button next to each row — removes that filter
+  - "Apply global filter" button — builds GlobalFilterState 
+    and stores in session_state, triggers re-render of 
+    sections 3 and 4
+
+Status banner above this section:
+  - If global filter is active:
+      st.info(
+          f"🔵 Global filter active: {description}. "
+          f"All analyses below restricted to "
+          f"{rows_after} of {rows_before} respondents."
+      )
+  - If inactive:
+      st.caption(
+          "No global filter. All analyses run on the full "
+          f"{total_respondents} respondents."
+      )
+
+When the user clicks "Apply global filter":
+  1. Build a list of FilterSpec from the rows where both 
+     question and value are picked.
+  2. Construct GlobalFilterState(filters=tuple(filter_specs))
+  3. Validate (catch ValueError, show st.error if invalid).
+  4. Store in st.session_state['global_filter_state']
+  5. Apply: 
+       from src.global_filter import apply_global_filter
+       filtered_df, stats = apply_global_filter(
+           st.session_state['decoded_df'], 
+           st.session_state['global_filter_state'])
+       st.session_state['active_df'] = filtered_df
+       st.session_state['global_filter_stats'] = stats
+  6. Rerun the pipeline on the filtered DataFrame:
+       results, skips = compute_single_cuts(
+           schema, filtered_df, log)
+       st.session_state['results'] = results
+       st.session_state['skips'] = skips
+  7. Clear cached cross cut and filtered single cut results 
+     since they're now stale:
+       st.session_state['cross_cut_results'] = []
+       st.session_state['cross_cut_skips'] = []
+       st.session_state['filtered_results'] = {}
+  8. st.rerun()
+
+A "Clear global filter" button appears when a filter is 
+active. Reverts to the unfiltered DataFrame and reruns 
+the pipeline.
+
+
+SECTION 3 — Explore single cuts
+
+Each single cut becomes a card. Use st.expander per card so 
+the user can collapse to scan the list.
+
+Card layout:
+  Header (the expander's label):
+    "{canonical_id} — {truncated question text[:80]}"
+  Subtitle inside (st.caption):
+    "Type: {question_type} · Valid N: {valid_n} · 
+     Missing: {missing_n}"
+  
+  Per-question filter panel (TASK 4 covers this).
+  
+  Result display area — depending on whether per-question 
+  filters are active.
+
+Add a search/filter box at the top of the section:
+  st.text_input("Search questions", 
+                placeholder="Filter by ID or text", 
+                key="ss_search")
+  
+  Filter the displayed cards client-side based on the 
+  search term (case-insensitive substring match on 
+  canonical_id or question_text).
+
+
+SECTION 4 — Build cross cuts
+
+Move the existing manual builder + suggestions panel into 
+this section. Wrap each cross cut result in an st.expander 
+matching the single-cut style.
+
+The "Show suggested cross cuts" checkbox stays opt-in. When 
+ticked, suggestions render as cards with a "Run this" 
+button per suggestion.
+
+Each cross cut result card has:
+  - Title and analysis type
+  - Counts-only inline preview (from Day 10.6)
+  - "Include in cross-cut workbook" checkbox
+  - "Remove" button to clear from session
+
+
+SECTION 5 — Download workbooks
+
+Three buttons in a row, each with a clear label and 
+tooltip:
+
+  Col 1: Single-cut workbook
+    "All single cuts + cross cuts inline"
+    Always enabled if results exist.
+  
+  Col 2: Cross-cut-only workbook
+    "Just the cross cuts you've ticked above"
+    Disabled if no cross cuts selected.
+  
+  Col 3: Filtered workbook
+    "Per-question filtered analyses you've ticked"
+    Disabled if no filtered analyses ticked.
+
+Below the buttons:
+  Caption explaining when to use each, using 
+  TOOLTIP_THREE_DOWNLOADS.
+
+
+TASK 4 — Per-question multi-filter panel
+
+Inside each single-cut card (section 3), the filter panel 
+becomes dynamic. Replace the fixed 5-column layout from 
+Day 12 with a flexible system:
+
+UI:
+  
+  st.markdown("**Filters for this question**")
+  
+  # Pull the current filter list for this canonical_id
+  filter_key = f"filters_{spec.canonical_id}"
+  if filter_key not in st.session_state:
+      st.session_state[filter_key] = []  
+        # list of (q_id, value) tuples
+  
+  filter_rows = st.session_state[filter_key]
+  
+  # Display existing filter rows
+  for i, (q_id, val) in enumerate(filter_rows):
+      cols = st.columns([4, 4, 1])
+      with cols[0]:
+          new_q = st.selectbox(
+              "Filter question",
+              options=[("None", None)] + [
+                  (f"{q.canonical_id}: {q.question_text[:50]}", 
+                   q.canonical_id)
+                  for q in eligible_filter_questions
+              ],
+              format_func=lambda x: x[0],
+              index=_find_index(q_id, options),
+              key=f"{filter_key}_q_{i}",
+              label_visibility="collapsed" if i > 0 else "visible",
+          )
+      with cols[1]:
+          if new_q[1]:
+              q = schema.get_question(new_q[1])
+              new_val = st.selectbox(
+                  "Value",
+                  options=[("All values (breakdown)", None)] + [
+                      (f"{v}: {label}", v) 
+                      for v, label in q.option_map.items()
+                  ],
+                  format_func=lambda x: x[0],
+                  index=_find_value_index(val, options),
+                  key=f"{filter_key}_v_{i}",
+                  label_visibility="collapsed" if i > 0 else "visible",
+              )
+          else:
+              new_val = (None, None)
+      with cols[2]:
+          if st.button("✕", key=f"{filter_key}_del_{i}", 
+                        help="Remove this filter"):
+              filter_rows.pop(i)
+              st.rerun()
+      
+      filter_rows[i] = (new_q[1], new_val[1])
+  
+  cols_btn = st.columns([2, 2, 4])
+  with cols_btn[0]:
+      if st.button("+ Add filter", key=f"{filter_key}_add"):
+          filter_rows.append((None, None))
+          st.rerun()
+  with cols_btn[1]:
+      if st.button("Apply filters", key=f"{filter_key}_apply",
+                    disabled=not any(q for q, v in filter_rows)):
+          # Build FilterSpec list, dispatch
+          filter_specs = [
+              FilterSpec(filter_question_id=q, filter_value=v)
+              for q, v in filter_rows if q is not None
+          ]
+          # Validate: max one breakdown filter
+          breakdowns = [
+              f for f in filter_specs if f.filter_value is None
+          ]
+          if len(breakdowns) > 1:
+              st.error(
+                  "Only one breakdown filter at a time. "
+                  "Pick a value for at least all but one of "
+                  "the breakdowns.")
+          else:
+              try:
+                  filtered_result = compute_filtered_single_cut(
+                      spec.canonical_id,
+                      filter_specs,
+                      schema,
+                      st.session_state['active_df'],  
+                        # this is the global-filtered df!
+                      st.session_state['log'],
+                  )
+                  st.session_state['filtered_results'][
+                      spec.canonical_id] = filtered_result
+                  st.rerun()
+              except Exception as e:
+                  st.error(f"Filter failed: {e}")
+
+The eligible_filter_questions list = all schema questions 
+where option_map is non-empty (categorical with values to 
+match against).
+
+CRITICAL: The DataFrame passed to compute_filtered_single_cut 
+is st.session_state['active_df'] — which is the GLOBAL-
+FILTERED DataFrame, not the original. This is what makes 
+the global filter actually applied to per-question filters: 
+they layer on top.
+
+Display logic stays the same:
+  - If filtered_results[canonical_id] exists → show 
+    filtered display (banner + result + checkbox + clear 
+    button)
+  - Else → show unfiltered single cut
+
+
+VERIFY app.py imports cleanly:
+  python -c "import app"
+
+Restart Streamlit workflow.
+
+
+TASK 5 — Live verification
+
+In the preview pane:
+
+  1. Confirm the redesigned UI loads with 5 numbered 
+     sections in order
+  2. Confirm sidebar shows status indicators
+  3. Upload sample files — confirm metric tiles appear 
+     after Run
+  4. In Section 2, add a global filter: 
+     QCountryGroups = 1 (AMERS)
+  5. Click Apply global filter — confirm banner shows 
+     "Global filter active: ... 286 of 1100 respondents"
+  6. Confirm Section 3 single cuts now reflect the AMERS 
+     slice (open Q70, valid_n should be ~278 not 1054)
+  7. Add a second global filter (e.g. Q42 = 1) and Apply
+  8. Confirm filtered respondent count drops further
+  9. Click Clear global filter — confirm full 1100 returns
+  10. In Section 3, expand a single-cut card
+  11. Add three filters: 
+      Region=APAC, Industry=Tech, Role=Senior
+  12. Click Apply filters — confirm filtered_n displays 
+      correctly
+  13. Click + Add filter to add a 4th — apply
+  14. Click ✕ on one filter row — confirm row is removed
+  15. Try the search box at top of Section 3 — type a 
+      partial canonical_id, confirm cards are filtered
+  16. In Section 4, run a manual cross cut — confirm it 
+      uses active_df (global-filtered if set)
+  17. Run all three workbook downloads — confirm all 
+      produce files
+  18. Open downloaded workbooks — confirm filtered ones 
+      reflect global filter state
+
+Paste:
+  - 12 test suite results 
+    (full regression — must all stay green)
+  - import test and workflow restart status
+  - 18 verification line items, each with yes/no + notes
+  - Screenshot or description of redesigned UI
+
+
+REGRESSION TEST RUN
+
+  cd artifacts/survey-insight-engine
+  python -m unittest tests.test_global_filter -v
+  python -m unittest tests.test_filtered_single_cut -v
+  python -m unittest tests.test_excel_exporter -v
+  python -m unittest tests.test_question_classifier -v
+  python -m unittest tests.test_calc_primitives -v
+  python -m unittest tests.test_single_select -v
+  python -m unittest tests.test_multi_select -v
+  python -m unittest tests.test_numeric -v
+  python -m unittest tests.test_grid -v
+  python -m unittest tests.test_single_cut_engine -v
+  python -m unittest tests.test_cross_cut_engine -v
+  python -m unittest tests.test_cross_cut_suggestions -v
+
+
+CONSTRAINTS
+- Do NOT modify any module in src/.
+- The global filter must produce a filtered DataFrame that 
+  ALL three sections (single cuts, cross cuts, filtered 
+  single cuts) use. There is one st.session_state['active_df'] 
+  that is the source of truth for analysis.
+- Per-question filters layer on top of the global filter — 
+  they don't replace it.
+- Existing cross cut and filtered workbook downloads must 
+  continue to work.
+- Title shows "Survey Analysis Engine" everywhere.
+- The redesign must look professional. No clutter. Use 
+  st.divider() between sections. Use white space. Use 
+  st.caption for subtle hints.
+
+COMMIT MESSAGE
+"Day 14: UI redesign + global filter + multi-filter per 
+ question"
