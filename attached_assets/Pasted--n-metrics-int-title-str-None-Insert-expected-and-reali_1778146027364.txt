@@ -1,0 +1,250 @@
+    n_metrics: int,
+    title: str,
+) -> None:
+    """Insert expected and realized metric columns as a clustered chart."""
+
+    if not _can_add_chart(workbook, worksheet) or n_metrics <= 0:
+        return
+
+    chart = workbook.add_chart({"type": "column", "subtype": "clustered"})
+    data_last_row = data_start_row + n_metrics - 1
+    header_row = data_start_row - 1
+    for offset, color in ((1, "#CC0000"), (2, "#666666")):
+        chart.add_series(
+            {
+                "name": [sheet_name, header_row, offset],
+                "categories": [sheet_name, data_start_row, 0, data_last_row, 0],
+                "values": [sheet_name, data_start_row, offset, data_last_row, offset],
+                "fill": {"color": color},
+            }
+        )
+    chart.set_title(
+        {
+            "name": title,
+            "name_font": {"name": "Arial", "size": 12, "bold": True},
+        }
+    )
+    chart.set_legend({"position": "right", "font": {"name": "Arial", "size": 9}})
+    chart.set_size({"width": 580, "height": 360})
+    worksheet.insert_chart(data_start_row, 6, chart, {"x_offset": 10})
+
+
+def _can_add_chart(workbook: Any, worksheet: Any) -> bool:
+    return hasattr(workbook, "add_chart") and hasattr(worksheet, "insert_chart")
+
+
+def _write_segment_profile_body(
+    workbook: Any,
+    ws: Any,
+    result: CrossCutResult,
+    schema: SurveySchema,
+    formats: dict[str, Any],
+    start_row: int,
+    sheet_name: str,
+) -> int:
+    result_table = result.result_table
+    filter_question_id = result.source_question_ids[0]
+    target_question_id = result_table.get(
+        "target_question_id", result.source_question_ids[1]
+    )
+    filter_spec = schema.get_question(filter_question_id)
+    _write(ws, start_row, 0, "Filter applied:", formats["bold"])
+    _write(ws, start_row + 1, 0, _question_label(schema, filter_question_id))
+    _write(
+        ws,
+        start_row + 2,
+        0,
+        f"= {_filter_value_label(result_table.get('filter_expr'), filter_spec)}",
+    )
+    _write(ws, start_row + 3, 0, "Target question:", formats["bold"])
+    _write(ws, start_row + 4, 0, _question_label(schema, target_question_id))
+    _write(ws, start_row + 6, 0, "Target distribution", formats["bold"])
+    target_payload = result_table.get("target_result", {})
+    target_start_row = start_row + 7
+    last_row = _write_serialized_single_cut_body(
+        ws,
+        target_payload,
+        formats,
+        target_start_row,
+        _segment_profile_display_mode(result.display_mode),
+    )
+    _add_segment_profile_chart(
+        workbook,
+        ws,
+        sheet_name,
+        target_payload,
+        target_start_row,
+        result.synthetic_question_title,
+    )
+    return last_row
+
+
+def _write_serialized_single_cut_body(
+    ws: Any,
+    payload: dict,
+    formats: dict[str, Any],
+    start_row: int,
+    display_mode: str = "all",
+) -> int:
+    if "distribution" in payload:
+        return _write_distribution_dict(
+            ws, payload.get("distribution", {}), formats, start_row, display_mode
+        )
+    if "selections" in payload:
+        return _write_selections_dict(
+            ws, payload.get("selections", {}), formats, start_row
+        )
+    if "rows" in payload:
+        return _write_grid_dict(ws, payload.get("rows", {}), formats, start_row)
+    if "mean" in payload:
+        return _write_numeric_dict(ws, payload, formats, start_row)
+    _write(ws, start_row, 0, "Unsupported target result")
+    return start_row
+
+
+def _write_distribution_dict(
+    ws: Any,
+    distribution: dict,
+    formats: dict[str, Any],
+    start_row: int,
+    display_mode: str = "all",
+) -> int:
+    headers = ["Code", "Label", "Count"]
+    include_rate = display_mode != "counts"
+    if include_rate:
+        headers.append("%")
+    _write_header_row(ws, start_row, headers, formats)
+    row_index = start_row + 1
+    for code, payload in sorted(distribution.items(), key=lambda item: _sort_key(item[0])):
+        _write(ws, row_index, 0, code)
+        _write(ws, row_index, 1, payload.get("label", ""))
+        _write(ws, row_index, 2, payload.get("count", 0), formats["count"])
+        if include_rate:
+            _write(ws, row_index, 3, payload.get("rate", 0.0), formats["pct"])
+        row_index += 1
+    return row_index - 1
+
+
+def _write_selections_dict(
+    ws: Any,
+    selections: dict,
+    formats: dict[str, Any],
+    start_row: int,
+) -> int:
+    _write_header_row(
+        ws,
+        start_row,
+        ["Sub-Column ID", "Label", "Count selected", "Selection %"],
+        formats,
+    )
+    row_index = start_row + 1
+    sorted_items = sorted(
+        selections.items(),
+        key=lambda item: int(item[1].get("count", 0)),
+        reverse=True,
+    )
+    for sub_column_id, payload in sorted_items:
+        if int(payload.get("count", 0)) == 0:
+            continue
+        _write(ws, row_index, 0, sub_column_id)
+        _write(ws, row_index, 1, payload.get("label", ""))
+        _write(ws, row_index, 2, payload.get("count", 0), formats["count"])
+        _write(ws, row_index, 3, payload.get("selection_rate", 0.0), formats["pct"])
+        row_index += 1
+    return row_index - 1
+
+
+def _write_numeric_dict(
+    ws: Any,
+    payload: dict,
+    formats: dict[str, Any],
+    start_row: int,
+) -> int:
+    rows = [
+        ("Mean", payload.get("mean")),
+        ("Median", payload.get("median")),
+        ("Std Dev", payload.get("std")),
+        ("Min", payload.get("min_val")),
+        ("Max", payload.get("max_val")),
+        ("25th percentile", payload.get("percentiles", {}).get(25)),
+        ("50th percentile", payload.get("percentiles", {}).get(50)),
+        ("75th percentile", payload.get("percentiles", {}).get(75)),
+    ]
+    row_index = start_row
+    for label, value in rows:
+        _write(ws, row_index, 0, label)
+        _write(ws, row_index, 1, value, formats["stat"])
+        row_index += 1
+    return row_index - 1
+
+
+def _write_grid_dict(
+    ws: Any,
+    rows: dict,
+    formats: dict[str, Any],
+    start_row: int,
+) -> int:
+    row_index = start_row
+    for row_id, row_payload in rows.items():
+        _write(
+            ws,
+            row_index,
+            0,
+            f"{row_id} (n={row_payload.get('valid_n', 0)})",
+            formats["bold"],
+        )
+        row_index += 1
+        row_index = _write_distribution_dict(
+            ws,
+            row_payload.get("distribution", {}),
+            formats,
+            row_index,
+        ) + 2
+    return row_index - 1
+
+
+def _write_group_comparison_body(
+    workbook: Any,
+    ws: Any,
+    result: CrossCutResult,
+    schema: SurveySchema,
+    formats: dict[str, Any],
+    start_row: int,
+    sheet_name: str,
+) -> int:
+    result_table = result.result_table
+    segment_question_id = result_table.get(
+        "segment_question_id", result.source_question_ids[0]
+    )
+    metric_question_id = result_table.get(
+        "metric_question_id", result.source_question_ids[1]
+    )
+    _write(ws, start_row, 0, "Segments (rows):", formats["bold"])
+    _write(ws, start_row + 1, 0, _question_label(schema, segment_question_id))
+    _write(ws, start_row + 2, 0, "Metric (columns):", formats["bold"])
+    _write(ws, start_row + 3, 0, _question_label(schema, metric_question_id))
+    table_start = start_row + 5
+    _write(ws, table_start, 0, "Per-segment comparison", formats["bold"])
+    _write_header_row(ws, table_start + 1, ["Segment", "Label", "N", "Mean", "Median", "Std"], formats)
+    row_index = table_start + 2
+    per_segment = result_table.get("per_segment", {})
+    for segment, payload in per_segment.items():
+        _write(ws, row_index, 0, segment)
+        _write(ws, row_index, 1, payload.get("label", ""))
+        _write(ws, row_index, 2, payload.get("n", 0), formats["count"])
+        _write(ws, row_index, 3, payload.get("mean"), formats["stat"])
+        _write(ws, row_index, 4, payload.get("median"), formats["stat"])
+        _write(ws, row_index, 5, payload.get("std"), formats["stat"])
+        row_index += 1
+    overall = result_table.get("overall", {})
+    _write(ws, row_index, 0, "Overall", formats["bold"])
+    _write(ws, row_index, 2, overall.get("n", 0), formats["count"])
+    _write(ws, row_index, 3, overall.get("mean"), formats["stat"])
+    _write(ws, row_index, 4, overall.get("median"), formats["stat"])
+    _write(ws, row_index, 5, overall.get("std"), formats["stat"])
+    if per_segment:
+        _add_segment_chart(
+            workbook,
+            ws,
+            sheet_name,
+            table_start + 2,
