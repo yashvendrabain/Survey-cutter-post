@@ -1,0 +1,375 @@
+customdata=list(zip(counts, pcts)),
+          )
+      ])
+      
+      fig.update_layout(
+          title={
+              'text': spec.question_text[:80] + 
+                      ('…' if len(spec.question_text) > 80 
+                       else ''),
+              'font': {
+                  'family': 'Arial',
+                  'size': 14,
+                  'color': '#0A0A0A',
+              },
+          },
+          xaxis={
+              'title': '',
+              'tickfont': {'family': 'Arial', 'size': 11},
+          },
+          yaxis={
+              'title': y_label,
+              'titlefont': {'family': 'Arial', 
+                            'size': 11, 
+                            'color': '#666'},
+              'tickfont': {'family': 'Arial', 'size': 10},
+              'gridcolor': '#F0F0F0',
+          },
+          plot_bgcolor='white',
+          paper_bgcolor='white',
+          showlegend=False,
+          height=380,
+          margin={'t': 50, 'b': 80, 'l': 60, 'r': 40},
+          font={'family': 'Arial'},
+      )
+      
+      st.plotly_chart(
+          fig,
+          use_container_width=True,
+          config={
+              'displayModeBar': True,
+              'displaylogo': False,
+              'modeBarButtonsToRemove': ['lasso2d', 
+                                         'select2d'],
+              'toImageButtonOptions': {
+                  'format': 'png',
+                  'filename': f'{spec.canonical_id}_chart',
+                  'height': 600,
+                  'width': 1000,
+                  'scale': 2,
+              },
+          },
+      )
+
+
+  def _render_chart_for_cross_tab(
+      result,
+      schema,
+      display_mode: str = "Counts",
+  ) -> None:
+      """Render a clustered bar chart for a cross-tab 
+      result."""
+      
+      rt = result.result_table
+      counts = rt.get('counts', {})
+      row_labels = rt.get('row_label_map', {})
+      col_labels = rt.get('column_label_map', {})
+      row_pct = rt.get('row_pct', {})
+      
+      if not counts:
+          return
+      
+      row_codes = sorted(counts.keys())
+      col_codes = sorted({
+          c for row in counts.values() 
+          for c in row.keys()
+      })
+      
+      x_categories = [
+          row_labels.get(rc, str(rc)) for rc in row_codes
+      ]
+      
+      fig = go.Figure()
+      
+      colors = ['#CC0000', '#0A0A0A', '#666666', 
+                '#990000', '#999999', '#330000', 
+                '#444444', '#FF6666']
+      
+      for i, cc in enumerate(col_codes):
+          col_label = col_labels.get(cc, str(cc))
+          if display_mode == "Row %":
+              y_vals = [
+                  row_pct.get(rc, {}).get(cc, 0) * 100
+                  for rc in row_codes
+              ]
+              text_vals = [f"{v:.1f}%" for v in y_vals]
+          else:
+              y_vals = [
+                  counts.get(rc, {}).get(cc, 0)
+                  for rc in row_codes
+              ]
+              text_vals = [f"{v:,}" for v in y_vals]
+          
+          fig.add_trace(go.Bar(
+              name=col_label,
+              x=x_categories,
+              y=y_vals,
+              text=text_vals,
+              textposition='outside',
+              marker_color=colors[i % len(colors)],
+              hovertemplate=(
+                  f'<b>{col_label}</b><br>'
+                  '%{x}: %{y}<extra></extra>'
+              ),
+          ))
+      
+      a, b = result.source_question_ids
+      a_spec = schema.get_question(a)
+      b_spec = schema.get_question(b)
+      a_text = a_spec.question_text if a_spec else a
+      b_text = b_spec.question_text if b_spec else b
+      
+      fig.update_layout(
+          title={
+              'text': f'{a_text[:50]}{"…" if len(a_text)>50 else ""} × {b_text[:50]}{"…" if len(b_text)>50 else ""}',
+              'font': {'family': 'Arial', 'size': 13},
+          },
+          barmode='group',
+          xaxis={
+              'title': a,
+              'tickfont': {'family': 'Arial', 'size': 10},
+          },
+          yaxis={
+              'title': 'Count' if display_mode == "Counts" 
+                       else '%',
+              'gridcolor': '#F0F0F0',
+              'tickfont': {'family': 'Arial', 'size': 10},
+          },
+          plot_bgcolor='white',
+          paper_bgcolor='white',
+          legend={
+              'title': b,
+              'font': {'family': 'Arial', 'size': 10},
+          },
+          height=440,
+          margin={'t': 60, 'b': 80, 'l': 60, 'r': 40},
+          font={'family': 'Arial'},
+      )
+      
+      st.plotly_chart(
+          fig,
+          use_container_width=True,
+          config={
+              'displayModeBar': True,
+              'displaylogo': False,
+              'toImageButtonOptions': {
+                  'format': 'png',
+                  'filename': f'{result.cross_cut_id}_chart',
+                  'height': 600,
+                  'width': 1200,
+                  'scale': 2,
+              },
+          },
+      )
+
+
+  def _render_chart_for_segment_metric(
+      result,
+      schema,
+  ) -> None:
+      """Simple bar chart for segment metrics."""
+      rt = result.result_table
+      per_seg = rt.get('per_segment', {})
+      if not per_seg:
+          return
+      
+      labels = []
+      values = []
+      for seg_val, seg_data in per_seg.items():
+          label = seg_data.get('label', str(seg_val))
+          mean = seg_data.get('mean')
+          if mean is not None:
+              labels.append(label)
+              values.append(mean)
+      
+      if not values:
+          return
+      
+      flags = _compute_outlier_flags(values)
+      colors = ['#CC0000' if f == 'high' 
+                else '#E65100' if f == 'low' 
+                else '#666666' 
+                for f in flags]
+      
+      fig = go.Figure(data=[go.Bar(
+          x=labels,
+          y=values,
+          marker_color=colors,
+          text=[f"{v:.2f}" for v in values],
+          textposition='outside',
+      )])
+      
+      fig.update_layout(
+          title='Mean by segment',
+          xaxis={'tickfont': {'family': 'Arial', 
+                              'size': 10}},
+          yaxis={'gridcolor': '#F0F0F0',
+                 'tickfont': {'family': 'Arial', 
+                              'size': 10}},
+          plot_bgcolor='white',
+          paper_bgcolor='white',
+          showlegend=False,
+          height=380,
+          margin={'t': 50, 'b': 80, 'l': 60, 'r': 40},
+          font={'family': 'Arial'},
+      )
+      
+      st.plotly_chart(fig, use_container_width=True,
+                      config={'displaylogo': False})
+
+
+WIRING THE CHARTS
+
+In app.py, find every place you render a single-cut 
+table and add the chart BEFORE it:
+
+  # For standard single cuts:
+  # Add after the per-question filter panel
+  
+  display_mode = st.radio(
+      "Display",
+      options=["Counts", "Counts + %", "% only"],
+      index=1,
+      horizontal=True,
+      key=f"sc_display_{result.question_id}",
+      label_visibility="collapsed",
+  )
+  
+  _render_chart_for_single_cut(result, spec, 
+                                display_mode)
+  
+  _render_sc_table_html(result.distribution, 
+                         display_mode, result.valid_n)
+
+  # For filtered single cuts (breakdown into cross-cut):
+  # Find where you render the cross-cut result table
+  # and add before it:
+  
+  _render_chart_for_cross_tab(
+      filtered.cross_cut_result, schema, display_mode)
+  
+  # Then the existing table rendering
+
+  # For cross-cut preview cards:
+  # In _preview_cross_tab function, add:
+  
+  display_mode = st.radio(
+      "Display",
+      options=["Counts", "Row %"],
+      index=0,
+      horizontal=True,
+      key=f"cc_display_{result.cross_cut_id}",
+      label_visibility="collapsed",
+  )
+  
+  _render_chart_for_cross_tab(result, schema, 
+                               display_mode)
+  
+  # Then the existing dataframe table
+
+  # For segment metrics (GROUP_COMPARISON, 
+  # SEGMENT_PROFILE, EXPECTED_VS_REALIZED):
+  
+  _render_chart_for_segment_metric(result, schema)
+  
+  # Then the existing results table
+
+
+ADDITIONAL CSS FOR CHARTS
+
+Add to the global CSS injection block:
+
+  /* Plotly chart styling */
+  .plotly {
+    background: white !important;
+  }
+  
+  .plotly-chart {
+    background: white !important;
+  }
+  
+  /* Make chart toolbar blend with white theme */
+  .plotly-chart [class*="modebar"] {
+    background: rgba(255,255,255,0.8) !important;
+    border: 1px solid #E0E0E0 !important;
+  }
+  
+  .plotly-chart [class*="modebar-btn"] {
+    color: #666 !important;
+  }
+
+
+FINAL INTEGRATION CHECKLIST
+
+These are the spots where charts need to be wired:
+
+  1. _render_standard_single_cut() 
+     → add _render_chart_for_single_cut before table
+  2. _render_filtered_result() for cross-cut breakdown
+     → add _render_chart_for_cross_tab before table
+  3. _preview_cross_tab() in cross-cut result cards
+     → add _render_chart_for_cross_tab before dataframe
+  4. Every SEGMENT_PROFILE, GROUP_COMPARISON, 
+     EXPECTED_VS_REALIZED card body
+     → add _render_chart_for_segment_metric before table
+
+Each chart call passes the current display_mode so the 
+chart updates when the user toggles Counts/% or 
+Row %/etc.
+
+
+VERIFICATION
+
+  python -c "import app; import plotly"
+  
+  Restart workflow.
+  
+  In preview pane:
+  1. Fixed red header visible at top, full width
+  2. Header stays in place when scrolling
+  3. Sidebar below header with Questions section
+  4. Upload file, run analysis
+  5. Sidebar questions list shows full text, no 
+     truncation, text wraps naturally
+  6. Click any question → main shows only that 
+     question's analysis
+  7. Search in sidebar filters questions
+  8. Selected question highlighted (red border + 
+     light red bg in sidebar)
+  9. Single-cut card shows: chart above, table below
+  10. Chart has hover tooltips, zoom, pan, png 
+      export button in toolbar
+  11. Toggle display mode (Counts / Counts+% / % only) 
+      → chart updates accordingly, bars stay flagged 
+      with colors
+  12. Build cross cut → preview card shows chart above 
+      table
+  13. Apply filter-without-value breakdown → chart 
+      renders for the cross-tab result
+  14. Download cross-cut workbook → open in Excel → 
+      each CC sheet has a native chart next to data
+  15. Excel chart is fully editable (click to select, 
+      right-click for format, colors changeable)
+  16. All three downloads work (single, cross, filtered)
+
+Paste: import result, restart status, 16 verification 
+items with yes/no + notes, any console errors, and 
+sample openpyxl output showing chart count per sheet.
+
+CONSTRAINTS
+  - Do NOT modify src/ files (Codex already did that)
+  - app.py only
+  - Sidebar question buttons: FULL text with natural 
+    wrap, NO truncation
+  - Plotly charts must have toolbar enabled with png 
+    export
+  - Excel charts must reference live cells
+  - All three workbooks must download
+  - Header stays fixed on scroll
+  - Performance: charts render inline without hanging 
+    the page (Plotly is performant; if it lags, it's 
+    a session_state issue, not a charting issue)
+
+COMMIT MESSAGE
+"Fixed red header + sidebar question nav with search 
+ + Plotly charts on every table + native Excel charts"
