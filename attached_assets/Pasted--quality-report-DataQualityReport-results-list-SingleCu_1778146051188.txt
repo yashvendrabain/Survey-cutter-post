@@ -1,0 +1,250 @@
+    quality_report: DataQualityReport,
+    results: list[SingleCutResult],
+    skips: list[SkipRecord],
+    formats: dict[str, Any],
+    cross_cut_results: list[CrossCutResult],
+    cross_cut_skips: list[SkipRecord],
+) -> None:
+    ws = workbook.add_worksheet("Warnings")
+    _write_header_row(ws, 0, ["Source", "Warning"], formats)
+    row_index = 1
+    for warning in quality_report.warnings:
+        _write_row(ws, row_index, ["data_quality", warning])
+        row_index += 1
+    for result in results:
+        for warning in result.warnings:
+            _write_row(ws, row_index, [f"result:{result.question_id}", warning])
+            row_index += 1
+    for result in cross_cut_results:
+        for warning in result.warnings:
+            _write_row(ws, row_index, [f"cross_result:{result.cross_cut_id}", warning])
+            row_index += 1
+    for skip in skips:
+        if skip.details:
+            _write_row(ws, row_index, [f"skip:{skip.question_id}", skip.details])
+            row_index += 1
+    for skip in cross_cut_skips:
+        if skip.details:
+            _write_row(ws, row_index, [f"cross_skip:{skip.question_id}", skip.details])
+            row_index += 1
+    ws.freeze_panes(1, 0)
+    _autofit(ws)
+
+
+def _safe_sheet_name(name: str) -> str:
+    """Truncate to 31 chars and remove forbidden chars."""
+    forbidden = set(":\\/?*[]")
+    cleaned = "".join(char for char in name if char not in forbidden)
+    cleaned = cleaned.strip() or "Sheet"
+    return cleaned[:31]
+
+
+def _question_text(schema: SurveySchema, question_id: str) -> str:
+    spec = schema.get_question(question_id)
+    return spec.question_text if spec is not None else question_id
+
+
+def _question_label(schema: SurveySchema, question_id: str) -> str:
+    return f"{question_id}: {_question_text(schema, question_id)}"
+
+
+def _filter_value_label(filter_expr: str | None, filter_spec: Any) -> str:
+    if not filter_expr:
+        return "<unknown>"
+    value_text = filter_expr.split("==", 1)[-1].strip().strip("\"'")
+    try:
+        value: int | str = int(value_text)
+    except ValueError:
+        value = value_text
+    if filter_spec is not None and value in filter_spec.option_map:
+        return str(filter_spec.option_map[value])
+    return str(value)
+
+
+def _segment_profile_display_mode(display_mode: str) -> str:
+    return "counts" if display_mode == "counts" else "both"
+
+
+def _filter_log_entry_count(cross_cut_results: list[CrossCutResult]) -> int:
+    return sum(1 for result in cross_cut_results if result.result_table.get("filter_expr"))
+
+
+def _filtered_sheet_names(
+    filtered_results: list[FilteredSingleCutResult],
+    used_sheet_names: set[str],
+) -> dict[int, str]:
+    target_counts: dict[str, int] = defaultdict(int)
+    for result in filtered_results:
+        target_counts[result.target_question_id] += 1
+
+    target_seen: dict[str, int] = defaultdict(int)
+    sheet_names: dict[int, str] = {}
+    for index, result in enumerate(filtered_results):
+        target_seen[result.target_question_id] += 1
+        base_name = f"FSC_{result.target_question_id}"
+        if target_counts[result.target_question_id] > 1:
+            base_name = f"{base_name}_{target_seen[result.target_question_id]:02d}"
+        sheet_names[index] = _unique_sheet_name(base_name, used_sheet_names)
+    return sheet_names
+
+
+def _filter_description(
+    filter_spec: FilterSpec,
+    schema: SurveySchema,
+    compact_breakdown: bool,
+) -> str:
+    if filter_spec.filter_value is None:
+        if compact_breakdown:
+            return f"{filter_spec.filter_question_id} (breakdown)"
+        return f"{filter_spec.filter_question_id} (breakdown - no specific value)"
+
+    label = _filter_option_label(filter_spec, schema)
+    if label:
+        return (
+            f"{filter_spec.filter_question_id} == {filter_spec.filter_value} "
+            f"({label})"
+        )
+    return f"{filter_spec.filter_question_id} == {filter_spec.filter_value}"
+
+
+def _filter_option_label(filter_spec: FilterSpec, schema: SurveySchema) -> str | None:
+    spec = schema.get_question(filter_spec.filter_question_id)
+    if spec is None:
+        return None
+    value = filter_spec.filter_value
+    if value in spec.option_map:
+        return str(spec.option_map[value])
+    value_as_string = str(value)
+    for option_code, label in spec.option_map.items():
+        if str(option_code) == value_as_string:
+            return str(label)
+    return None
+
+
+def _filtered_audit_records(
+    filtered_results: list[FilteredSingleCutResult],
+    log: CalculationLog,
+) -> tuple[AuditRecord, ...]:
+    source_ids = {
+        result.target_question_id
+        for result in filtered_results
+    }
+    for result in filtered_results:
+        for filter_spec in result.filters_applied:
+            source_ids.add(filter_spec.filter_question_id)
+
+    records = []
+    for record in log.all_records():
+        if record.source_question_id in source_ids:
+            records.append(record)
+            continue
+        if record.output_sheet.startswith(("FSC_", "CC_")):
+            records.append(record)
+    return tuple(records)
+
+
+def _cross_tab_column_codes(matrix: dict, column_label_map: dict) -> list[Any]:
+    codes = set(column_label_map)
+    for row_payload in matrix.values():
+        if isinstance(row_payload, dict):
+            codes.update(row_payload)
+    return sorted(codes, key=_sort_key)
+
+
+def _label_for_code(label_map: dict, code: Any) -> str:
+    if code in label_map:
+        return str(label_map[code])
+    code_as_string = str(code)
+    if code_as_string in label_map:
+        return str(label_map[code_as_string])
+    return code_as_string
+
+
+def _nested_lookup(matrix: dict, row_code: Any, column_code: Any) -> Any:
+    row_payload = matrix.get(row_code, matrix.get(str(row_code), {}))
+    if not isinstance(row_payload, dict):
+        return ""
+    return row_payload.get(column_code, row_payload.get(str(column_code), 0))
+
+
+def _unique_sheet_name(name: str, used_sheet_names: set[str]) -> str:
+    base = _safe_sheet_name(name)
+    candidate = base
+    suffix = 1
+    while candidate in used_sheet_names:
+        suffix_text = f"_{suffix}"
+        candidate = f"{base[:31 - len(suffix_text)]}{suffix_text}"
+        suffix += 1
+    used_sheet_names.add(candidate)
+    return candidate
+
+
+def _autofit(ws: Any, max_width: int = 60) -> None:
+    """Set widths from tracked cell content, capped at max_width."""
+    widths = getattr(ws, "_sie_widths", {})
+    for col_index, width in widths.items():
+        ws.set_column(col_index, col_index, min(width + 2, max_width))
+
+
+def _denominator_description(result: SingleCutResult) -> str:
+    policy = result.denominator_policy.value
+    if policy == "VALID_RESPONSES":
+        return f"Valid responses (n={result.valid_n})"
+    if policy == "ALL_RESPONDENTS":
+        return f"All respondents (n={result.valid_n})"
+    if policy == "EXPOSED_TO_QUESTION":
+        return f"Exposed to question (n={result.valid_n})"
+    return policy
+
+
+def _write_header_row(
+    ws: Any, row_index: int, headers: list[str], formats: dict[str, Any]
+) -> None:
+    for column_index, header in enumerate(headers):
+        _write(ws, row_index, column_index, header, formats["header"])
+
+
+def _write_row(
+    ws: Any, row_index: int, values: list[Any], cell_format: Any | None = None
+) -> None:
+    for column_index, value in enumerate(values):
+        _write(ws, row_index, column_index, value, cell_format)
+
+
+def _write(ws: Any, row: int, col: int, value: Any, cell_format: Any | None = None) -> None:
+    if isinstance(value, float) and math.isnan(value):
+        value = ""
+    ws.write(row, col, value, cell_format)
+    _track_cell(ws, row, col, value)
+
+
+def _write_url(
+    ws: Any,
+    row: int,
+    col: int,
+    url: str,
+    cell_format: Any,
+    string: str,
+) -> None:
+    ws.write_url(row, col, url, cell_format, string=string)
+    _track_cell(ws, row, col, string)
+
+
+def _merge_range(
+    ws: Any,
+    first_row: int,
+    first_col: int,
+    last_row: int,
+    last_col: int,
+    value: Any,
+    cell_format: Any | None = None,
+) -> None:
+    if hasattr(ws, "merge_range"):
+        ws.merge_range(first_row, first_col, last_row, last_col, value, cell_format)
+        _track_cell(ws, first_row, first_col, value)
+        return
+    _write(ws, first_row, first_col, value, cell_format)
+
+
+def _track_cell(ws: Any, row: int, col: int, value: Any) -> None:
+    if not hasattr(ws, "_sie_widths"):
