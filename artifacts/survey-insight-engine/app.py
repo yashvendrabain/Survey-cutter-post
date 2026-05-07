@@ -9,6 +9,8 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 try:
     import streamlit as st
 except ModuleNotFoundError:  # pragma: no cover - local import smoke test fallback.
@@ -383,7 +385,6 @@ def _compute_outlier_flags(values: list) -> list:
 
 def _style_outliers(df: Any) -> Any:
     """Per-column outlier styling for st.dataframe Styler.apply(axis=None)."""
-    import pandas as pd
 
     try:
         styled = pd.DataFrame("", index=df.index, columns=df.columns)
@@ -418,6 +419,59 @@ def _styled_dataframe(df: Any, **kwargs: Any) -> None:
         )
     except Exception:
         app.dataframe(df, **kwargs)
+
+
+def _copy_button(df: Any, key: str) -> None:
+    """Render a Copy Table button that copies the DataFrame as TSV.
+
+    Tab-separated values paste cleanly into Excel preserving columns
+    and rows. Uses navigator.clipboard for one-click copy.
+    """
+    app = _require_streamlit()
+    try:
+        if df is None or len(df) == 0:
+            return
+        lines = []
+        headers = list(df.columns)
+        if df.index.name:
+            headers = [df.index.name] + headers
+        lines.append("\t".join(str(h) for h in headers))
+        for idx, row in df.iterrows():
+            if df.index.name:
+                row_vals = [str(idx)] + [str(v) for v in row.values]
+            else:
+                row_vals = [str(v) for v in row.values]
+            lines.append("\t".join(row_vals))
+        tsv = "\n".join(lines)
+        tsv_escaped = (
+            tsv.replace("\\", "\\\\")
+            .replace("`", "\\`")
+            .replace("$", "\\$")
+            .replace("</", "<\\/")
+        )
+        safe_key = "".join(
+            c if (c.isalnum() or c in "_-") else "_" for c in str(key)
+        )
+        button_id = f"copy_btn_{safe_key}"
+        app.markdown(
+            f"""
+<div style="display:flex;justify-content:flex-end;margin-bottom:4px;">
+  <button id="{button_id}"
+    onclick="navigator.clipboard.writeText(`{tsv_escaped}`).then(()=>{{
+      var b=document.getElementById('{button_id}');
+      b.textContent='\u2713 Copied!';b.style.background='#2E7D32';
+      setTimeout(()=>{{b.textContent='\u2398 Copy Table';b.style.background='#0A0A0A';}},2000);
+    }}).catch(()=>{{document.getElementById('{button_id}').textContent='Copy failed';}});"
+    style="background:#0A0A0A;color:white;border:none;padding:6px 14px;
+      font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:600;
+      letter-spacing:0.05em;cursor:pointer;display:flex;align-items:center;
+      gap:6px;transition:background 0.15s;">\u2398 Copy Table</button>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+    except Exception:
+        return
 
 
 def _render_sc_table_html(
@@ -557,19 +611,33 @@ def _render_sc_table_html(
     )
     if show_table:
         rows_for_df = []
-        for code, payload in distribution.items():
+        for i, (code, payload) in enumerate(distribution.items()):
+            label = payload.get("label", str(code))
             count = payload.get("count", 0)
             rate = payload.get("rate")
             if rate is None:
                 rate = (count / valid_n) if valid_n else 0
-            rows_for_df.append(
-                {
-                    "Label": payload.get("label", str(code)),
-                    "Count": count,
-                    "%": round(rate * 100, 1),
-                }
+            pct = round(rate * 100, 1)
+            flag = flags[i] if i < len(flags) else ""
+            flag_label = (
+                "High outlier" if flag == "high"
+                else "Low outlier" if flag == "low"
+                else ""
             )
+            if display_mode == "Counts":
+                rows_for_df.append(
+                    {"Label": label, "Count": count, "Flag": flag_label}
+                )
+            elif display_mode == "Counts + %":
+                rows_for_df.append(
+                    {"Label": label, "Count": count, "%": pct, "Flag": flag_label}
+                )
+            else:
+                rows_for_df.append(
+                    {"Label": label, "%": pct, "Flag": flag_label}
+                )
         df_plain = pd.DataFrame(rows_for_df)
+        _copy_button(df_plain, f"sc_{key_suffix or id(distribution)}_{display_mode}")
         try:
             app.dataframe(
                 df_plain.style.apply(_style_outliers, axis=None),
@@ -1219,7 +1287,6 @@ def _eligible_filter_questions() -> list[Any]:
 
 
 def _preview_cross_tab(result: Any) -> None:
-    import pandas as pd
     app = _require_streamlit()
     ct = result.result_table
     a, b = result.source_question_ids
@@ -1261,6 +1328,7 @@ def _preview_cross_tab(result: Any) -> None:
     schema = app.session_state.get("schema")
     chart_mode = "Row %" if display_mode == "Row %" else "Counts"
     _render_chart_for_cross_tab(result, schema, chart_mode)
+    _copy_button(df, f"ct_{result.cross_cut_id}_{display_mode}")
     if display_mode == "Counts":
         _styled_dataframe(df, use_container_width=True)
     else:
@@ -1279,7 +1347,6 @@ def _preview_cross_tab(result: Any) -> None:
 
 
 def _preview_segment_profile(result: Any) -> None:
-    import pandas as pd
     app = _require_streamlit()
     rt = result.result_table
     app.caption(
@@ -1298,9 +1365,9 @@ def _preview_segment_profile(result: Any) -> None:
                 tr["distribution"].items(), key=lambda x: str(x[0])
             )
         ]
-        _styled_dataframe(
-            pd.DataFrame(rows), use_container_width=True, hide_index=True
-        )
+        _df = pd.DataFrame(rows)
+        _copy_button(_df, f"sp_dist_{result.cross_cut_id}")
+        _styled_dataframe(_df, use_container_width=True, hide_index=True)
     elif "selections" in tr:
         rows = []
         for sub_id, payload in tr["selections"].items():
@@ -1316,9 +1383,9 @@ def _preview_segment_profile(result: Any) -> None:
                 }
             )
         rows.sort(key=lambda r: r["Selected count"], reverse=True)
-        _styled_dataframe(
-            pd.DataFrame(rows), use_container_width=True, hide_index=True
-        )
+        _df = pd.DataFrame(rows)
+        _copy_button(_df, f"sp_sel_{result.cross_cut_id}")
+        _styled_dataframe(_df, use_container_width=True, hide_index=True)
         app.caption(
             "Selected counts only. Unchecked counts remain in the audit trail "
             "of the downloaded workbook."
@@ -1330,6 +1397,7 @@ def _preview_segment_profile(result: Any) -> None:
                 {"Statistic": "Missing N", "Count": tr.get("missing_n", 0)},
             ]
         )
+        _copy_button(df, f"sp_num_{result.cross_cut_id}")
         app.dataframe(df, use_container_width=True, hide_index=True)
         app.caption(
             "Numeric statistics (mean, median, std) in the downloaded workbook."
@@ -1343,15 +1411,14 @@ def _preview_segment_profile(result: Any) -> None:
             for code, payload in dist.items():
                 row_dict[f"{code}: {payload.get('label', '')}"] = payload.get("count", 0)
             grid_rows.append(row_dict)
-        _styled_dataframe(
-            pd.DataFrame(grid_rows), use_container_width=True, hide_index=True
-        )
+        _df = pd.DataFrame(grid_rows)
+        _copy_button(_df, f"sp_grid_{result.cross_cut_id}")
+        _styled_dataframe(_df, use_container_width=True, hide_index=True)
     else:
         app.info("Preview not available for this target type.")
 
 
 def _preview_group_comparison(result: Any) -> None:
-    import pandas as pd
     app = _require_streamlit()
     rt = result.result_table
     seg_q = rt.get("segment_question_id", "")
@@ -1373,14 +1440,13 @@ def _preview_group_comparison(result: Any) -> None:
             "N": overall.get("valid_n", overall.get("n", 0)),
         }
     )
-    _styled_dataframe(
-        pd.DataFrame(rows), use_container_width=True, hide_index=True
-    )
+    _df = pd.DataFrame(rows)
+    _copy_button(_df, f"gc_{result.cross_cut_id}")
+    _styled_dataframe(_df, use_container_width=True, hide_index=True)
     app.caption("Group means in the downloaded workbook.")
 
 
 def _preview_expected_vs_realized(result: Any) -> None:
-    import pandas as pd
     app = _require_streamlit()
     rt = result.result_table
     exp_q = rt.get("expected_question_id", "")
@@ -1394,6 +1460,7 @@ def _preview_expected_vs_realized(result: Any) -> None:
             {"Metric": "Realized valid N", "Count": (rt.get("realized", {}) or {}).get("valid_n", 0)},
         ]
     )
+    _copy_button(df, f"evr_{result.cross_cut_id}")
     _styled_dataframe(df, use_container_width=True, hide_index=True)
     app.caption(
         "Mean expected, mean realized, gap statistics in the downloaded workbook."
@@ -1488,7 +1555,6 @@ def _build_filter_spec(
 
 def _render_single_cut_result(result: Any, spec: Any) -> None:
     """Display a SingleCutResult with branded HTML for SS/MS distributions."""
-    import pandas as pd
     from src.models import (
         GridSingleSelectResult,
         MultiSelectResult,
@@ -1514,9 +1580,9 @@ def _render_single_cut_result(result: Any, spec: Any) -> None:
                     "count", 0
                 )
             grid_rows.append(row_dict)
-        _styled_dataframe(
-            pd.DataFrame(grid_rows), use_container_width=True, hide_index=True
-        )
+        _grid_df = pd.DataFrame(grid_rows)
+        _copy_button(_grid_df, f"grid_{result.question_id}")
+        _styled_dataframe(_grid_df, use_container_width=True, hide_index=True)
     elif isinstance(result, SingleSelectResult):
         sorted_dist = dict(
             sorted(result.distribution.items(), key=lambda kv: str(kv[0]))
@@ -1602,9 +1668,9 @@ def _render_single_cut_result(result: Any, spec: Any) -> None:
             {"Statistic": "Valid N", "Value": result.valid_n},
             {"Statistic": "Missing N", "Value": result.missing_n},
         ]
-        app.dataframe(
-            pd.DataFrame(rows), use_container_width=True, hide_index=True
-        )
+        _num_df = pd.DataFrame(rows)
+        _copy_button(_num_df, f"num_{result.question_id}")
+        app.dataframe(_num_df, use_container_width=True, hide_index=True)
         app.caption("Mean, median, std and percentiles in the downloaded workbook.")
     else:
         app.info("Preview not available for this result type.")
@@ -1692,12 +1758,19 @@ def _render_single_cut_card(
                     value_codes = list(q_spec.option_map.keys())
                     prior = _normalize_value_list(val)
                     default_codes = [v for v in prior if v in value_codes]
+                    widget_key = f"{filter_key}_v_{i}_{picked_q_id}"
+                    if widget_key not in app.session_state:
+                        app.session_state[widget_key] = default_codes
+                    else:
+                        app.session_state[widget_key] = [
+                            v for v in app.session_state[widget_key]
+                            if v in value_codes
+                        ]
                     v_pick = app.multiselect(
                         "Values (leave empty for breakdown)",
                         options=value_codes,
                         format_func=lambda v: f"{v}: {q_spec.option_map[v]}",
-                        default=default_codes,
-                        key=f"{filter_key}_v_{i}",
+                        key=widget_key,
                         label_visibility="visible" if i == 0 else "collapsed",
                         help=TOOLTIP_BREAKDOWN if i == 0 else None,
                         placeholder="All values (breakdown)",
@@ -2347,12 +2420,19 @@ def _section_global_filter() -> None:
                 value_codes = list(q_spec.option_map.keys())
                 prior = _normalize_value_list(val)
                 default_codes = [v for v in prior if v in value_codes]
+                widget_key = f"gf_v_{i}_{picked_q_id}"
+                if widget_key not in app.session_state:
+                    app.session_state[widget_key] = default_codes
+                else:
+                    app.session_state[widget_key] = [
+                        v for v in app.session_state[widget_key]
+                        if v in value_codes
+                    ]
                 v_pick = app.multiselect(
                     "Values (select one or more)",
                     options=value_codes,
                     format_func=lambda v: f"{v}: {q_spec.option_map[v]}",
-                    default=default_codes,
-                    key=f"gf_v_{i}",
+                    key=widget_key,
                     label_visibility="visible" if i == 0 else "collapsed",
                     placeholder="Pick value(s)",
                 )
