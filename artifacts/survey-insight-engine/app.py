@@ -63,6 +63,10 @@ SESSION_DEFAULTS = {
     "filtered_workbook_bytes": None,
     "run_complete": False,
     "ss_search": "",
+    "pending_global_filter": None,
+    "pending_per_question_filter": {},
+    "global_filter_error": None,
+    "per_question_filter_errors": {},
 }
 
 
@@ -81,6 +85,410 @@ def _require_streamlit() -> Any:
 
 
 CROSS_CUT_ENGINE_VERSION = "day14.5"
+
+
+# ---------------------------------------------------------------------------
+# Visual theme + UI helpers (Day 16)
+# ---------------------------------------------------------------------------
+
+
+_THEME_CSS = """
+<style>
+html, body, [class*="css"], .stApp, .stMarkdown,
+.stText, .stDataFrame, button, input, select,
+textarea, label, p, div, span, h1, h2, h3 {
+  font-family: Arial, Helvetica, sans-serif !important;
+}
+.stApp, .main .block-container { background-color: #FFFFFF !important; }
+header[data-testid="stHeader"] {
+  background: #FFFFFF !important;
+  border-bottom: 3px solid #CC0000 !important;
+  height: 52px !important;
+}
+#MainMenu, footer, .stDeployButton { display: none !important; }
+[data-testid="stSidebar"] {
+  background: #F8F8F8 !important;
+  border-right: 1px solid #E0E0E0 !important;
+}
+[data-testid="stSidebar"] .stMarkdown p,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] .stTextInput label {
+  font-size: 12px !important; color: #333333 !important;
+}
+[data-testid="stMetric"] {
+  background: #FFFFFF !important;
+  border: 1px solid #E0E0E0 !important;
+  border-top: 3px solid #CC0000 !important;
+  padding: 16px 20px !important;
+  border-radius: 0 !important;
+}
+[data-testid="stMetricValue"] {
+  font-family: Arial, Helvetica, sans-serif !important;
+  font-size: 32px !important; font-weight: 700 !important;
+  color: #0A0A0A !important;
+}
+[data-testid="stMetricLabel"] {
+  font-size: 10px !important; font-weight: 700 !important;
+  letter-spacing: 0.12em !important; text-transform: uppercase !important;
+  color: #888888 !important;
+}
+.section-header-box {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 0; border-bottom: 2px solid #E0E0E0;
+  margin-bottom: 20px;
+}
+.section-num {
+  width: 26px; height: 26px; background: #CC0000; color: white;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; flex-shrink: 0;
+  font-family: Arial, Helvetica, sans-serif;
+}
+.section-name {
+  font-size: 14px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.08em; color: #0A0A0A;
+}
+.section-meta {
+  margin-left: auto; font-size: 10px; color: #888888;
+  font-family: Arial, Helvetica, sans-serif;
+}
+.stButton > button {
+  border-radius: 0 !important;
+  font-family: Arial, Helvetica, sans-serif !important;
+  font-weight: 700 !important; font-size: 11px !important;
+  letter-spacing: 0.1em !important; text-transform: uppercase !important;
+  border: none !important; transition: background 0.15s !important;
+}
+.stButton > button[kind="primary"], .stButton > button:first-child {
+  background: #CC0000 !important; color: white !important;
+  padding: 10px 28px !important;
+}
+.stButton > button:hover { background: #990000 !important; color: white !important; }
+.stButton > button[kind="secondary"] {
+  background: #F0F0F0 !important; color: #333333 !important;
+  border: 1px solid #CCCCCC !important;
+}
+[data-testid="stFileUploader"] {
+  background: #FFFFFF !important;
+  border: 1px dashed #CC0000 !important;
+  border-radius: 0 !important; padding: 24px !important;
+}
+[data-testid="stFileUploader"]:hover { background: #FFF5F5 !important; }
+[data-testid="stFileUploaderDropzoneInstructions"] { color: #CC0000 !important; }
+.stAlert { border-radius: 0 !important; font-size: 12px !important; }
+[data-testid="stInfo"] {
+  background: #FFF5F5 !important;
+  border: 1px solid rgba(204,0,0,0.3) !important;
+  border-left: 4px solid #CC0000 !important;
+  color: #0A0A0A !important;
+}
+[data-testid="stExpander"] {
+  border: 1px solid #E0E0E0 !important; border-radius: 0 !important;
+  border-left: 3px solid #E0E0E0 !important;
+  margin-bottom: 4px !important; background: #FFFFFF !important;
+}
+[data-testid="stExpander"]:hover { border-left-color: #CC0000 !important; }
+[data-testid="stExpander"] summary {
+  font-weight: 600 !important; font-size: 13px !important;
+  padding: 12px 16px !important; color: #0A0A0A !important;
+}
+[data-testid="stExpanderDetails"] {
+  border-top: 1px solid #E0E0E0 !important; padding: 16px !important;
+}
+[data-testid="stSelectbox"] > div, [data-testid="stMultiSelect"] > div {
+  border-radius: 0 !important;
+}
+.stSelectbox [data-baseweb="select"] div,
+.stMultiSelect [data-baseweb="select"] div {
+  border-radius: 0 !important; border-color: #CCCCCC !important;
+  font-size: 12px !important;
+}
+.stTextInput input {
+  border-radius: 0 !important; border-color: #CCCCCC !important;
+  font-size: 12px !important;
+}
+[data-testid="stDataFrame"] {
+  border: 1px solid #E0E0E0 !important; border-radius: 0 !important;
+}
+</style>
+"""
+
+
+def _inject_theme_css() -> None:
+    app = _require_streamlit()
+    app.markdown(_THEME_CSS, unsafe_allow_html=True)
+
+
+def _section_header(
+    num: str, title: str, anchor: str | None = None, meta: str = ""
+) -> None:
+    app = _require_streamlit()
+    anchor_html = f"<a name='{anchor}'></a>" if anchor else ""
+    meta_html = f"<div class='section-meta'>{meta}</div>" if meta else ""
+    app.markdown(
+        f"{anchor_html}<div class='section-header-box'>"
+        f"<div class='section-num'>{num}</div>"
+        f"<div class='section-name'>{title}</div>"
+        f"{meta_html}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _compute_outlier_flags(values: list) -> list:
+    """Return 'high' / 'low' / '' per value using a guarded z-score rule.
+
+    Never raises — wrapped in a defensive try/except so a malformed value
+    list cannot break a render path.
+    """
+    try:
+        import statistics
+
+        flags = ["" for _ in values]
+        numeric = [
+            v for v in values
+            if v is not None and isinstance(v, (int, float)) and v == v
+        ]
+        if len(numeric) < 4:
+            return flags
+        if max(numeric) < 10:
+            return flags
+        if len(set(numeric)) <= 1:
+            return flags
+        mean = statistics.mean(numeric)
+        std = statistics.stdev(numeric)
+        if std == 0:
+            return flags
+        val_range = max(numeric) - min(numeric)
+        min_val = min(numeric)
+        range_significant = (
+            val_range > mean * 0.5
+            and (
+                min_val == 0
+                or max(numeric) / max(min_val, 0.001) > 3
+            )
+        )
+        for i, v in enumerate(values):
+            if v is None or not isinstance(v, (int, float)):
+                continue
+            z = (v - mean) / std
+            if z > 2.0 and v >= mean + val_range * 0.5:
+                flags[i] = "high"
+            elif z < -1.5 and range_significant and v < mean * 0.3:
+                flags[i] = "low"
+        return flags
+    except Exception:
+        return ["" for _ in values]
+
+
+def _style_outliers(df: Any) -> Any:
+    """Per-column outlier styling for st.dataframe Styler.apply(axis=None)."""
+    import pandas as pd
+
+    try:
+        styled = pd.DataFrame("", index=df.index, columns=df.columns)
+        for col in df.columns:
+            try:
+                vals = pd.to_numeric(df[col], errors="coerce").tolist()
+                col_flags = _compute_outlier_flags(vals)
+                for i, flag in enumerate(col_flags):
+                    if flag == "high":
+                        styled.iloc[i, styled.columns.get_loc(col)] = (
+                            "background-color:#FFF0F0;color:#CC0000;"
+                            "font-weight:bold;border-left:3px solid #CC0000"
+                        )
+                    elif flag == "low":
+                        styled.iloc[i, styled.columns.get_loc(col)] = (
+                            "background-color:#FFFBE6;color:#E65100;"
+                            "font-weight:600"
+                        )
+            except Exception:
+                continue
+        return styled
+    except Exception:
+        return pd.DataFrame("", index=df.index, columns=df.columns)
+
+
+def _styled_dataframe(df: Any, **kwargs: Any) -> None:
+    """Render a dataframe with outlier styling, falling back gracefully."""
+    app = _require_streamlit()
+    try:
+        app.dataframe(
+            df.style.apply(_style_outliers, axis=None), **kwargs
+        )
+    except Exception:
+        app.dataframe(df, **kwargs)
+
+
+def _render_sc_table_html(
+    distribution: dict, display_mode: str, valid_n: int
+) -> None:
+    """Branded HTML table for SingleSelect / MultiSelect distributions.
+
+    Labels are HTML-escaped to prevent any XSS via maliciously crafted
+    data-map files (defense in depth — labels are analyst-supplied).
+    """
+    import html as _html
+
+    app = _require_streamlit()
+    counts = [p.get("count", 0) for _, p in distribution.items()]
+    flags = _compute_outlier_flags(counts)
+    rows_html = ""
+    for i, (code, payload) in enumerate(distribution.items()):
+        label = _html.escape(str(payload.get("label", code)))
+        count = payload.get("count", 0)
+        rate = payload.get("rate")
+        if rate is None:
+            rate = (count / valid_n) if valid_n else 0
+        pct = f"{rate * 100:.1f}%"
+        flag = flags[i] if i < len(flags) else ""
+        bar_width = max(0, min(160, int(rate * 160)))
+        bar_html = (
+            f'<div style="display:flex;align-items:center;gap:8px;">'
+            f'<div style="width:160px;height:4px;background:#F0F0F0;'
+            f'position:relative;flex-shrink:0;">'
+            f'<div style="position:absolute;top:0;left:0;bottom:0;'
+            f'width:{bar_width}px;background:#CC0000;"></div>'
+            f"</div></div>"
+        )
+        if flag == "high":
+            row_style = "background:#FFF0F0;border-left:3px solid #CC0000;"
+            count_style = "font-weight:700;color:#CC0000;"
+            flag_cell = "\u2B06"
+        elif flag == "low":
+            row_style = "background:#FFFBE6;"
+            count_style = "font-weight:600;color:#E65100;"
+            flag_cell = "\u2193"
+        else:
+            row_style = ""
+            count_style = "color:#333;"
+            flag_cell = ""
+        td = "padding:7px 10px;border-bottom:1px solid #F5F5F5;"
+        if display_mode == "Counts":
+            row = (
+                f'<tr style="{row_style}">'
+                f'<td style="{td}font-size:12px;">{label}</td>'
+                f'<td style="{td}{count_style}font-size:12px;text-align:right;">'
+                f"{count:,}</td>"
+                f'<td style="{td}">{bar_html}</td>'
+                f'<td style="{td}font-size:11px;color:#CC0000;">{flag_cell}</td>'
+                f"</tr>"
+            )
+        elif display_mode == "Counts + %":
+            row = (
+                f'<tr style="{row_style}">'
+                f'<td style="{td}font-size:12px;">{label}</td>'
+                f'<td style="{td}{count_style}font-size:12px;text-align:right;'
+                f'width:60px;">{count:,}</td>'
+                f'<td style="{td}font-size:12px;font-weight:700;color:#CC0000;'
+                f'text-align:right;width:54px;">{pct}</td>'
+                f'<td style="{td}">{bar_html}</td>'
+                f'<td style="{td}font-size:11px;color:#CC0000;">{flag_cell}</td>'
+                f"</tr>"
+            )
+        else:  # "% only"
+            row = (
+                f'<tr style="{row_style}">'
+                f'<td style="{td}font-size:12px;">{label}</td>'
+                f'<td style="{td}font-size:13px;font-weight:700;color:#CC0000;'
+                f'text-align:right;">{pct}</td>'
+                f'<td style="{td}">{bar_html}</td>'
+                f'<td style="{td}font-size:11px;color:#CC0000;">{flag_cell}</td>'
+                f"</tr>"
+            )
+        rows_html += row
+
+    th = (
+        "padding:8px 10px;font-size:10px;text-transform:uppercase;"
+        "letter-spacing:0.1em;color:#888;"
+    )
+    if display_mode == "Counts":
+        headers = (
+            f"<th style='{th}text-align:left;'>Label</th>"
+            f"<th style='{th}text-align:right;'>Count</th>"
+            f"<th style='{th}'>Bar</th><th></th>"
+        )
+    elif display_mode == "Counts + %":
+        headers = (
+            f"<th style='{th}text-align:left;'>Label</th>"
+            f"<th style='{th}text-align:right;'>Count</th>"
+            f"<th style='{th}text-align:right;'>%</th>"
+            f"<th style='{th}'>Bar</th><th></th>"
+        )
+    else:
+        headers = (
+            f"<th style='{th}text-align:left;'>Label</th>"
+            f"<th style='{th}text-align:right;'>%</th>"
+            f"<th style='{th}'>Bar</th><th></th>"
+        )
+
+    app.markdown(
+        f'<table style="width:100%;border-collapse:collapse;'
+        f'font-family:Arial,Helvetica,sans-serif;">'
+        f'<thead><tr style="background:#F8F8F8;'
+        f'border-bottom:2px solid #E0E0E0;">{headers}</tr></thead>'
+        f"<tbody>{rows_html}</tbody></table>"
+        f'<div style="font-size:10px;color:#888;margin-top:6px;'
+        f'font-family:Arial,Helvetica,sans-serif;">'
+        f"Valid N: {valid_n:,} &nbsp;\u00b7&nbsp; "
+        f"\u2B06 high outlier &nbsp;\u00b7&nbsp; \u2193 low outlier"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _drain_pending_actions() -> None:
+    """Process queued filter actions before any section renders.
+
+    Implements the "set flag in click handler, compute at top of next render"
+    pattern that eliminates the double-click bug: both the global filter and
+    every per-question filter become single-click because the new state is
+    fully populated before sections 2-5 render.
+    """
+    app = _require_streamlit()
+
+    pending_gf = app.session_state.get("pending_global_filter")
+    if pending_gf is not None:
+        app.session_state["pending_global_filter"] = None
+        app.session_state["global_filter_error"] = None
+        try:
+            from src.global_filter import apply_global_filter
+            from src.models import GlobalFilterState
+
+            state = GlobalFilterState(
+                filters=tuple(pending_gf["filter_specs"])
+            )
+            filtered_df, stats = apply_global_filter(
+                app.session_state["decoded_df"], state
+            )
+            app.session_state["global_filter_state"] = state
+            app.session_state["global_filter_stats"] = stats
+            app.session_state["active_df"] = filtered_df
+            _rerun_single_cuts_on_active_df()
+        except Exception as exc:  # noqa: BLE001
+            app.session_state["global_filter_error"] = (
+                f"{type(exc).__name__}: {exc}"
+            )
+
+    pending_pq = app.session_state.get("pending_per_question_filter") or {}
+    if pending_pq:
+        from src.filtered_single_cut import compute_filtered_single_cut
+
+        schema = app.session_state.get("schema")
+        active_df = app.session_state.get("active_df")
+        log = app.session_state.get("log")
+        errors: dict[str, str] = {}
+        for cid, payload in list(pending_pq.items()):
+            try:
+                filtered_result = compute_filtered_single_cut(
+                    cid, payload["filter_specs"], schema, active_df, log
+                )
+                app.session_state.setdefault("filtered_results", {})[cid] = (
+                    filtered_result
+                )
+            except Exception as exc:  # noqa: BLE001
+                errors[cid] = f"{type(exc).__name__}: {exc}"
+        app.session_state["pending_per_question_filter"] = {}
+        app.session_state["per_question_filter_errors"] = errors
+        app.session_state["filtered_workbook_bytes"] = None
 
 
 def _initialise_session_state() -> None:
@@ -359,12 +767,15 @@ def _preview_cross_tab(result: Any) -> None:
     df.columns.name = f"\u2192 {b}"
     app.caption(f"Rows: {a}   Columns: {b}")
     if display_mode == "Counts":
-        app.dataframe(df, use_container_width=True)
+        _styled_dataframe(df, use_container_width=True)
     else:
-        app.dataframe(
-            df.style.format("{:.1%}"),
-            use_container_width=True,
-        )
+        try:
+            app.dataframe(
+                df.style.apply(_style_outliers, axis=None).format("{:.1%}"),
+                use_container_width=True,
+            )
+        except Exception:
+            app.dataframe(df.style.format("{:.1%}"), use_container_width=True)
     app.caption(f"Grand total: {ct.get('grand_total', 0):,} responses")
     app.caption(
         "Tip: hover the table to use the built-in toolbar "
@@ -392,7 +803,9 @@ def _preview_segment_profile(result: Any) -> None:
                 tr["distribution"].items(), key=lambda x: str(x[0])
             )
         ]
-        app.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        _styled_dataframe(
+            pd.DataFrame(rows), use_container_width=True, hide_index=True
+        )
     elif "selections" in tr:
         rows = []
         for sub_id, payload in tr["selections"].items():
@@ -408,7 +821,9 @@ def _preview_segment_profile(result: Any) -> None:
                 }
             )
         rows.sort(key=lambda r: r["Selected count"], reverse=True)
-        app.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        _styled_dataframe(
+            pd.DataFrame(rows), use_container_width=True, hide_index=True
+        )
         app.caption(
             "Selected counts only. Unchecked counts remain in the audit trail "
             "of the downloaded workbook."
@@ -433,7 +848,9 @@ def _preview_segment_profile(result: Any) -> None:
             for code, payload in dist.items():
                 row_dict[f"{code}: {payload.get('label', '')}"] = payload.get("count", 0)
             grid_rows.append(row_dict)
-        app.dataframe(pd.DataFrame(grid_rows), use_container_width=True, hide_index=True)
+        _styled_dataframe(
+            pd.DataFrame(grid_rows), use_container_width=True, hide_index=True
+        )
     else:
         app.info("Preview not available for this target type.")
 
@@ -460,7 +877,9 @@ def _preview_group_comparison(result: Any) -> None:
             "N": overall.get("valid_n", overall.get("n", 0)),
         }
     )
-    app.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    _styled_dataframe(
+        pd.DataFrame(rows), use_container_width=True, hide_index=True
+    )
     app.caption("Group means in the downloaded workbook.")
 
 
@@ -478,7 +897,7 @@ def _preview_expected_vs_realized(result: Any) -> None:
             {"Metric": "Realized valid N", "Count": (rt.get("realized", {}) or {}).get("valid_n", 0)},
         ]
     )
-    app.dataframe(df, use_container_width=True, hide_index=True)
+    _styled_dataframe(df, use_container_width=True, hide_index=True)
     app.caption(
         "Mean expected, mean realized, gap statistics in the downloaded workbook."
     )
@@ -571,7 +990,7 @@ def _build_filter_spec(
 
 
 def _render_single_cut_result(result: Any, spec: Any) -> None:
-    """Counts-only display of a SingleCutResult."""
+    """Display a SingleCutResult with branded HTML for SS/MS distributions."""
     import pandas as pd
     from src.models import (
         GridSingleSelectResult,
@@ -598,41 +1017,46 @@ def _render_single_cut_result(result: Any, spec: Any) -> None:
                     "count", 0
                 )
             grid_rows.append(row_dict)
-        app.dataframe(
+        _styled_dataframe(
             pd.DataFrame(grid_rows), use_container_width=True, hide_index=True
         )
     elif isinstance(result, SingleSelectResult):
-        rows = [
-            {
-                "Code": code,
-                "Label": payload.get("label", ""),
-                "Count": payload.get("count", 0),
-            }
-            for code, payload in sorted(
-                result.distribution.items(), key=lambda kv: str(kv[0])
-            )
-        ]
-        app.dataframe(
-            pd.DataFrame(rows), use_container_width=True, hide_index=True
+        display_mode = app.radio(
+            "Display",
+            options=["Counts", "Counts + %", "% only"],
+            index=1,
+            horizontal=True,
+            key=f"sc_display_{result.question_id}",
+            label_visibility="collapsed",
         )
+        sorted_dist = dict(
+            sorted(result.distribution.items(), key=lambda kv: str(kv[0]))
+        )
+        _render_sc_table_html(sorted_dist, display_mode, result.valid_n)
     elif isinstance(result, MultiSelectResult):
-        rows = []
+        display_mode = app.radio(
+            "Display",
+            options=["Counts", "Counts + %", "% only"],
+            index=1,
+            horizontal=True,
+            key=f"sc_display_{result.question_id}",
+            label_visibility="collapsed",
+        )
+        ms_dist: dict[Any, dict[str, Any]] = {}
         for sub_id, payload in result.selections.items():
             label = payload.get("label", "") or ""
             label_lower = label.lower()
             if "unchecked" in label_lower or "not selected" in label_lower:
                 continue
-            rows.append(
-                {
-                    "Sub-column": sub_id,
-                    "Label": label,
-                    "Selected count": payload.get("count", 0),
-                }
-            )
-        rows.sort(key=lambda r: r["Selected count"], reverse=True)
-        app.dataframe(
-            pd.DataFrame(rows), use_container_width=True, hide_index=True
+            ms_dist[sub_id] = {
+                "label": label or sub_id,
+                "count": payload.get("count", 0),
+                "rate": payload.get("rate"),
+            }
+        ms_dist = dict(
+            sorted(ms_dist.items(), key=lambda kv: kv[1]["count"], reverse=True)
         )
+        _render_sc_table_html(ms_dist, display_mode, result.valid_n)
         app.caption(
             "Selected counts only. Unchecked counts remain in the audit trail "
             "of the downloaded workbook."
@@ -678,8 +1102,7 @@ def _purge_widget_keys(*prefixes: str) -> None:
 
 
 def _render_single_cut_card(result: Any, spec: Any) -> None:
-    from src.filtered_single_cut import compute_filtered_single_cut
-    from src.models import FilterSpec
+    from src.models import FilterSpec  # noqa: F401  (used by transitive helpers)
 
     app = _require_streamlit()
     schema = app.session_state["schema"]
@@ -785,6 +1208,10 @@ def _render_single_cut_card(result: Any, spec: Any) -> None:
                 disabled=not any(q is not None for q, _v in new_rows),
             )
 
+        pq_errors = app.session_state.get("per_question_filter_errors") or {}
+        if spec.canonical_id in pq_errors:
+            app.error(f"Filter failed: {pq_errors[spec.canonical_id]}")
+
         if apply_clicked:
             active_df = app.session_state["active_df"]
             specs = [
@@ -810,31 +1237,16 @@ def _render_single_cut_card(result: Any, spec: Any) -> None:
                     "Pick a value for at least all but one of the breakdowns."
                 )
             else:
-                try:
-                    filtered_result = compute_filtered_single_cut(
-                        spec.canonical_id,
-                        specs,
-                        schema,
-                        app.session_state["active_df"],
-                        app.session_state["log"],
-                    )
-                    app.session_state.setdefault("filtered_results", {})
-                    app.session_state["filtered_results"][
-                        spec.canonical_id
-                    ] = filtered_result
-                    app.session_state["filtered_workbook_bytes"] = None
-                    app.rerun()
-                except Exception as exc:  # noqa: BLE001
-                    app.error(f"Filter failed: {type(exc).__name__}: {exc}")
-                    import hashlib
-                    exc_digest = hashlib.sha1(
-                        str(exc).encode("utf-8")
-                    ).hexdigest()[:10]
-                    if app.checkbox(
-                        "Show technical details",
-                        key=f"show_tb_{spec.canonical_id}_{exc_digest}",
-                    ):
-                        app.code(traceback.format_exc())
+                # Queue for processing in _drain_pending_actions on next rerun.
+                # Inline compute would require a second click for state to
+                # propagate; deferring fixes the double-click bug.
+                app.session_state.setdefault(
+                    "pending_per_question_filter", {}
+                )[spec.canonical_id] = {"filter_specs": specs}
+                app.session_state.setdefault(
+                    "per_question_filter_errors", {}
+                ).pop(spec.canonical_id, None)
+                app.rerun()
 
         app.divider()
 
@@ -1025,7 +1437,7 @@ def _render_sidebar() -> None:
 
 def _section_upload() -> None:
     app = _require_streamlit()
-    app.header(SECTION_UPLOAD, anchor="section-1")
+    _section_header("1", SECTION_UPLOAD, anchor="section-1", meta="CSV \u00b7 XLSX \u00b7 DOCX")
     app.markdown(
         "Drop **any combination** of files \u2014 the tool detects what "
         "you've uploaded automatically."
@@ -1137,9 +1549,15 @@ def _section_upload() -> None:
 
 
 def _apply_global_filter_action(rows: list[tuple[str | None, Any]]) -> None:
-    from src.global_filter import apply_global_filter
-    from src.models import GlobalFilterState
+    """Queue the global filter for processing on the next rerun.
 
+    The actual ``apply_global_filter`` + single-cut recompute runs in
+    ``_drain_pending_actions()`` at the top of ``main()``. Storing only the
+    spec list here (rather than computing inline) eliminates the double-click
+    bug: the click handler returns immediately, ``st.rerun()`` fires, and the
+    recompute happens before any section renders so sections 2-5 all see the
+    filtered state in a single round trip.
+    """
     app = _require_streamlit()
     schema = app.session_state.get("schema")
     decoded_df = app.session_state.get("decoded_df")
@@ -1149,26 +1567,8 @@ def _apply_global_filter_action(rows: list[tuple[str | None, Any]]) -> None:
         if q is None or not vals:
             continue
         spec_list.append(_build_filter_spec(schema, decoded_df, q, vals))
-    specs = tuple(spec_list)
-
-    try:
-        state = GlobalFilterState(filters=specs)
-    except ValueError as exc:
-        app.error(f"Invalid global filter: {exc}")
-        return
-
-    try:
-        filtered_df, stats = apply_global_filter(
-            app.session_state["decoded_df"], state
-        )
-    except ValueError as exc:
-        app.error(f"Could not apply global filter: {exc}")
-        return
-
-    app.session_state["global_filter_state"] = state
-    app.session_state["global_filter_stats"] = stats
-    app.session_state["active_df"] = filtered_df
-    _rerun_single_cuts_on_active_df()
+    app.session_state["pending_global_filter"] = {"filter_specs": spec_list}
+    app.session_state["global_filter_error"] = None
     app.rerun()
 
 
@@ -1186,7 +1586,7 @@ def _clear_global_filter_action() -> None:
 
 def _section_global_filter() -> None:
     app = _require_streamlit()
-    app.header(SECTION_GLOBAL_FILTER, anchor="section-2")
+    _section_header("2", SECTION_GLOBAL_FILTER, anchor="section-2", meta="Subset every analysis")
 
     if not app.session_state["run_complete"]:
         app.caption(
@@ -1320,7 +1720,7 @@ def _section_global_filter() -> None:
 
 def _section_single_cuts() -> None:
     app = _require_streamlit()
-    app.header(SECTION_RESULTS, anchor="section-3")
+    _section_header("3", SECTION_RESULTS, anchor="section-3", meta="Single cuts")
 
     if not app.session_state["run_complete"]:
         app.info(EMPTY_NO_RESULTS)
@@ -1362,7 +1762,7 @@ def _section_single_cuts() -> None:
 
 def _section_cross_cuts() -> None:
     app = _require_streamlit()
-    app.header(SECTION_CROSS_CUTS, anchor="section-4")
+    _section_header("4", SECTION_CROSS_CUTS, anchor="section-4", meta="Two-question analyses")
 
     if not app.session_state["run_complete"]:
         app.info(EMPTY_NO_CROSS_CUTS)
@@ -1436,7 +1836,7 @@ def _section_cross_cuts() -> None:
 
 def _section_downloads() -> None:
     app = _require_streamlit()
-    app.header(SECTION_DOWNLOADS, anchor="section-5")
+    _section_header("5", SECTION_DOWNLOADS, anchor="section-5", meta="Workbooks")
 
     if not app.session_state["run_complete"]:
         app.info("Run an analysis to generate downloadable workbooks.")
@@ -1600,11 +2000,17 @@ def main() -> None:
         initial_sidebar_state="expanded",
     )
     _initialise_session_state()
+    _inject_theme_css()
+    _drain_pending_actions()
     _render_sidebar()
 
     app.title(APP_TITLE)
     app.caption(APP_TAGLINE)
     app.divider()
+
+    gf_error = app.session_state.get("global_filter_error")
+    if gf_error:
+        app.error(f"Global filter failed: {gf_error}")
 
     _section_upload()
     app.divider()
