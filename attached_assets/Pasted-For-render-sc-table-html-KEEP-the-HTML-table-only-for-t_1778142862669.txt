@@ -1,0 +1,263 @@
+For _render_sc_table_html — KEEP the HTML table 
+  only for the inline bar chart column (bars can't 
+  be in st.dataframe). But add a SEPARATE 
+  st.dataframe below it for copy/sort/download:
+
+    # After the HTML table with bars:
+    with st.expander("📋 Table view (sortable · "
+                     "copyable · downloadable)", 
+                     expanded=False):
+        df_plain = pd.DataFrame([
+            {
+                'Label': payload.get('label', 
+                                     str(code)),
+                'Count': payload.get('count', 0),
+                '%': round(payload.get('rate',0)*100, 
+                           1),
+            }
+            for code, payload in distribution.items()
+        ])
+        try:
+            st.dataframe(
+                df_plain.style.apply(
+                    _style_outliers, axis=None),
+                use_container_width=True,
+                hide_index=True,
+            )
+        except Exception:
+            st.dataframe(df_plain, 
+                         use_container_width=True,
+                         hide_index=True)
+
+This gives users the visual bar chart AND a fully 
+interactive sortable/copyable/downloadable table 
+with outlier styling preserved.
+
+
+CHANGE 4 — Sidebar cleanup and formatting
+
+Replace the entire sidebar section of app.py with 
+this structured layout:
+
+  def _render_sidebar():
+      with st.sidebar:
+          # LOGO / TITLE
+          st.markdown("""
+          <div style="padding:16px 0 8px 0;
+            border-bottom:3px solid #CC0000;
+            margin-bottom:16px;">
+            <div style="font-size:16px;font-weight:700;
+              color:#0A0A0A;font-family:Arial;">
+              Survey Analysis Engine
+            </div>
+            <div style="font-size:10px;color:#888;
+              font-family:Arial;margin-top:2px;">
+              Bain & Company
+            </div>
+          </div>
+          """, unsafe_allow_html=True)
+          
+          if st.session_state.get('run_complete'):
+              schema = st.session_state.get('schema')
+              lr = st.session_state.get('load_report')
+              gf_stats = st.session_state.get(
+                  'global_filter_stats')
+              results = st.session_state.get(
+                  'results', [])
+              
+              st.markdown("**Session**")
+              
+              if lr:
+                  st.markdown(f"""
+                  <div style="font-size:10px;
+                    color:#666;font-family:Arial;
+                    line-height:1.9;
+                    background:#F8F8F8;
+                    padding:10px;
+                    border-left:3px solid #E0E0E0;
+                    margin-bottom:12px;">
+                    <b>File</b><br>
+                    {lr.raw_data_source}<br>
+                    <b>Input type</b><br>
+                    {lr.scenario.replace('_',' ')}<br>
+                    <b>Respondents</b><br>
+                    {lr.raw_rows:,}<br>
+                    <b>Questions</b><br>
+                    {lr.questions_parsed}
+                  </div>
+                  """, unsafe_allow_html=True)
+              
+              gf_state = st.session_state.get(
+                  'global_filter_state')
+              if (gf_state and 
+                  gf_state.is_active() and 
+                  gf_stats):
+                  st.markdown(f"""
+                  <div style="background:#FFF5F5;
+                    border-left:3px solid #CC0000;
+                    padding:10px;
+                    font-size:10px;
+                    font-family:Arial;
+                    line-height:1.9;
+                    margin-bottom:12px;">
+                    <b style="color:#CC0000;">
+                    ● Global Filter Active</b><br>
+                    {gf_state.description()}<br>
+                    <b>{gf_stats['rows_after']:,}</b>
+                    &nbsp;of&nbsp;
+                    {gf_stats['rows_before']:,}
+                    &nbsp;respondents
+                  </div>
+                  """, unsafe_allow_html=True)
+              else:
+                  st.markdown("""
+                  <div style="font-size:10px;
+                    color:#888;font-family:Arial;
+                    padding:8px 0;
+                    margin-bottom:8px;">
+                    ○ No global filter · full dataset
+                  </div>
+                  """, unsafe_allow_html=True)
+              
+              skips = st.session_state.get('skips',[])
+              errors = [s for s in skips 
+                        if s.skip_reason == 
+                        'calculation_error']
+              log = st.session_state.get('log')
+              log_len = len(log) if log else 0
+              cc_results = st.session_state.get(
+                  'cross_cut_results', [])
+              
+              st.markdown(f"""
+              <div style="font-size:10px;
+                color:#666;font-family:Arial;
+                line-height:2.0;
+                border-top:1px solid #E0E0E0;
+                padding-top:10px;
+                margin-bottom:12px;">
+                <b>Single cuts</b>&nbsp;
+                {len(results)}<br>
+                <b>Skipped</b>&nbsp;
+                {len(skips)}<br>
+                <b>Errors</b>&nbsp;
+                <span style="color:{'#CC0000' 
+                if errors else '#2E7D32'};">
+                {len(errors)}</span><br>
+                <b>Audit records</b>&nbsp;
+                {log_len}<br>
+                <b>Cross cuts</b>&nbsp;
+                {len(cc_results)}
+              </div>
+              """, unsafe_allow_html=True)
+              
+              st.markdown("**Navigate**")
+              st.markdown("""
+              <div style="font-size:11px;
+                font-family:Arial;
+                line-height:2.2;color:#333;">
+                <a href="#upload-your-survey" 
+                   style="color:#CC0000;
+                   text-decoration:none;">
+                   ↑ 1. Upload</a><br>
+                <a href="#global-filter" 
+                   style="color:#CC0000;
+                   text-decoration:none;">
+                   ⊕ 2. Global Filter</a><br>
+                <a href="#explore-single-cuts" 
+                   style="color:#CC0000;
+                   text-decoration:none;">
+                   — 3. Single Cuts</a><br>
+                <a href="#build-cross-cuts" 
+                   style="color:#CC0000;
+                   text-decoration:none;">
+                   ╫ 4. Cross Cuts</a><br>
+                <a href="#download-workbooks" 
+                   style="color:#CC0000;
+                   text-decoration:none;">
+                   ↓ 5. Downloads</a>
+              </div>
+              """, unsafe_allow_html=True)
+          
+          else:
+              st.markdown("""
+              <div style="font-size:11px;
+                color:#666;font-family:Arial;
+                line-height:1.9;padding:8px 0;">
+                <b>Getting started:</b><br>
+                1. Upload your survey files<br>
+                2. Click Run Analysis<br>
+                3. Apply filters if needed<br>
+                4. Explore and download
+              </div>
+              """, unsafe_allow_html=True)
+          
+          st.markdown("---")
+          with st.expander("Help", expanded=False):
+              st.markdown("""
+              <div style="font-size:10px;
+                font-family:Arial;
+                color:#444;line-height:1.9;">
+                <b>Supported file types</b><br>
+                CSV, XLSX, DOCX<br><br>
+                <b>Three input scenarios</b><br>
+                A: Raw data + data map<br>
+                B: Combined XLSX (2 sheets)<br>
+                C: Raw data + Word survey doc<br><br>
+                <b>Filters</b><br>
+                Global filter restricts everything.<br>
+                Per-question filter applies only<br>
+                to that single question.<br><br>
+                <b>Outlier flags</b><br>
+                ⬆ Red = high outlier (>2σ above mean)<br>
+                ↓ Amber = low outlier (>1.5σ below)
+              </div>
+              """, unsafe_allow_html=True)
+
+Call _render_sidebar() at the top of main() before 
+any section rendering. Remove all previous sidebar 
+code. Remove from sidebar: raw st.write calls, 
+duplicate status messages, debug output, session_state 
+dumps, long question ID lists.
+
+
+VERIFICATION
+
+  python -c "import app"
+  Restart workflow.
+
+  In preview pane:
+  1. Upload BCN_LTB file, Run Analysis
+  2. Sidebar shows file name, input type, respondent 
+     count, question count, single-cut count, nav links
+  3. Set global filter → sidebar shows red active 
+     filter block with filtered N
+  4. Open Q5 single-cut card → toggle Counts / 
+     Counts+% / % only → same rows stay flagged 
+     red/amber across all modes
+  5. Cross-cut builder dropdowns show full question 
+     text not just IDs
+  6. Run a cross cut → result card shows source 
+     question full text below title
+  7. Open any single-cut table → click Table view 
+     expander → sortable dataframe with outlier 
+     colors appears
+  8. Hover over any st.dataframe → confirm search, 
+     CSV download, fullscreen buttons present
+
+Paste: import result, restart status, items 1-8 
+yes/no with notes, any console errors.
+
+CONSTRAINTS
+  - Do NOT modify any module in src/.
+  - app.py only.
+  - Three workbook downloads must still work.
+  - HTML bar-chart table stays as primary visual 
+    for single cuts; Table view expander is secondary.
+  - _style_outliers must have try/except fallback 
+    on every st.dataframe call.
+  - Sidebar renders correctly both before and after 
+    Run Analysis.
+
+COMMIT MESSAGE
+"UI polish: persistent flags + full question labels 
+ + excel-like tables + sidebar cleanup"
