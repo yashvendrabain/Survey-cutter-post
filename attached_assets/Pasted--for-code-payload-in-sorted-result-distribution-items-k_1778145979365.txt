@@ -1,0 +1,235 @@
+    for code, payload in sorted(result.distribution.items(), key=lambda item: _sort_key(item[0])):
+        total_count += int(payload["count"])
+        total_rate += float(payload["rate"])
+        _write(ws, row_index, 0, code)
+        _write(ws, row_index, 1, payload["label"])
+        _write(ws, row_index, 2, payload["count"], formats["count"])
+        _write(ws, row_index, 3, payload["rate"], formats["pct"])
+        row_index += 1
+    total_rate = 1.0 if math.isclose(total_rate, 1.0) else total_rate
+    _write(ws, row_index, 1, "Total", formats["bold"])
+    _write(ws, row_index, 2, total_count, formats["count"])
+    _write(ws, row_index, 3, total_rate, formats["pct"])
+    return row_index
+
+
+def _write_multi_select_body(
+    ws: Any,
+    result: MultiSelectResult,
+    formats: dict[str, Any],
+    start_row: int,
+) -> int:
+    _write_header_row(
+        ws,
+        start_row,
+        ["Sub-Column ID", "Label", "Count selected", "Selection %"],
+        formats,
+    )
+    row_index = start_row + 1
+    sorted_items = sorted(
+        result.selections.items(),
+        key=lambda item: int(item[1]["count"]),
+        reverse=True,
+    )
+    for sub_column_id, payload in sorted_items:
+        if int(payload["count"]) == 0:
+            continue
+        _write(ws, row_index, 0, sub_column_id)
+        _write(ws, row_index, 1, payload["label"])
+        _write(ws, row_index, 2, payload["count"], formats["count"])
+        _write(ws, row_index, 3, payload["selection_rate"], formats["pct"])
+        row_index += 1
+    row_index += 1
+    _write(
+        ws,
+        row_index,
+        0,
+        f"Respondents who answered any: {result.respondents_who_answered_any}",
+        formats["bold"],
+    )
+    return row_index
+
+
+def _write_numeric_body(
+    ws: Any,
+    result: NumericResult,
+    formats: dict[str, Any],
+    start_row: int,
+) -> int:
+    rows = [
+        ("Mean", result.mean),
+        ("Median", result.median),
+        ("Std Dev", result.std),
+        ("Min", result.min_val),
+        ("Max", result.max_val),
+        ("25th percentile", result.percentiles[25]),
+        ("50th percentile", result.percentiles[50]),
+        ("75th percentile", result.percentiles[75]),
+    ]
+    row_index = start_row
+    for label, value in rows:
+        _write(ws, row_index, 0, label)
+        _write(ws, row_index, 1, value, formats["stat"])
+        row_index += 1
+
+    if result.question_type is QuestionType.NUMERIC_ALLOCATION:
+        row_index += 1
+        _write(ws, row_index, 0, "Per-option allocation means", formats["bold"])
+        row_index += 1
+        _write_header_row(ws, row_index, ["Option", "Mean", "Median"], formats)
+        row_index += 1
+        for option_id, payload in (result.per_option_stats or {}).items():
+            _write(ws, row_index, 0, option_id)
+            _write(ws, row_index, 1, payload["mean"], formats["stat"])
+            _write(ws, row_index, 2, payload["median"], formats["stat"])
+            row_index += 1
+        row_index += 1
+        allocation_rows = [
+            ("Allocation target:", result.allocation_target),
+            ("Tolerance:", result.allocation_tolerance),
+            ("Excluded (out of tolerance):", result.allocation_excluded_n),
+        ]
+        for label, value in allocation_rows:
+            _write(ws, row_index, 0, label)
+            _write(ws, row_index, 1, value, formats["stat"])
+            row_index += 1
+    return row_index
+
+
+def _write_grid_body(
+    ws: Any,
+    result: GridSingleSelectResult,
+    schema: SurveySchema,
+    formats: dict[str, Any],
+    start_row: int,
+) -> int:
+    spec = schema.get_question(result.question_id)
+    row_labels = spec.grid_row_labels if spec and spec.grid_row_labels else {}
+    row_index = start_row
+    _write(ws, row_index, 0, "Per-row distributions", formats["bold"])
+    row_index += 2
+    for sub_column_id, row_result in result.rows.items():
+        row_label = row_labels.get(sub_column_id, sub_column_id)
+        _write(
+            ws,
+            row_index,
+            0,
+            f"{row_label} (n={row_result.valid_n})",
+            formats["bold"],
+        )
+        row_index += 1
+        row_index = _write_single_select_body(ws, row_result, formats, row_index) + 2
+    _write(ws, row_index, 0, "Overall valid N:", formats["bold"])
+    _write(ws, row_index, 1, result.overall_valid_n, formats["count"])
+    return row_index
+
+
+def _write_cross_cut_index(
+    workbook: Any,
+    cross_cut_results: list[CrossCutResult],
+    cc_sheet_names: dict[str, str],
+    formats: dict[str, Any],
+) -> None:
+    ws = workbook.add_worksheet("Cross_Cut_Index")
+    headers = [
+        "Cross Cut ID",
+        "Title",
+        "Analysis Type",
+        "Sheet Name",
+        "Source Questions",
+        "Filter",
+        "Audit Records",
+        "Warnings",
+    ]
+    _write_header_row(ws, 0, headers, formats)
+    for row_index, result in enumerate(cross_cut_results, start=1):
+        sheet_name = cc_sheet_names[result.cross_cut_id]
+        filter_expr = (
+            result.result_table.get("filter_expr", "")
+            if result.analysis_type is AnalysisType.SEGMENT_PROFILE
+            else ""
+        )
+        _write(ws, row_index, 0, result.cross_cut_id)
+        _write(ws, row_index, 1, result.synthetic_question_title)
+        _write(ws, row_index, 2, result.analysis_type.value)
+        _write_url(
+            ws,
+            row_index,
+            3,
+            f"internal:'{_quote_sheet_name(sheet_name)}'!A1",
+            formats["link"],
+            sheet_name,
+        )
+        _write(ws, row_index, 4, ", ".join(result.source_question_ids))
+        _write(ws, row_index, 5, filter_expr)
+        _write(ws, row_index, 6, len(result.audit_records), formats["count"])
+        _write(ws, row_index, 7, " | ".join(result.warnings))
+    ws.freeze_panes(1, 0)
+    _autofit(ws)
+
+
+def _write_filtered_run_summary(
+    workbook: Any,
+    filtered_results: list[FilteredSingleCutResult],
+    schema: SurveySchema,
+    log: CalculationLog,
+    formats: dict[str, Any],
+) -> None:
+    ws = workbook.add_worksheet("Run_Summary")
+    rows = [
+        ("Workbook type:", "Filtered single cuts"),
+        ("Source datamap:", schema.source_datamap_path),
+        ("Source raw data:", schema.source_rawdata_path),
+        ("Run timestamp:", schema.parsed_at.isoformat()),
+        ("Filtered analyses included:", len(filtered_results)),
+        ("Audit log records:", len(log)),
+    ]
+    for row_index, (label, value) in enumerate(rows):
+        _write(ws, row_index, 0, label, formats["bold"])
+        _write(ws, row_index, 1, value)
+    ws.set_column(0, 0, 30)
+    _autofit(ws)
+
+
+def _write_filtered_cut_index(
+    workbook: Any,
+    filtered_results: list[FilteredSingleCutResult],
+    fsc_sheet_names: dict[int, str],
+    schema: SurveySchema,
+    formats: dict[str, Any],
+) -> None:
+    ws = workbook.add_worksheet("Filtered_Cut_Index")
+    headers = [
+        "Sheet Name",
+        "Target Question",
+        "Filters Applied",
+        "Dispatch Mode",
+        "Filtered N",
+        "Warnings",
+    ]
+    _write_header_row(ws, 0, headers, formats)
+    for row_index, result in enumerate(filtered_results, start=1):
+        sheet_name = fsc_sheet_names[row_index - 1]
+        _write_url(
+            ws,
+            row_index,
+            0,
+            f"internal:'{_quote_sheet_name(sheet_name)}'!A1",
+            formats["link"],
+            sheet_name,
+        )
+        _write(ws, row_index, 1, result.target_question_id)
+        _write(
+            ws,
+            row_index,
+            2,
+            " | ".join(
+                _filter_description(filter_spec, schema, compact_breakdown=True)
+                for filter_spec in result.filters_applied
+            ),
+        )
+        _write(ws, row_index, 3, result.dispatch_mode)
+        _write(ws, row_index, 4, result.filtered_n, formats["count"])
+        _write(ws, row_index, 5, " | ".join(result.warnings))
+    ws.freeze_panes(1, 0)
+    _autofit(ws)
