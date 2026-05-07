@@ -213,9 +213,111 @@ header[data-testid="stHeader"] {
 """
 
 
+_THEME_CSS_DAY18 = """
+<style>
+/* Day 18 — Fixed red header bar */
+header[data-testid="stHeader"] {
+  background: #CC0000 !important;
+  border-bottom: none !important;
+  height: 64px !important;
+  z-index: 999 !important;
+  position: fixed !important;
+  top: 0 !important; left: 0 !important; right: 0 !important;
+}
+header[data-testid="stHeader"]::before {
+  content: ''; position: absolute; inset: 0;
+  background: #CC0000; z-index: -1;
+}
+header[data-testid="stHeader"] [data-testid="stToolbar"] {
+  display: none !important;
+}
+.stApp { margin-top: 0 !important; }
+.main .block-container {
+  padding-top: 80px !important;
+  max-width: 100% !important;
+}
+[data-testid="stSidebar"] {
+  margin-top: 64px !important;
+  height: calc(100vh - 64px) !important;
+}
+.custom-header {
+  position: fixed; top: 0; left: 0; right: 0;
+  height: 64px; background: #CC0000; z-index: 1000;
+  display: flex; align-items: center;
+  padding: 0 32px; color: white;
+  font-family: Arial, Helvetica, sans-serif;
+}
+.custom-header-title {
+  font-size: 20px; font-weight: 700;
+  color: white; letter-spacing: 0.02em; margin-right: 24px;
+}
+.custom-header-tagline {
+  font-size: 12px; color: rgba(255,255,255,0.85);
+  font-weight: 400;
+  border-left: 1px solid rgba(255,255,255,0.3);
+  padding-left: 24px;
+}
+
+/* Day 18 — Sidebar question navigation buttons */
+[data-testid="stSidebar"] .stButton > button {
+  text-align: left !important;
+  justify-content: flex-start !important;
+  white-space: normal !important;
+  height: auto !important;
+  min-height: 44px !important;
+  padding: 10px 12px !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  line-height: 1.4 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  border-radius: 0 !important;
+  border-left: 3px solid transparent !important;
+  background: white !important;
+  color: #333 !important;
+  border: 1px solid #E8E8E8 !important;
+  margin-bottom: 2px !important;
+  word-wrap: break-word !important;
+  overflow-wrap: break-word !important;
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+  background: #FFF5F5 !important;
+  border-left-color: #CC0000 !important;
+  color: #0A0A0A !important;
+}
+[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+  background: #FFF0F0 !important;
+  border-left: 3px solid #CC0000 !important;
+  color: #CC0000 !important;
+  font-weight: 700 !important;
+}
+
+/* Day 18 — Plotly chart styling */
+.plotly, .plotly-chart { background: white !important; }
+.plotly-chart [class*="modebar"] {
+  background: rgba(255,255,255,0.8) !important;
+  border: 1px solid #E0E0E0 !important;
+}
+.plotly-chart [class*="modebar-btn"] { color: #666 !important; }
+</style>
+"""
+
+_CUSTOM_HEADER_HTML = """
+<div class="custom-header">
+  <div class="custom-header-title">Survey Analysis Engine</div>
+  <div class="custom-header-tagline">
+    Upload survey data, explore single &amp; cross cuts,
+    export consultant-ready workbooks
+  </div>
+</div>
+"""
+
+
 def _inject_theme_css() -> None:
     app = _require_streamlit()
     app.markdown(_THEME_CSS, unsafe_allow_html=True)
+    app.markdown(_THEME_CSS_DAY18, unsafe_allow_html=True)
+    app.markdown(_CUSTOM_HEADER_HTML, unsafe_allow_html=True)
 
 
 def _section_header(
@@ -478,6 +580,345 @@ def _render_sc_table_html(
             app.dataframe(
                 df_plain, use_container_width=True, hide_index=True
             )
+
+
+# ---------------------------------------------------------------------------
+# Day 18 — Plotly chart helpers
+# ---------------------------------------------------------------------------
+
+
+def _chart_text_label(text: str, limit: int) -> str:
+    text = (text or "").strip()
+    return text[: limit - 3] + "\u2026" if len(text) > limit else text
+
+
+def _render_chart_for_distribution(
+    distribution: dict,
+    spec: Any,
+    valid_n: int,
+    display_mode: str,
+    key_suffix: str = "",
+) -> None:
+    """Interactive Plotly bar chart for an SS or MS distribution."""
+    try:
+        import plotly.graph_objects as go
+    except Exception:  # noqa: BLE001
+        return
+
+    app = _require_streamlit()
+    labels: list[str] = []
+    counts: list[float] = []
+    pcts: list[float] = []
+    for code, payload in distribution.items():
+        labels.append(str(payload.get("label", code)))
+        c = payload.get("count", 0) or 0
+        counts.append(c)
+        rate = payload.get("rate")
+        if rate is None:
+            rate = (c / valid_n) if valid_n else 0
+        pcts.append(rate * 100)
+
+    if not labels:
+        return
+
+    flags = _compute_outlier_flags(counts)
+    bar_colors = [
+        "#CC0000" if f == "high" else "#E65100" if f == "low" else "#888888"
+        for f in flags
+    ]
+    if display_mode == "% only":
+        y_values, y_label = pcts, "%"
+    else:
+        y_values, y_label = counts, "Count"
+
+    text_vals: list[str] = []
+    for c, p in zip(counts, pcts):
+        if display_mode == "Counts":
+            text_vals.append(f"{int(c):,}")
+        elif display_mode == "% only":
+            text_vals.append(f"{p:.1f}%")
+        else:
+            text_vals.append(f"{int(c):,} ({p:.1f}%)")
+
+    fig = go.Figure(
+        data=[
+            go.Bar(
+                x=labels,
+                y=y_values,
+                marker_color=bar_colors,
+                text=text_vals,
+                textposition="outside",
+                customdata=list(zip(counts, pcts)),
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    "Count: %{customdata[0]:,}<br>"
+                    "%: %{customdata[1]:.1f}%<extra></extra>"
+                ),
+            )
+        ]
+    )
+    fig.update_layout(
+        title={
+            "text": _chart_text_label(
+                spec.question_text or spec.canonical_id, 80
+            ),
+            "font": {"family": "Arial", "size": 14, "color": "#0A0A0A"},
+        },
+        xaxis={"title": "", "tickfont": {"family": "Arial", "size": 11}},
+        yaxis={
+            "title": y_label,
+            "tickfont": {"family": "Arial", "size": 10},
+            "gridcolor": "#F0F0F0",
+        },
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        showlegend=False,
+        height=380,
+        margin={"t": 50, "b": 80, "l": 60, "r": 40},
+        font={"family": "Arial"},
+    )
+    try:
+        app.plotly_chart(
+            fig,
+            use_container_width=True,
+            key=f"chart_sc_{spec.canonical_id}_{key_suffix}",
+            config={
+                "displayModeBar": True,
+                "displaylogo": False,
+                "modeBarButtonsToRemove": ["lasso2d", "select2d"],
+                "toImageButtonOptions": {
+                    "format": "png",
+                    "filename": f"{spec.canonical_id}_chart",
+                    "height": 600,
+                    "width": 1000,
+                    "scale": 2,
+                },
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        app.caption(f"Chart unavailable: {type(exc).__name__}: {exc}")
+
+
+def _render_chart_for_cross_tab(
+    result: Any, schema: Any, display_mode: str = "Counts"
+) -> None:
+    """Clustered bar chart for a cross-tab result."""
+    try:
+        import plotly.graph_objects as go
+    except Exception:  # noqa: BLE001
+        return
+
+    app = _require_streamlit()
+    rt = result.result_table
+    counts = rt.get("counts", {}) or {}
+    row_labels = rt.get("row_label_map", {}) or {}
+    col_labels = rt.get("column_label_map", {}) or {}
+    row_pct = rt.get("row_pct", {}) or {}
+    if not counts:
+        return
+
+    row_codes = sorted(counts.keys(), key=lambda v: str(v))
+    col_codes = sorted(
+        {c for row in counts.values() if isinstance(row, dict) for c in row.keys()},
+        key=lambda v: str(v),
+    )
+    x_categories = [str(row_labels.get(rc, rc)) for rc in row_codes]
+    palette = [
+        "#CC0000", "#0A0A0A", "#666666", "#990000",
+        "#999999", "#330000", "#444444", "#FF6666",
+    ]
+
+    fig = go.Figure()
+    for i, cc in enumerate(col_codes):
+        col_label = str(col_labels.get(cc, cc))
+        if display_mode == "Row %":
+            y_vals = [
+                (row_pct.get(rc, {}) or {}).get(cc, 0) * 100 for rc in row_codes
+            ]
+            text_vals = [f"{v:.1f}%" for v in y_vals]
+        else:
+            y_vals = [(counts.get(rc, {}) or {}).get(cc, 0) for rc in row_codes]
+            text_vals = [f"{v:,}" for v in y_vals]
+        fig.add_trace(
+            go.Bar(
+                name=col_label,
+                x=x_categories,
+                y=y_vals,
+                text=text_vals,
+                textposition="outside",
+                marker_color=palette[i % len(palette)],
+                hovertemplate=f"<b>{col_label}</b><br>%{{x}}: %{{y}}<extra></extra>",
+            )
+        )
+
+    a, b = result.source_question_ids
+    a_spec = schema.get_question(a) if schema is not None else None
+    b_spec = schema.get_question(b) if schema is not None else None
+    a_text = a_spec.question_text if (a_spec and a_spec.question_text) else a
+    b_text = b_spec.question_text if (b_spec and b_spec.question_text) else b
+    title = (
+        f"{_chart_text_label(a_text, 50)} \u00d7 {_chart_text_label(b_text, 50)}"
+    )
+
+    fig.update_layout(
+        title={"text": title, "font": {"family": "Arial", "size": 13}},
+        barmode="group",
+        xaxis={"title": a, "tickfont": {"family": "Arial", "size": 10}},
+        yaxis={
+            "title": "Count" if display_mode == "Counts" else "%",
+            "gridcolor": "#F0F0F0",
+            "tickfont": {"family": "Arial", "size": 10},
+        },
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        legend={"title": b, "font": {"family": "Arial", "size": 10}},
+        height=440,
+        margin={"t": 60, "b": 80, "l": 60, "r": 40},
+        font={"family": "Arial"},
+    )
+    try:
+        app.plotly_chart(
+            fig,
+            use_container_width=True,
+            key=f"chart_ct_{result.cross_cut_id}_{display_mode}",
+            config={
+                "displayModeBar": True,
+                "displaylogo": False,
+                "toImageButtonOptions": {
+                    "format": "png",
+                    "filename": f"{result.cross_cut_id}_chart",
+                    "height": 600,
+                    "width": 1200,
+                    "scale": 2,
+                },
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        app.caption(f"Chart unavailable: {type(exc).__name__}: {exc}")
+
+
+def _render_chart_for_expected_vs_realized(result: Any) -> None:
+    """Side-by-side bars comparing Expected, Realized, and Gap means."""
+    try:
+        import plotly.graph_objects as go
+    except Exception:  # noqa: BLE001
+        return
+
+    app = _require_streamlit()
+    rt = result.result_table
+    expected = rt.get("expected", {}) or {}
+    realized = rt.get("realized", {}) or {}
+    gap = rt.get("gap", {}) or {}
+    series = [
+        ("Expected", expected.get("mean")),
+        ("Realized", realized.get("mean")),
+        ("Gap", gap.get("mean")),
+    ]
+    labels = [name for name, val in series if val is not None]
+    values = [float(val) for name, val in series if val is not None]
+    if not values:
+        return
+
+    palette = ["#666666", "#0A0A0A", "#CC0000"]
+    fig = go.Figure(
+        data=[
+            go.Bar(
+                x=labels,
+                y=values,
+                marker_color=palette[: len(values)],
+                text=[f"{v:.2f}" for v in values],
+                textposition="outside",
+            )
+        ]
+    )
+    fig.update_layout(
+        title="Mean: Expected vs Realized (Gap = Realized \u2212 Expected)",
+        xaxis={"tickfont": {"family": "Arial", "size": 11}},
+        yaxis={
+            "title": "Mean",
+            "gridcolor": "#F0F0F0",
+            "tickfont": {"family": "Arial", "size": 10},
+        },
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        showlegend=False,
+        height=360,
+        margin={"t": 50, "b": 60, "l": 60, "r": 40},
+        font={"family": "Arial"},
+    )
+    try:
+        app.plotly_chart(
+            fig,
+            use_container_width=True,
+            key=f"chart_evr_{result.cross_cut_id}",
+            config={"displaylogo": False},
+        )
+    except Exception as exc:  # noqa: BLE001
+        app.caption(f"Chart unavailable: {type(exc).__name__}: {exc}")
+
+
+def _render_chart_for_segment_metric(result: Any, schema: Any) -> None:
+    """Simple bar chart of mean-by-segment for GROUP_COMPARISON-style results."""
+    try:
+        import plotly.graph_objects as go
+    except Exception:  # noqa: BLE001
+        return
+
+    app = _require_streamlit()
+    rt = result.result_table
+    per_seg = rt.get("per_segment", {}) or {}
+    labels: list[str] = []
+    values: list[float] = []
+    for seg_val, seg_data in per_seg.items():
+        if not isinstance(seg_data, dict):
+            continue
+        mean = seg_data.get("mean")
+        if mean is None:
+            continue
+        labels.append(str(seg_data.get("label", seg_val)))
+        values.append(float(mean))
+    if not values:
+        return
+
+    flags = _compute_outlier_flags(values)
+    colors = [
+        "#CC0000" if f == "high" else "#E65100" if f == "low" else "#666666"
+        for f in flags
+    ]
+    fig = go.Figure(
+        data=[
+            go.Bar(
+                x=labels,
+                y=values,
+                marker_color=colors,
+                text=[f"{v:.2f}" for v in values],
+                textposition="outside",
+            )
+        ]
+    )
+    fig.update_layout(
+        title="Mean by segment",
+        xaxis={"tickfont": {"family": "Arial", "size": 10}},
+        yaxis={
+            "gridcolor": "#F0F0F0",
+            "tickfont": {"family": "Arial", "size": 10},
+        },
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        showlegend=False,
+        height=380,
+        margin={"t": 50, "b": 80, "l": 60, "r": 40},
+        font={"family": "Arial"},
+    )
+    try:
+        app.plotly_chart(
+            fig,
+            use_container_width=True,
+            key=f"chart_seg_{result.cross_cut_id}",
+            config={"displaylogo": False},
+        )
+    except Exception as exc:  # noqa: BLE001
+        app.caption(f"Chart unavailable: {type(exc).__name__}: {exc}")
 
 
 def _drain_pending_actions() -> None:
@@ -817,6 +1258,9 @@ def _preview_cross_tab(result: Any) -> None:
     df.index.name = f"\u2193 {a}"
     df.columns.name = f"\u2192 {b}"
     app.caption(f"Rows: {a}   Columns: {b}")
+    schema = app.session_state.get("schema")
+    chart_mode = "Row %" if display_mode == "Row %" else "Counts"
+    _render_chart_for_cross_tab(result, schema, chart_mode)
     if display_mode == "Counts":
         _styled_dataframe(df, use_container_width=True)
     else:
@@ -913,6 +1357,7 @@ def _preview_group_comparison(result: Any) -> None:
     seg_q = rt.get("segment_question_id", "")
     met_q = rt.get("metric_question_id", "")
     app.caption(f"Metric: {met_q}   Segments: {seg_q}")
+    _render_chart_for_segment_metric(result, app.session_state.get("schema"))
     rows = []
     for seg_val, seg_data in (rt.get("per_segment", {}) or {}).items():
         rows.append(
@@ -941,6 +1386,7 @@ def _preview_expected_vs_realized(result: Any) -> None:
     exp_q = rt.get("expected_question_id", "")
     real_q = rt.get("realized_question_id", "")
     app.caption(f"Expected: {exp_q}   Realized: {real_q}")
+    _render_chart_for_expected_vs_realized(result)
     df = pd.DataFrame(
         [
             {"Metric": "Paired N", "Count": rt.get("paired_n", 0)},
@@ -1087,6 +1533,13 @@ def _render_single_cut_result(result: Any, spec: Any) -> None:
             key=f"sc_display_{result.question_id}",
             label_visibility="collapsed",
         )
+        _render_chart_for_distribution(
+            sorted_dist,
+            spec,
+            result.valid_n,
+            display_mode,
+            key_suffix=f"ss_{result.question_id}",
+        )
         _render_sc_table_html(
             sorted_dist,
             display_mode,
@@ -1125,6 +1578,13 @@ def _render_single_cut_result(result: Any, spec: Any) -> None:
             horizontal=True,
             key=f"sc_display_{result.question_id}",
             label_visibility="collapsed",
+        )
+        _render_chart_for_distribution(
+            ms_dist,
+            spec,
+            result.valid_n,
+            display_mode,
+            key_suffix=f"ms_{result.question_id}",
         )
         _render_sc_table_html(
             ms_dist,
@@ -1177,7 +1637,9 @@ def _purge_widget_keys(*prefixes: str) -> None:
             del app.session_state[key]
 
 
-def _render_single_cut_card(result: Any, spec: Any) -> None:
+def _render_single_cut_card(
+    result: Any, spec: Any, expanded: bool = False
+) -> None:
     from src.models import FilterSpec  # noqa: F401  (used by transitive helpers)
 
     app = _require_streamlit()
@@ -1185,7 +1647,7 @@ def _render_single_cut_card(result: Any, spec: Any) -> None:
     short_text = (spec.question_text or "")[:80]
 
     expander_label = f"{spec.canonical_id} \u2014 {short_text}"
-    with app.expander(expander_label, expanded=False):
+    with app.expander(expander_label, expanded=expanded):
         app.caption(
             f"Type: {spec.question_type.value}  \u00b7  "
             f"Valid N: {result.valid_n:,}  \u00b7  "
@@ -1548,6 +2010,60 @@ def _render_sidebar() -> None:
                 unsafe_allow_html=True,
             )
 
+            # ---- QUESTIONS (master-detail nav) ----------------------------
+            app.markdown("**Questions**")
+            selected_qid = app.session_state.get("selected_question_id")
+            if selected_qid is None and results:
+                selected_qid = results[0].question_id
+                app.session_state["selected_question_id"] = selected_qid
+
+            app.text_input(
+                "Search",
+                placeholder="Filter by ID or text",
+                key="sidebar_q_search",
+                label_visibility="collapsed",
+            )
+            needle = (
+                app.session_state.get("sidebar_q_search") or ""
+            ).strip().lower()
+
+            schema_obj = app.session_state.get("schema")
+            shown = 0
+            for result in results:
+                if schema_obj is None:
+                    continue
+                spec = schema_obj.get_question(result.question_id)
+                if spec is None:
+                    continue
+                if needle:
+                    hay = f"{spec.canonical_id} {spec.question_text or ''}".lower()
+                    if needle not in hay:
+                        continue
+                shown += 1
+                label = (
+                    f"{spec.canonical_id} \u2014 "
+                    f"{spec.question_text or ''}".strip()
+                )
+                btn_type = (
+                    "primary"
+                    if result.question_id == selected_qid
+                    else "secondary"
+                )
+                if app.button(
+                    label,
+                    key=f"sidebar_qbtn_{result.question_id}",
+                    type=btn_type,
+                    use_container_width=True,
+                ):
+                    app.session_state["selected_question_id"] = (
+                        result.question_id
+                    )
+                    app.rerun()
+            if needle and shown == 0:
+                app.caption(f"No questions match '{needle}'.")
+            else:
+                app.caption(f"{shown} of {len(results)} shown")
+
             app.markdown("**Navigate**")
             app.markdown(
                 """
@@ -1896,6 +2412,9 @@ def _section_global_filter() -> None:
 
 
 def _section_single_cuts() -> None:
+    """Day 18 master-detail: show only the selected question's analysis."""
+    import html as _html
+
     app = _require_streamlit()
     _section_header("3", SECTION_RESULTS, anchor="section-3", meta="Single cuts")
 
@@ -1905,31 +2424,46 @@ def _section_single_cuts() -> None:
 
     results = app.session_state["results"]
     schema = app.session_state["schema"]
+    if not results:
+        app.info(EMPTY_NO_RESULTS)
+        return
 
-    app.text_input(
-        "Search questions",
-        placeholder="Filter by ID or text",
-        key="ss_search",
-        help="Case-insensitive substring match on canonical ID or question text.",
+    selected = app.session_state.get("selected_question_id")
+    valid_ids = {r.question_id for r in results}
+    if selected not in valid_ids:
+        selected = results[0].question_id
+        app.session_state["selected_question_id"] = selected
+
+    result = next((r for r in results if r.question_id == selected), results[0])
+    spec = schema.get_question(result.question_id)
+    if spec is None:
+        app.info("Selected question is not available.")
+        return
+
+    title = _html.escape(spec.question_text or spec.canonical_id)
+    qtype = spec.question_type.value if hasattr(spec.question_type, "value") else str(spec.question_type)
+    app.markdown(
+        f"""
+        <div style="background:white;border:1px solid #E0E0E0;
+          border-left:4px solid #CC0000;padding:18px 22px;margin-bottom:16px;
+          font-family:Arial;">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.1em;
+            color:#CC0000;text-transform:uppercase;">
+            {_html.escape(spec.canonical_id)} &middot; {_html.escape(qtype)}
+            &middot; Valid N {result.valid_n:,}
+          </div>
+          <div style="font-size:18px;font-weight:600;color:#0A0A0A;
+            margin-top:6px;line-height:1.4;">{title}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
-    needle = (app.session_state.get("ss_search") or "").strip().lower()
 
-    matched = 0
-    for result in results:
-        spec = schema.get_question(result.question_id)
-        if spec is None:
-            continue
-        if needle:
-            haystack = f"{spec.canonical_id} {spec.question_text or ''}".lower()
-            if needle not in haystack:
-                continue
-        matched += 1
-        _render_single_cut_card(result, spec)
-
-    if needle and matched == 0:
-        app.caption(f"No questions match '{needle}'.")
-    else:
-        app.caption(f"Showing {matched} of {len(results)} single cuts.")
+    _render_single_cut_card(result, spec, expanded=True)
+    app.caption(
+        f"Question {results.index(result) + 1} of {len(results)}. "
+        "Use the sidebar to switch questions."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2205,9 +2739,8 @@ def main() -> None:
     _drain_pending_actions()
     _render_sidebar()
 
-    app.title(APP_TITLE)
-    app.caption(APP_TAGLINE)
-    app.divider()
+    # Inline title/caption/divider removed in Day 18 — the fixed red header
+    # banner injected by _inject_theme_css now serves as the page header.
 
     gf_error = app.session_state.get("global_filter_error")
     if gf_error:
