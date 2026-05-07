@@ -96,13 +96,15 @@ def _validate_filters(filters: list[FilterSpec]) -> None:
             )
         seen.add(filter_spec.filter_question_id)
 
-        value = filter_spec.filter_value
-        if value is None:
+        values = filter_spec.get_effective_values()
+        if values is None:
             continue
-        if isinstance(value, bool) or not isinstance(value, (int, str)):
-            raise ValueError(
-                "filter_value must be an int or str when a specific value is provided"
-            )
+        for value in values:
+            if isinstance(value, bool) or not isinstance(value, (int, str)):
+                raise ValueError(
+                    "filter_value must be an int or str when a specific "
+                    "value is provided"
+                )
 
 
 def _build_value_filter_mask(
@@ -119,10 +121,18 @@ def _build_value_filter_mask(
             raise ValueError(
                 f"filter column {filter_spec.filter_question_id!r} not in raw data"
             )
-        mask = mask & (df[filter_spec.filter_question_id] == filter_spec.filter_value)
-        filter_descriptions.append(
-            f"{filter_spec.filter_question_id} == {filter_spec.filter_value!r}"
-        )
+        values = filter_spec.get_effective_values() or []
+        column = df[filter_spec.filter_question_id]
+        if len(values) == 1:
+            mask = mask & (column == values[0])
+            filter_descriptions.append(
+                f"{filter_spec.filter_question_id} == {values[0]!r}"
+            )
+        else:
+            mask = mask & column.isin(values)
+            filter_descriptions.append(
+                f"{filter_spec.filter_question_id} in {list(values)!r}"
+            )
 
     return mask, " AND ".join(filter_descriptions), int(mask.sum())
 

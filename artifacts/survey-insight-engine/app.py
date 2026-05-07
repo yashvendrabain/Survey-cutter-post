@@ -514,9 +514,60 @@ def _render_cross_cut_preview(result: Any) -> None:
 
 
 def _format_filter(filter_spec: Any) -> str:
-    if filter_spec.filter_value is None:
+    values = filter_spec.get_effective_values()
+    if values is None:
         return f"{filter_spec.filter_question_id} (breakdown)"
-    return f"{filter_spec.filter_question_id} = {filter_spec.filter_value}"
+    if len(values) == 1:
+        return f"{filter_spec.filter_question_id} = {values[0]}"
+    joined = ", ".join(str(v) for v in values)
+    return f"{filter_spec.filter_question_id} \u2208 {{{joined}}}"
+
+
+def _resolve_filter_value(schema: Any, df: Any, q_id: str, raw_value: Any) -> Any:
+    """Reconcile UI option-map codes against actual raw-data column values.
+
+    Some Word-derived data maps keep option labels ("India") in the raw data
+    while the option_map exposes ``code -> label`` pairs. The UI hands back
+    the code; if that code does not appear in the column we try str(code) and
+    finally the option label, returning whichever value actually filters rows.
+    """
+    if df is None or q_id not in df.columns:
+        return raw_value
+    col_values = set(df[q_id].dropna().unique())
+    if raw_value in col_values:
+        return raw_value
+    if str(raw_value) in col_values:
+        return str(raw_value)
+    q_spec = schema.get_question(q_id) if schema is not None else None
+    if q_spec is not None and getattr(q_spec, "option_map", None):
+        for key in (raw_value, str(raw_value)):
+            label = q_spec.option_map.get(key)
+            if label and label in col_values:
+                return label
+    return raw_value
+
+
+def _normalize_value_list(val: Any) -> list:
+    """Coerce a row's value-state (legacy scalar/None or new list) into a list."""
+    if val is None:
+        return []
+    if isinstance(val, (list, tuple)):
+        return [v for v in val if v is not None]
+    return [val]
+
+
+def _build_filter_spec(
+    schema: Any, df: Any, q_id: str, vals: list
+) -> Any:
+    """Build a FilterSpec, resolving label/code mismatches per value."""
+    from src.models import FilterSpec
+
+    if not vals:
+        return FilterSpec(filter_question_id=q_id)
+    resolved = [_resolve_filter_value(schema, df, q_id, v) for v in vals]
+    if len(resolved) == 1:
+        return FilterSpec(filter_question_id=q_id, filter_value=resolved[0])
+    return FilterSpec(filter_question_id=q_id, filter_values=tuple(resolved))
 
 
 def _render_single_cut_result(result: Any, spec: Any) -> None:
@@ -677,37 +728,30 @@ def _render_single_cut_card(result: Any, spec: Any) -> None:
             with cols[1]:
                 if picked_q_id is not None:
                     q_spec = schema.get_question(picked_q_id)
-                    value_options: list[tuple[str, Any]] = [
-                        ("All values (breakdown)", None)
-                    ] + [
-                        (f"{value}: {label}", value)
-                        for value, label in q_spec.option_map.items()
-                    ]
-                    v_index = 0
-                    for vi, (_lbl, v) in enumerate(value_options):
-                        if v == val:
-                            v_index = vi
-                            break
-                    v_pick = app.selectbox(
-                        "Value",
-                        options=value_options,
-                        format_func=lambda x: x[0],
-                        index=v_index,
+                    value_codes = list(q_spec.option_map.keys())
+                    prior = _normalize_value_list(val)
+                    default_codes = [v for v in prior if v in value_codes]
+                    v_pick = app.multiselect(
+                        "Values (leave empty for breakdown)",
+                        options=value_codes,
+                        format_func=lambda v: f"{v}: {q_spec.option_map[v]}",
+                        default=default_codes,
                         key=f"{filter_key}_v_{i}",
                         label_visibility="visible" if i == 0 else "collapsed",
                         help=TOOLTIP_BREAKDOWN if i == 0 else None,
+                        placeholder="All values (breakdown)",
                     )
-                    new_val = v_pick[1]
+                    new_val = list(v_pick)
                 else:
-                    app.selectbox(
-                        "Value",
-                        options=[("Pick a question first", None)],
-                        format_func=lambda x: x[0],
+                    app.multiselect(
+                        "Values",
+                        options=[],
                         disabled=True,
                         key=f"{filter_key}_v_disabled_{i}",
                         label_visibility="visible" if i == 0 else "collapsed",
+                        placeholder="Pick a question first",
                     )
-                    new_val = None
+                    new_val = []
             with cols[2]:
                 if i == 0:
                     app.markdown("&nbsp;", unsafe_allow_html=True)
@@ -742,8 +786,9 @@ def _render_single_cut_card(result: Any, spec: Any) -> None:
             )
 
         if apply_clicked:
+            active_df = app.session_state["active_df"]
             specs = [
-                FilterSpec(filter_question_id=q, filter_value=v)
+                _build_filter_spec(schema, active_df, q, _normalize_value_list(v))
                 for q, v in new_rows
                 if q is not None
             ]
@@ -753,7 +798,7 @@ def _render_single_cut_card(result: Any, spec: Any) -> None:
                  or seen.add(f.filter_question_id)),
                 None,
             )
-            breakdowns = [f for f in specs if f.filter_value is None]
+            breakdowns = [f for f in specs if f.is_breakdown()]
             if duplicate is not None:
                 app.error(
                     f"Duplicate filter on {duplicate}. "
@@ -1093,14 +1138,18 @@ def _section_upload() -> None:
 
 def _apply_global_filter_action(rows: list[tuple[str | None, Any]]) -> None:
     from src.global_filter import apply_global_filter
-    from src.models import FilterSpec, GlobalFilterState
+    from src.models import GlobalFilterState
 
     app = _require_streamlit()
-    specs = tuple(
-        FilterSpec(filter_question_id=q, filter_value=v)
-        for q, v in rows
-        if q is not None and v is not None
-    )
+    schema = app.session_state.get("schema")
+    decoded_df = app.session_state.get("decoded_df")
+    spec_list = []
+    for q, v in rows:
+        vals = _normalize_value_list(v)
+        if q is None or not vals:
+            continue
+        spec_list.append(_build_filter_spec(schema, decoded_df, q, vals))
+    specs = tuple(spec_list)
 
     try:
         state = GlobalFilterState(filters=specs)
@@ -1202,34 +1251,29 @@ def _section_global_filter() -> None:
         with cols[1]:
             if picked_q_id is not None:
                 q_spec = schema.get_question(picked_q_id)
-                value_options: list[tuple[str, Any]] = [("Pick a value", None)] + [
-                    (f"{value}: {label}", value)
-                    for value, label in q_spec.option_map.items()
-                ]
-                v_index = 0
-                for vi, (_lbl, v) in enumerate(value_options):
-                    if v == val:
-                        v_index = vi
-                        break
-                v_pick = app.selectbox(
-                    "Value",
-                    options=value_options,
-                    format_func=lambda x: x[0],
-                    index=v_index,
+                value_codes = list(q_spec.option_map.keys())
+                prior = _normalize_value_list(val)
+                default_codes = [v for v in prior if v in value_codes]
+                v_pick = app.multiselect(
+                    "Values (select one or more)",
+                    options=value_codes,
+                    format_func=lambda v: f"{v}: {q_spec.option_map[v]}",
+                    default=default_codes,
                     key=f"gf_v_{i}",
                     label_visibility="visible" if i == 0 else "collapsed",
+                    placeholder="Pick value(s)",
                 )
-                new_val = v_pick[1]
+                new_val = list(v_pick)
             else:
-                app.selectbox(
-                    "Value",
-                    options=[("Pick a question first", None)],
-                    format_func=lambda x: x[0],
+                app.multiselect(
+                    "Values",
+                    options=[],
                     disabled=True,
                     key=f"gf_v_disabled_{i}",
                     label_visibility="visible" if i == 0 else "collapsed",
+                    placeholder="Pick a question first",
                 )
-                new_val = None
+                new_val = []
         with cols[2]:
             if i == 0:
                 app.markdown("&nbsp;", unsafe_allow_html=True)
@@ -1248,11 +1292,14 @@ def _section_global_filter() -> None:
     btn_cols = app.columns([2, 2, 2, 4])
     with btn_cols[0]:
         if app.button("+ Add another filter", key="gf_add"):
-            app.session_state["global_filter_rows"] = new_rows + [(None, None)]
+            app.session_state["global_filter_rows"] = new_rows + [(None, [])]
             _purge_widget_keys("gf_q_", "gf_v_")
             app.rerun()
     with btn_cols[1]:
-        complete_rows = [(q, v) for q, v in new_rows if q is not None and v is not None]
+        complete_rows = [
+            (q, v) for q, v in new_rows
+            if q is not None and _normalize_value_list(v)
+        ]
         if app.button(
             "Apply global filter",
             key="gf_apply",

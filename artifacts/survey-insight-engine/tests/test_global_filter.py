@@ -107,3 +107,44 @@ class TestGlobalFilter(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFilterSpecMultiValue(unittest.TestCase):
+    def test_filter_values_isin_semantics(self) -> None:
+        dataframe = load_global_filter_golden()
+        filtered_df, stats = apply_global_filter(
+            dataframe,
+            GlobalFilterState(
+                filters=(FilterSpec("Q_REGION", filter_values=(1, 3)),)
+            ),
+        )
+        self.assertEqual(len(filtered_df), 20)
+        self.assertEqual(set(filtered_df["Q_REGION"].unique()), {1, 3})
+        self.assertIn("in [1, 3]", stats["filter_description"])
+
+    def test_filter_values_single_element_matches_scalar(self) -> None:
+        dataframe = load_global_filter_golden()
+        filtered_a, _ = apply_global_filter(
+            dataframe,
+            GlobalFilterState(filters=(FilterSpec("Q_REGION", 2),)),
+        )
+        filtered_b, _ = apply_global_filter(
+            dataframe,
+            GlobalFilterState(
+                filters=(FilterSpec("Q_REGION", filter_values=(2,)),)
+            ),
+        )
+        self.assertEqual(len(filtered_a), len(filtered_b))
+        self.assertTrue(filtered_a.equals(filtered_b))
+
+    def test_empty_filter_values_treated_as_breakdown(self) -> None:
+        spec = FilterSpec("Q_REGION", filter_values=())
+        self.assertTrue(spec.is_breakdown())
+        self.assertIsNone(spec.get_effective_values())
+        with self.assertRaisesRegex(ValueError, "does not allow breakdown"):
+            GlobalFilterState(filters=(spec,))
+
+    def test_filter_value_takes_precedence_over_filter_values(self) -> None:
+        spec = FilterSpec("Q_REGION", filter_value=1, filter_values=(2, 3))
+        self.assertEqual(spec.get_effective_values(), [1])
+        self.assertFalse(spec.is_breakdown())

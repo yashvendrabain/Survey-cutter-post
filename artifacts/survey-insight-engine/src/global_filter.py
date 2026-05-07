@@ -29,7 +29,14 @@ def apply_global_filter(
             raise ValueError(
                 f"global filter column {filter_spec.filter_question_id!r} not in data"
             )
-        mask = mask & (df[filter_spec.filter_question_id] == filter_spec.filter_value)
+        values = filter_spec.get_effective_values()
+        if values is None:
+            continue
+        column = df[filter_spec.filter_question_id]
+        if len(values) == 1:
+            mask = mask & (column == values[0])
+        else:
+            mask = mask & column.isin(values)
 
     filtered_df = df[mask].copy()
     rows_after = int(len(filtered_df))
