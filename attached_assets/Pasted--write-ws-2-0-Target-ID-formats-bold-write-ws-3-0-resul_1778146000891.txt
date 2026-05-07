@@ -1,0 +1,250 @@
+    _write(ws, 2, 0, "Target ID:", formats["bold"])
+    _write(ws, 3, 0, result.target_question_id)
+    _write(ws, 4, 0, "Filters applied:", formats["bold"])
+
+    row_index = 5
+    if result.filters_applied:
+        for filter_spec in result.filters_applied:
+            _write(
+                ws,
+                row_index,
+                0,
+                "  " + _filter_description(
+                    filter_spec,
+                    schema,
+                    compact_breakdown=False,
+                ),
+            )
+            row_index += 1
+    else:
+        _write(ws, row_index, 0, "  <none>")
+        row_index += 1
+
+    row_index += 1
+    _write(ws, row_index, 0, "Filtered N:", formats["bold"])
+    _write(ws, row_index, 1, result.filtered_n, formats["count"])
+    row_index += 1
+    _write(ws, row_index, 0, "Dispatch mode:", formats["bold"])
+    _write(ws, row_index, 1, result.dispatch_mode)
+    row_index += 2
+
+    if result.dispatch_mode == "single_cut_filtered":
+        if result.single_cut_result is None:
+            _write(ws, row_index, 0, "Missing filtered single-cut result", formats["bold"])
+            last_row = row_index
+        else:
+            last_row = _write_single_cut_result_body(
+                ws, result.single_cut_result, schema, formats, row_index
+            )
+    elif result.dispatch_mode == "cross_cut_breakdown":
+        if result.cross_cut_result is None:
+            _write(ws, row_index, 0, "Missing cross-cut breakdown result", formats["bold"])
+            last_row = row_index
+        else:
+            last_row = _write_cross_cut_result_body(
+                workbook,
+                ws,
+                result.cross_cut_result,
+                schema,
+                formats,
+                row_index,
+                sheet_name,
+            )
+    else:
+        _write(ws, row_index, 0, "Unsupported filtered result mode", formats["bold"])
+        last_row = row_index
+
+    if result.warnings:
+        last_row += 2
+        _write(ws, last_row, 0, "Warnings:", formats["bold"])
+        for offset, warning in enumerate(result.warnings, start=1):
+            _write(ws, last_row + offset, 0, warning)
+
+    ws.freeze_panes(row_index, 0)
+    _autofit(ws)
+
+
+def _write_single_cut_result_body(
+    ws: Any,
+    result: SingleCutResult,
+    schema: SurveySchema,
+    formats: dict[str, Any],
+    start_row: int,
+) -> int:
+    if isinstance(result, GridSingleSelectResult):
+        return _write_grid_body(ws, result, schema, formats, start_row)
+    if isinstance(result, SingleSelectResult):
+        return _write_single_select_body(ws, result, formats, start_row)
+    if isinstance(result, MultiSelectResult):
+        return _write_multi_select_body(ws, result, formats, start_row)
+    if isinstance(result, NumericResult):
+        return _write_numeric_body(ws, result, formats, start_row)
+    _write(ws, start_row, 0, "Unsupported single-cut result type", formats["bold"])
+    return start_row
+
+
+def _write_cross_cut_result_body(
+    workbook: Any,
+    ws: Any,
+    result: CrossCutResult,
+    schema: SurveySchema,
+    formats: dict[str, Any],
+    start_row: int,
+    sheet_name: str,
+) -> int:
+    if result.analysis_type is AnalysisType.CROSS_TAB:
+        return _write_cross_tab_body(
+            workbook, ws, result, schema, formats, start_row, sheet_name
+        )
+    if result.analysis_type is AnalysisType.SEGMENT_PROFILE:
+        return _write_segment_profile_body(
+            workbook, ws, result, schema, formats, start_row, sheet_name
+        )
+    if result.analysis_type is AnalysisType.GROUP_COMPARISON:
+        return _write_group_comparison_body(
+            workbook, ws, result, schema, formats, start_row, sheet_name
+        )
+    if result.analysis_type is AnalysisType.EXPECTED_VS_REALIZED:
+        return _write_expected_vs_realized_body(
+            workbook, ws, result, schema, formats, start_row, sheet_name
+        )
+    _write(ws, start_row, 0, "Unsupported cross-cut result type", formats["bold"])
+    return start_row
+
+
+def _write_cc_sheet(
+    workbook: Any,
+    result: CrossCutResult,
+    schema: SurveySchema,
+    formats: dict[str, Any],
+    sheet_name: str,
+) -> None:
+    ws = workbook.add_worksheet(sheet_name)
+    filter_expr = result.result_table.get("filter_expr") or "<no filter>"
+    header_rows = [
+        ("Title:", result.synthetic_question_title),
+        ("Analysis type:", result.analysis_type.value),
+        ("Source questions:", ", ".join(result.source_question_ids)),
+        ("Filter:", filter_expr),
+        ("AI insight:", result.ai_insight or "<none>"),
+        ("Audit records:", len(result.audit_records)),
+    ]
+    for row_index, (label, value) in enumerate(header_rows):
+        _write(ws, row_index, 0, label, formats["bold"])
+        _write(ws, row_index, 1, value)
+
+    if result.analysis_type is AnalysisType.CROSS_TAB:
+        last_row = _write_cross_tab_body(
+            workbook, ws, result, schema, formats, 7, sheet_name
+        )
+    elif result.analysis_type is AnalysisType.SEGMENT_PROFILE:
+        last_row = _write_segment_profile_body(
+            workbook, ws, result, schema, formats, 7, sheet_name
+        )
+    elif result.analysis_type is AnalysisType.GROUP_COMPARISON:
+        last_row = _write_group_comparison_body(
+            workbook, ws, result, schema, formats, 7, sheet_name
+        )
+    elif result.analysis_type is AnalysisType.EXPECTED_VS_REALIZED:
+        last_row = _write_expected_vs_realized_body(
+            workbook, ws, result, schema, formats, 7, sheet_name
+        )
+    else:
+        _write(ws, 7, 0, "Unsupported cross-cut result type", formats["bold"])
+        last_row = 7
+
+    if result.warnings:
+        last_row += 2
+        _write(ws, last_row, 0, "Warnings:", formats["bold"])
+        for offset, warning in enumerate(result.warnings, start=1):
+            _write(ws, last_row + offset, 0, warning)
+
+    ws.freeze_panes(7, 0)
+    _autofit(ws)
+
+
+def _write_cross_tab_body(
+    workbook: Any,
+    ws: Any,
+    result: CrossCutResult,
+    schema: SurveySchema,
+    formats: dict[str, Any],
+    start_row: int,
+    sheet_name: str,
+) -> int:
+    result_table = result.result_table
+    row_question_id = result_table.get("row_question_id", result.source_question_ids[0])
+    column_question_id = result_table.get(
+        "column_question_id", result.source_question_ids[1]
+    )
+    row_question_text = _question_text(schema, row_question_id)
+    column_question_text = _question_text(schema, column_question_id)
+    _merge_range(
+        ws,
+        start_row,
+        0,
+        start_row,
+        3,
+        f"Rows (vertical): {row_question_id}",
+        formats["bold_italic"],
+    )
+    _merge_range(ws, start_row + 1, 0, start_row + 1, 3, row_question_text)
+    _merge_range(
+        ws,
+        start_row + 2,
+        0,
+        start_row + 2,
+        3,
+        f"Columns (horizontal): {column_question_id}",
+        formats["bold_italic"],
+    )
+    _merge_range(ws, start_row + 3, 0, start_row + 3, 3, column_question_text)
+    orientation_label = f"â†“ {row_question_id}  â†’  {column_question_id}"
+    blocks_to_render = []
+    if result.display_mode in ("counts", "both", "all"):
+        blocks_to_render.append(("Counts", "counts", formats["count"]))
+    if result.display_mode in ("row_pct", "both", "all"):
+        blocks_to_render.append(("Row %", "row_pct", formats["pct"]))
+    if result.display_mode in ("col_pct", "all"):
+        blocks_to_render.append(("Column %", "column_pct", formats["pct"]))
+
+    row_index = start_row + 5
+    for block_index, (header, key, cell_format) in enumerate(blocks_to_render):
+        if block_index > 0:
+            row_index += 2
+        block_start_row = row_index
+        row_index = _write_cross_tab_matrix(
+            ws,
+            header,
+            result_table.get(key, {}),
+            result_table.get("row_label_map", {}),
+            result_table.get("column_label_map", {}),
+            formats,
+            row_index,
+            cell_format,
+            orientation_label,
+        )
+        if header == "Counts":
+            counts_matrix = result_table.get("counts", {})
+            column_label_map = result_table.get("column_label_map", {})
+            _add_cross_tab_chart(
+                workbook,
+                ws,
+                sheet_name,
+                block_start_row,
+                len(counts_matrix),
+                len(_cross_tab_column_codes(counts_matrix, column_label_map)),
+                result.synthetic_question_title,
+                row_question_id,
+                column_question_id,
+            )
+    row_index += 2
+    row_index = _write_cross_tab_copy_friendly(
+        ws,
+        result_table.get("counts", {}),
+        result_table.get("row_label_map", {}),
+        result_table.get("column_label_map", {}),
+        formats,
+        row_index,
+    )
+    row_index += 2
