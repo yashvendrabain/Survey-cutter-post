@@ -319,18 +319,27 @@ def _styled_dataframe(df: Any, **kwargs: Any) -> None:
 
 
 def _render_sc_table_html(
-    distribution: dict, display_mode: str, valid_n: int
+    distribution: dict,
+    display_mode: str,
+    valid_n: int,
+    flags: list | None = None,
+    key_suffix: str = "",
 ) -> None:
     """Branded HTML table for SingleSelect / MultiSelect distributions.
 
     Labels are HTML-escaped to prevent any XSS via maliciously crafted
     data-map files (defense in depth — labels are analyst-supplied).
+
+    ``flags`` may be precomputed by the caller so that highlighting is
+    identical across display-mode toggles. If omitted, flags are derived
+    from the distribution counts.
     """
     import html as _html
 
     app = _require_streamlit()
-    counts = [p.get("count", 0) for _, p in distribution.items()]
-    flags = _compute_outlier_flags(counts)
+    if flags is None:
+        counts = [p.get("count", 0) for _, p in distribution.items()]
+        flags = _compute_outlier_flags(counts)
     rows_html = ""
     for i, (code, payload) in enumerate(distribution.items()):
         label = _html.escape(str(payload.get("label", code)))
@@ -433,6 +442,42 @@ def _render_sc_table_html(
         f"</div>",
         unsafe_allow_html=True,
     )
+
+    # Secondary, fully-interactive table: sortable / copyable / CSV-downloadable.
+    # The HTML table above remains the primary visual (bars cannot live inside
+    # st.dataframe). We use a checkbox toggle (NOT st.expander) because this
+    # helper is itself rendered inside an st.expander in the single-cut card,
+    # and Streamlit forbids nested expanders.
+    show_table = app.checkbox(
+        "\U0001F4CB Show table view (sortable \u00b7 copyable \u00b7 downloadable)",
+        key=f"sc_tableview_{key_suffix}" if key_suffix else None,
+        value=False,
+    )
+    if show_table:
+        rows_for_df = []
+        for code, payload in distribution.items():
+            count = payload.get("count", 0)
+            rate = payload.get("rate")
+            if rate is None:
+                rate = (count / valid_n) if valid_n else 0
+            rows_for_df.append(
+                {
+                    "Label": payload.get("label", str(code)),
+                    "Count": count,
+                    "%": round(rate * 100, 1),
+                }
+            )
+        df_plain = pd.DataFrame(rows_for_df)
+        try:
+            app.dataframe(
+                df_plain.style.apply(_style_outliers, axis=None),
+                use_container_width=True,
+                hide_index=True,
+            )
+        except Exception:
+            app.dataframe(
+                df_plain, use_container_width=True, hide_index=True
+            )
 
 
 def _drain_pending_actions() -> None:
@@ -699,11 +744,17 @@ def _eligible_question_options() -> list[str]:
 
 
 def _question_label_map() -> dict[str, str]:
+    """Full ID + question text, truncated to keep dropdowns readable."""
     schema = _require_streamlit().session_state["schema"]
-    return {
-        spec.canonical_id: f"{spec.canonical_id}: {spec.question_text}"
-        for spec in schema.questions
-    }
+    out: dict[str, str] = {}
+    for spec in schema.questions:
+        text = (spec.question_text or "").strip()
+        if len(text) > 80:
+            text = text[:77] + "\u2026"
+        out[spec.canonical_id] = (
+            f"{spec.canonical_id} \u2014 {text}" if text else spec.canonical_id
+        )
+    return out
 
 
 def _eligible_filter_questions() -> list[Any]:
@@ -1021,19 +1072,13 @@ def _render_single_cut_result(result: Any, spec: Any) -> None:
             pd.DataFrame(grid_rows), use_container_width=True, hide_index=True
         )
     elif isinstance(result, SingleSelectResult):
-        display_mode = app.radio(
-            "Display",
-            options=["Counts", "Counts + %", "% only"],
-            index=1,
-            horizontal=True,
-            key=f"sc_display_{result.question_id}",
-            label_visibility="collapsed",
-        )
         sorted_dist = dict(
             sorted(result.distribution.items(), key=lambda kv: str(kv[0]))
         )
-        _render_sc_table_html(sorted_dist, display_mode, result.valid_n)
-    elif isinstance(result, MultiSelectResult):
+        # Compute flags ONCE from counts so highlighting stays identical
+        # across Counts / Counts+% / % only toggles.
+        ss_counts = [p.get("count", 0) for _, p in sorted_dist.items()]
+        ss_flags = _compute_outlier_flags(ss_counts)
         display_mode = app.radio(
             "Display",
             options=["Counts", "Counts + %", "% only"],
@@ -1042,21 +1087,52 @@ def _render_single_cut_result(result: Any, spec: Any) -> None:
             key=f"sc_display_{result.question_id}",
             label_visibility="collapsed",
         )
+        _render_sc_table_html(
+            sorted_dist,
+            display_mode,
+            result.valid_n,
+            flags=ss_flags,
+            key_suffix=str(result.question_id),
+        )
+    elif isinstance(result, MultiSelectResult):
         ms_dist: dict[Any, dict[str, Any]] = {}
         for sub_id, payload in result.selections.items():
             label = payload.get("label", "") or ""
             label_lower = label.lower()
             if "unchecked" in label_lower or "not selected" in label_lower:
                 continue
+            # MultiSelectResult payloads use "selection_rate"; tolerate "rate"
+            # for forward-compat. Either way, _render_sc_table_html will fall
+            # back to count/valid_n if the rate is missing.
+            ms_rate = payload.get("selection_rate")
+            if ms_rate is None:
+                ms_rate = payload.get("rate")
             ms_dist[sub_id] = {
                 "label": label or sub_id,
                 "count": payload.get("count", 0),
-                "rate": payload.get("rate"),
+                "rate": ms_rate,
             }
         ms_dist = dict(
             sorted(ms_dist.items(), key=lambda kv: kv[1]["count"], reverse=True)
         )
-        _render_sc_table_html(ms_dist, display_mode, result.valid_n)
+        # Compute flags ONCE from selected counts.
+        ms_counts = [p.get("count", 0) for _, p in ms_dist.items()]
+        ms_flags = _compute_outlier_flags(ms_counts)
+        display_mode = app.radio(
+            "Display",
+            options=["Counts", "Counts + %", "% only"],
+            index=1,
+            horizontal=True,
+            key=f"sc_display_{result.question_id}",
+            label_visibility="collapsed",
+        )
+        _render_sc_table_html(
+            ms_dist,
+            display_mode,
+            result.valid_n,
+            flags=ms_flags,
+            key_suffix=f"ms_{result.question_id}",
+        )
         app.caption(
             "Selected counts only. Unchecked counts remain in the audit trail "
             "of the downloaded workbook."
@@ -1293,10 +1369,21 @@ def _render_suggested_cross_cuts() -> None:
         app.write("No rule-based suggestions available for this schema.")
         return
 
+    import html as _html
+
     for index, (spec, reason) in enumerate(suggestions[:15], start=1):
         col_text, col_button = app.columns([4, 1])
-        col_text.write(f"{index}. {spec.title}")
-        col_text.caption(reason)
+        with col_text:
+            app.markdown(
+                f'<div style="font-size:13px;font-weight:600;color:#0A0A0A;'
+                f'font-family:Arial;">{index}. {_html.escape(spec.title)}</div>'
+                f'<div style="font-size:10px;color:#888;margin-top:2px;'
+                f'font-family:Arial;">'
+                f'{_html.escape(" · ".join(spec.source_question_ids))}'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            app.caption(reason)
         if col_button.button("Run this", key=f"run_suggestion_{spec.cross_cut_id}"):
             _run_cross_cut_specs([spec])
             app.success(f"Ran {spec.cross_cut_id}")
@@ -1365,69 +1452,159 @@ def _render_manual_cross_cut() -> None:
 
 
 def _render_sidebar() -> None:
+    """Branded, structured sidebar showing only what is useful mid-session."""
+    import html as _html
+
     app = _require_streamlit()
-    sb = app.sidebar
-    sb.title(APP_TITLE)
-    sb.caption(APP_TAGLINE)
-
-    sb.markdown("### Sections")
-    sb.markdown(
-        "\n".join(
-            [
-                f"- [{SECTION_UPLOAD}](#section-1)",
-                f"- [{SECTION_GLOBAL_FILTER}](#section-2)",
-                f"- [{SECTION_RESULTS}](#section-3)",
-                f"- [{SECTION_CROSS_CUTS}](#section-4)",
-                f"- [{SECTION_DOWNLOADS}](#section-5)",
-            ]
+    with app.sidebar:
+        # ---- LOGO / TITLE ---------------------------------------------------
+        app.markdown(
+            """
+            <div style="padding:16px 0 8px 0;border-bottom:3px solid #CC0000;
+              margin-bottom:16px;">
+              <div style="font-size:16px;font-weight:700;color:#0A0A0A;
+                font-family:Arial;letter-spacing:0.03em;">
+                Survey Analysis Engine
+              </div>
+              <div style="font-size:10px;color:#888;font-family:Arial;
+                margin-top:2px;">Bain &amp; Company</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
-    )
 
-    sb.markdown("### Status")
-    has_load_report = app.session_state.get("load_report") is not None
-    files_selected = app.session_state.get("raw_data_path_label") is not None
-    if has_load_report:
-        sb.write("\u2705 Inputs loaded")
-    elif files_selected:
-        sb.write("\u23f3 Files selected \u2014 click Run analysis")
-    else:
-        sb.write("\u23f3 Waiting for upload")
+        if app.session_state.get("run_complete"):
+            lr = app.session_state.get("load_report")
+            gf_stats = app.session_state.get("global_filter_stats")
+            results = app.session_state.get("results", [])
 
-    load_report = app.session_state.get("load_report")
-    if load_report is not None:
-        sb.caption(f"Input: {load_report.scenario.replace('_', ' ')}")
-        sb.caption(f"Data source: {load_report.raw_data_source}")
-        sb.caption(f"Map source: {load_report.datamap_source}")
+            app.markdown("**Session**")
 
-    if app.session_state["run_complete"]:
-        results_count = len(app.session_state["results"])
-        sb.write(f"\u2705 Analysis complete \u2014 {results_count} results")
-    else:
-        sb.write("\u23f3 No analysis run yet")
+            if lr is not None:
+                app.markdown(
+                    f"""
+                    <div style="font-size:10px;color:#666;font-family:Arial;
+                      line-height:1.9;background:#F8F8F8;padding:10px;
+                      border-left:3px solid #E0E0E0;margin-bottom:12px;">
+                      <b>File</b><br>{_html.escape(str(lr.raw_data_source))}<br>
+                      <b>Input type</b><br>
+                      {_html.escape(lr.scenario.replace('_', ' '))}<br>
+                      <b>Respondents</b><br>{lr.raw_rows:,}<br>
+                      <b>Questions</b><br>{lr.questions_parsed}
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
-    gf_state = app.session_state.get("global_filter_state")
-    if gf_state is not None and gf_state.is_active():
-        stats = app.session_state.get("global_filter_stats") or {}
-        rows_after = stats.get("rows_after", 0)
-        rows_before = stats.get("rows_before", 0)
-        sb.write(
-            f"{STATUS_GLOBAL_FILTER_ACTIVE} \u2014 {rows_after:,} of "
-            f"{rows_before:,} respondents"
-        )
-    else:
-        sb.write(STATUS_GLOBAL_FILTER_INACTIVE)
+            gf_state = app.session_state.get("global_filter_state")
+            if (
+                gf_state is not None
+                and gf_state.is_active()
+                and gf_stats
+            ):
+                app.markdown(
+                    f"""
+                    <div style="background:#FFF5F5;border-left:3px solid #CC0000;
+                      padding:10px;font-size:10px;font-family:Arial;
+                      line-height:1.9;margin-bottom:12px;">
+                      <b style="color:#CC0000;">● Global Filter Active</b><br>
+                      {_html.escape(gf_state.description())}<br>
+                      <b>{gf_stats.get('rows_after', 0):,}</b>&nbsp;of&nbsp;
+                      {gf_stats.get('rows_before', 0):,}&nbsp;respondents
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            else:
+                app.markdown(
+                    """
+                    <div style="font-size:10px;color:#888;font-family:Arial;
+                      padding:8px 0;margin-bottom:8px;">
+                      ○ No global filter · full dataset
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
-    with sb.expander("Need help?"):
-        sb.markdown(
-            "- **Upload** a CSV or XLSX of raw responses and the data map XLSX.\n"
-            "- **Global filter** restricts every analysis to a subset of "
-            "respondents.\n"
-            "- **Per-question filters** layer on top of the global filter for "
-            "ad-hoc slices.\n"
-            "- **Cross cuts** combine two questions; tick the suggestion box "
-            "for ideas.\n"
-            "- **Download** the workbook(s) at the bottom."
-        )
+            skips = app.session_state.get("skips", [])
+            errors = [s for s in skips if s.skip_reason == "calculation_error"]
+            log = app.session_state.get("log")
+            log_len = len(log) if log else 0
+            cc_results = app.session_state.get("cross_cut_results", [])
+            err_color = "#CC0000" if errors else "#2E7D32"
+            app.markdown(
+                f"""
+                <div style="font-size:10px;color:#666;font-family:Arial;
+                  line-height:2.0;border-top:1px solid #E0E0E0;
+                  padding-top:10px;margin-bottom:12px;">
+                  <b>Single cuts</b>&nbsp;{len(results)}<br>
+                  <b>Skipped</b>&nbsp;{len(skips)}<br>
+                  <b>Errors</b>&nbsp;
+                  <span style="color:{err_color};">{len(errors)}</span><br>
+                  <b>Audit records</b>&nbsp;{log_len}<br>
+                  <b>Cross cuts</b>&nbsp;{len(cc_results)}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            app.markdown("**Navigate**")
+            app.markdown(
+                """
+                <div style="font-size:11px;font-family:Arial;line-height:2.2;
+                  color:#333;">
+                  <a href="#section-1" style="color:#CC0000;
+                    text-decoration:none;">↑ 1. Upload</a><br>
+                  <a href="#section-2" style="color:#CC0000;
+                    text-decoration:none;">⊕ 2. Global Filter</a><br>
+                  <a href="#section-3" style="color:#CC0000;
+                    text-decoration:none;">— 3. Single Cuts</a><br>
+                  <a href="#section-4" style="color:#CC0000;
+                    text-decoration:none;">╫ 4. Cross Cuts</a><br>
+                  <a href="#section-5" style="color:#CC0000;
+                    text-decoration:none;">↓ 5. Downloads</a>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        else:
+            app.markdown(
+                """
+                <div style="font-size:11px;color:#666;font-family:Arial;
+                  line-height:1.9;padding:8px 0;">
+                  <b>Getting started:</b><br>
+                  1. Upload your survey files<br>
+                  2. Click Run Analysis<br>
+                  3. Apply filters if needed<br>
+                  4. Explore and download
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        app.markdown("---")
+        with app.expander("Help", expanded=False):
+            app.markdown(
+                """
+                <div style="font-size:10px;font-family:Arial;color:#444;
+                  line-height:1.9;">
+                  <b>Supported file types</b><br>CSV, XLSX, DOCX<br><br>
+                  <b>Three input scenarios</b><br>
+                  A: Raw data + data map<br>
+                  B: Combined XLSX (2 sheets)<br>
+                  C: Raw data + Word survey doc<br><br>
+                  <b>Filters</b><br>
+                  Global filter restricts everything.<br>
+                  Per-question filter applies only<br>
+                  to that single question.<br><br>
+                  <b>Outlier flags</b><br>
+                  ⬆ Red = high outlier (&gt;2σ above mean)<br>
+                  ↓ Amber = low outlier (&gt;1.5σ below)
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1784,17 +1961,41 @@ def _section_cross_cuts() -> None:
         app.caption("No cross cuts run yet. Build one above to populate this list.")
         return
 
+    import html as _html
+
+    schema = app.session_state.get("schema")
     app.markdown("**Cross-cut results**")
     for result in results:
         with app.expander(
             f"{result.cross_cut_id} \u2014 {result.synthetic_question_title}",
             expanded=False,
         ):
+            # Show full source-question text as a header so analysts know
+            # exactly which questions feed this cross cut.
+            source_lines = []
+            for qid in result.source_question_ids:
+                q = schema.get_question(qid) if schema is not None else None
+                if q and q.question_text:
+                    short = q.question_text.strip()
+                    if len(short) > 60:
+                        short = short[:57] + "\u2026"
+                    source_lines.append(
+                        f"{_html.escape(qid)}: {_html.escape(short)}"
+                    )
+                else:
+                    source_lines.append(_html.escape(qid))
+            app.markdown(
+                f'<div style="font-size:13px;font-weight:700;color:#0A0A0A;'
+                f'font-family:Arial;margin-bottom:4px;">'
+                f'{_html.escape(result.synthetic_question_title)}</div>'
+                f'<div style="font-size:10px;color:#888;font-family:Arial;'
+                f'line-height:1.8;">{"<br>".join(source_lines)}</div>',
+                unsafe_allow_html=True,
+            )
             app.caption(
                 f"Type: {result.analysis_type.value}  \u00b7  "
                 f"Display: {result.display_mode}  \u00b7  "
-                f"{len(result.audit_records)} audit records  \u00b7  "
-                f"{', '.join(result.source_question_ids)}"
+                f"{len(result.audit_records)} audit records"
             )
             _render_cross_cut_preview(result)
             if result.warnings:
