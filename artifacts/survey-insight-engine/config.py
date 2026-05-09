@@ -42,3 +42,14 @@ MAX_UPLOAD_SIZE_MB = 200
 ACCEPTED_RAWDATA_EXTENSIONS = (".csv", ".xlsx")
 ACCEPTED_DATAMAP_EXTENSIONS = (".xlsx",)
   # CSV cannot represent the multi-sheet structure we need.
+
+# ---------- AI insight layer (Stage A) ----------
+PORTKEY_BASE_URL = "https://portkey.bain.dev/v1"
+PORTKEY_DEFAULT_MODEL = "@personal-openai/gpt-4o-mini"
+PORTKEY_PREMIUM_MODEL = "@personal-openai/gpt-4o"
+AI_INSIGHT_TEMPERATURE = 0.1
+AI_INSIGHT_MAX_TOKENS = 350
+AI_INSIGHT_TIMEOUT_SECONDS = 30
+
+# Read API key from environment ONLY. Never hardcode.
+# If the key is missing, the layer falls back to template output.
