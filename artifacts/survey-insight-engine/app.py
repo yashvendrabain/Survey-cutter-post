@@ -1987,6 +1987,7 @@ def _render_single_cut_card(
     short_text = (spec.question_text or "")[:80]
 
     expander_label = f"{spec.canonical_id} \u2014 {short_text}"
+    pending_insight: dict[str, Any] | None = None
     with app.expander(expander_label, expanded=expanded):
         app.caption(
             f"Type: {spec.question_type.value}  \u00b7  "
@@ -2157,24 +2158,24 @@ def _render_single_cut_card(
             ]
             if filtered.dispatch_mode == "single_cut_filtered":
                 _render_single_cut_result(filtered.single_cut_result, spec)
-                _render_insight_section(
-                    insight_key=f"insight_sc_{spec.canonical_id}",
-                    payload_factory=lambda: _build_insight_payload_single_cut(
+                pending_insight = {
+                    "insight_key": f"insight_sc_{spec.canonical_id}",
+                    "payload_factory": lambda: _build_insight_payload_single_cut(
                         filtered.single_cut_result, spec, active_filter_strs
                     ),
-                    table_kind="filtered_single_cut",
-                    title_hint=spec.question_text,
-                )
+                    "table_kind": "filtered_single_cut",
+                    "title_hint": spec.question_text,
+                }
             elif filtered.dispatch_mode == "cross_cut_breakdown":
                 _render_cross_cut_preview(filtered.cross_cut_result)
-                _render_insight_section(
-                    insight_key=f"insight_breakdown_{spec.canonical_id}",
-                    payload_factory=lambda: _build_insight_payload_cross_cut(
+                pending_insight = {
+                    "insight_key": f"insight_breakdown_{spec.canonical_id}",
+                    "payload_factory": lambda: _build_insight_payload_cross_cut(
                         filtered.cross_cut_result
                     ),
-                    table_kind=filtered.cross_cut_result.analysis_type.value.lower(),
-                    title_hint=spec.question_text,
-                )
+                    "table_kind": filtered.cross_cut_result.analysis_type.value.lower(),
+                    "title_hint": spec.question_text,
+                }
             app.checkbox(
                 "Include in filtered workbook download",
                 value=True,
@@ -2194,14 +2195,20 @@ def _render_single_cut_card(
                 app.rerun()
         else:
             _render_single_cut_result(result, spec)
-            _render_insight_section(
-                insight_key=f"insight_sc_{spec.canonical_id}",
-                payload_factory=lambda: _build_insight_payload_single_cut(
+            pending_insight = {
+                "insight_key": f"insight_sc_{spec.canonical_id}",
+                "payload_factory": lambda: _build_insight_payload_single_cut(
                     result, spec, []
                 ),
-                table_kind="single_cut",
-                title_hint=spec.question_text,
-            )
+                "table_kind": "single_cut",
+                "title_hint": spec.question_text,
+            }
+
+    # Render insight section OUTSIDE the expander above. Streamlit forbids
+    # nesting expanders, and _render_insight_section uses an expander to show
+    # the API error detail when the AI call fails.
+    if pending_insight is not None:
+        _render_insight_section(**pending_insight)
 
 
 # ---------------------------------------------------------------------------
@@ -2892,6 +2899,7 @@ def _section_cross_cuts() -> None:
     schema = app.session_state.get("schema")
     app.markdown("**Cross-cut results**")
     for result in results:
+        cc_pending_insight: dict[str, Any] | None = None
         with app.expander(
             f"{result.cross_cut_id} \u2014 {result.synthetic_question_title}",
             expanded=False,
@@ -2924,13 +2932,15 @@ def _section_cross_cuts() -> None:
                 f"{len(result.audit_records)} audit records"
             )
             _render_cross_cut_preview(result)
-            _render_insight_section(
-                insight_key=f"insight_cc_{result.cross_cut_id}",
-                payload_factory=lambda r=result: _build_insight_payload_cross_cut(r),
-                table_kind=result.analysis_type.value.lower(),
-                title_hint=getattr(result, "synthetic_question_title", "")
+            cc_pending_insight = {
+                "insight_key": f"insight_cc_{result.cross_cut_id}",
+                "payload_factory": (
+                    lambda r=result: _build_insight_payload_cross_cut(r)
+                ),
+                "table_kind": result.analysis_type.value.lower(),
+                "title_hint": getattr(result, "synthetic_question_title", "")
                 or result.cross_cut_id,
-            )
+            }
             if result.warnings:
                 if app.checkbox(
                     f"Show {len(result.warnings)} warning(s)",
@@ -2964,6 +2974,12 @@ def _section_cross_cuts() -> None:
                     app.session_state["cross_cut_only_bytes"] = None
                     _refresh_full_workbook()
                     app.rerun()
+
+        # Render insight section OUTSIDE the per-card expander above.
+        # Streamlit forbids nesting expanders, and _render_insight_section
+        # uses an expander to show the API error detail when the AI call fails.
+        if cc_pending_insight is not None:
+            _render_insight_section(**cc_pending_insight)
 
 
 # ---------------------------------------------------------------------------
