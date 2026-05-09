@@ -421,6 +421,277 @@ def _styled_dataframe(df: Any, **kwargs: Any) -> None:
         app.dataframe(df, **kwargs)
 
 
+def _clear_all_cached_insights() -> None:
+    """Drop every cached AI insight from session state.
+
+    Called whenever the underlying data context changes (global filter apply,
+    pipeline rerun, new upload) so users never see insights stale relative to
+    the current data.
+    """
+    app = _require_streamlit()
+    stale = [
+        k for k in list(app.session_state.keys())
+        if isinstance(k, str) and (
+            k.startswith("insight_sc_")
+            or k.startswith("insight_cc_")
+            or k.startswith("insight_breakdown_")
+        )
+    ]
+    for k in stale:
+        app.session_state.pop(k, None)
+
+
+def _build_insight_payload_single_cut(
+    result: Any, spec: Any, filters_applied: list | None = None
+) -> dict:
+    """Build payload dict for a SingleCutResult (any subtype)."""
+    rows: list[dict[str, Any]] = []
+    if hasattr(result, "distribution") and getattr(result, "distribution", None):
+        for code, payload in result.distribution.items():
+            label = (
+                spec.option_map.get(code, str(code))
+                if getattr(spec, "option_map", None)
+                else str(code)
+            )
+            rows.append(
+                {
+                    "label": label,
+                    "count": payload.get("count", 0) if isinstance(payload, dict) else 0,
+                    "rate": payload.get("rate", 0.0) if isinstance(payload, dict) else 0.0,
+                }
+            )
+    elif hasattr(result, "selections") and getattr(result, "selections", None):
+        for sub_id, payload in result.selections.items():
+            if not isinstance(payload, dict):
+                continue
+            label = payload.get("label", sub_id) or sub_id
+            label_lower = str(label).lower()
+            if "unchecked" in label_lower or "not selected" in label_lower:
+                continue
+            rate = payload.get("selection_rate")
+            if rate is None:
+                rate = payload.get("rate", 0.0)
+            rows.append(
+                {
+                    "label": label,
+                    "count": payload.get("count", 0),
+                    "rate": float(rate) if rate is not None else 0.0,
+                }
+            )
+    elif hasattr(result, "rows") and getattr(result, "rows", None):
+        for sub_id, row_result in result.rows.items():
+            row_label = (
+                spec.grid_row_labels.get(sub_id, sub_id)
+                if getattr(spec, "grid_row_labels", None)
+                else sub_id
+            )
+            dist = (
+                row_result.distribution
+                if hasattr(row_result, "distribution")
+                else {}
+            )
+            for code, payload in dist.items():
+                if not isinstance(payload, dict):
+                    continue
+                rows.append(
+                    {
+                        "label": f"{row_label} \u2014 {payload.get('label', str(code))}",
+                        "count": payload.get("count", 0),
+                        "rate": payload.get("rate", 0.0),
+                    }
+                )
+
+    summary: dict[str, Any] = {}
+    if hasattr(result, "mean") and result.mean is not None:
+        try:
+            summary["mean"] = round(float(result.mean), 4)
+        except (TypeError, ValueError):
+            pass
+    if hasattr(result, "median") and result.median is not None:
+        try:
+            summary["median"] = round(float(result.median), 4)
+        except (TypeError, ValueError):
+            pass
+    if hasattr(result, "std") and result.std is not None:
+        try:
+            summary["std"] = round(float(result.std), 4)
+        except (TypeError, ValueError):
+            pass
+
+    # Numeric subtypes have no row-wise distribution; synthesize summary rows
+    # so the AI insight pipeline does not fall back to template-only mode.
+    if not rows and summary:
+        for stat_name, stat_value in summary.items():
+            rows.append(
+                {"label": stat_name, "count": int(getattr(result, "valid_n", 0) or 0), "rate": stat_value}
+            )
+
+    return {
+        "table_kind": "single_cut",
+        "question_id": spec.canonical_id,
+        "question_text": spec.question_text,
+        "valid_n": int(getattr(result, "valid_n", 0) or 0),
+        "missing_n": int(getattr(result, "missing_n", 0) or 0),
+        "filters_applied": filters_applied or [],
+        "rows": rows,
+        "summary": summary,
+    }
+
+
+def _build_insight_payload_cross_cut(result: Any) -> dict:
+    """Build payload dict for a CrossCutResult."""
+    rt = result.result_table or {}
+    rows: list[dict[str, Any]] = []
+
+    if "counts" in rt:
+        row_labels = rt.get("row_label_map", {}) or {}
+        col_labels = rt.get("column_label_map", {}) or {}
+        row_pcts = rt.get("row_pct", {}) or {}
+        for row_code, col_dict in (rt.get("counts", {}) or {}).items():
+            if not isinstance(col_dict, dict):
+                continue
+            for col_code, count in col_dict.items():
+                rows.append(
+                    {
+                        "row_label": row_labels.get(row_code, str(row_code)),
+                        "col_label": col_labels.get(col_code, str(col_code)),
+                        "count": count,
+                        "row_pct": (row_pcts.get(row_code, {}) or {}).get(
+                            col_code, 0.0
+                        ),
+                    }
+                )
+    elif "per_segment" in rt:
+        for seg_val, seg_data in (rt.get("per_segment", {}) or {}).items():
+            if not isinstance(seg_data, dict):
+                continue
+            try:
+                mean_v = round(float(seg_data.get("mean", 0) or 0), 4)
+            except (TypeError, ValueError):
+                mean_v = 0
+            try:
+                median_v = round(float(seg_data.get("median", 0) or 0), 4)
+            except (TypeError, ValueError):
+                median_v = 0
+            rows.append(
+                {
+                    "segment_label": seg_data.get("label", str(seg_val)),
+                    "n": seg_data.get("n", 0),
+                    "mean": mean_v,
+                    "median": median_v,
+                }
+            )
+    elif "target_result" in rt:
+        tr = rt.get("target_result", {}) or {}
+        if "distribution" in tr:
+            for code, payload in tr["distribution"].items():
+                if not isinstance(payload, dict):
+                    continue
+                rows.append(
+                    {
+                        "label": payload.get("label", str(code)),
+                        "count": payload.get("count", 0),
+                        "rate": payload.get("rate", 0.0),
+                    }
+                )
+        elif "selections" in tr:
+            for sub_id, payload in tr["selections"].items():
+                if not isinstance(payload, dict):
+                    continue
+                label = payload.get("label", sub_id) or sub_id
+                if "unchecked" in str(label).lower():
+                    continue
+                rows.append(
+                    {
+                        "label": label,
+                        "count": payload.get("count", 0),
+                    }
+                )
+
+    title = (
+        getattr(result, "synthetic_question_title", None)
+        or getattr(result, "title", None)
+        or result.cross_cut_id
+    )
+    filter_expr = getattr(result, "filter_expr", None) or rt.get("filter_expr")
+    overall = rt.get("overall") or {}
+    valid_n = (
+        rt.get("grand_total")
+        or rt.get("filter_n")
+        or rt.get("paired_n")
+        or (overall.get("n") if isinstance(overall, dict) else 0)
+        or 0
+    )
+    return {
+        "table_kind": result.analysis_type.value.lower(),
+        "question_id": result.cross_cut_id,
+        "question_text": title,
+        "valid_n": int(valid_n),
+        "missing_n": 0,
+        "filters_applied": [filter_expr] if filter_expr else [],
+        "rows": rows,
+        "summary": {},
+    }
+
+
+def _render_insight_section(
+    insight_key: str, payload_factory: Any, table_kind: str, title_hint: str
+) -> None:
+    """Render the AI insight section: button + cached result display."""
+    app = _require_streamlit()
+    app.divider()
+    cols = app.columns([3, 1])
+    with cols[0]:
+        app.markdown("**AI insight**")
+    with cols[1]:
+        btn_label = (
+            "Generate insight"
+            if insight_key not in app.session_state
+            else "Regenerate"
+        )
+        if app.button(
+            btn_label, key=f"btn_{insight_key}", use_container_width=True
+        ):
+            with app.spinner("Generating insight..."):
+                from src.ai_insights import generate_insight
+                payload = payload_factory()
+                ir = generate_insight(
+                    payload, table_kind=table_kind, title_hint=title_hint
+                )
+                app.session_state[insight_key] = ir
+            app.rerun()
+
+    if insight_key in app.session_state:
+        ir = app.session_state[insight_key]
+        import html as _html_mod
+        title_html = _html_mod.escape(str(ir.title))
+        insight_html = _html_mod.escape(str(ir.insight))
+        app.markdown(
+            f"<div style='font-size: 14px; font-weight: 500; "
+            f"color: #1a1a1a; margin-bottom: 4px;'>{title_html}</div>",
+            unsafe_allow_html=True,
+        )
+        if ir.was_template:
+            app.caption(
+                f"\U0001F4CB {ir.insight}  *(template \u2014 AI unavailable)*"
+            )
+            if ir.error_message:
+                with app.expander("Why was AI unavailable?"):
+                    app.code(ir.error_message)
+        else:
+            app.markdown(
+                f"<div style='font-size: 13px; line-height: 1.7; "
+                f"color: #333; background: #f8f9fa; "
+                f"border-left: 3px solid #185FA5; padding: 10px 14px; "
+                f"border-radius: 0;'>{insight_html}</div>",
+                unsafe_allow_html=True,
+            )
+            app.caption(
+                f"Generated by {ir.model_used} \u00b7 "
+                f"{ir.tokens_used} tokens"
+            )
+
+
 def _copy_button(df: Any, key: str) -> None:
     """Render a Copy Table button that copies the DataFrame as TSV.
 
@@ -1017,6 +1288,7 @@ def _drain_pending_actions() -> None:
             app.session_state["global_filter_stats"] = stats
             app.session_state["active_df"] = filtered_df
             _rerun_single_cuts_on_active_df()
+            _clear_all_cached_insights()
         except Exception as exc:  # noqa: BLE001
             app.session_state["global_filter_error"] = (
                 f"{type(exc).__name__}: {exc}"
@@ -1167,6 +1439,7 @@ def _run_pipeline(
     app.session_state["cross_cut_only_bytes"] = None
     app.session_state["filtered_results"] = {}
     app.session_state["filtered_workbook_bytes"] = None
+    _clear_all_cached_insights()
     app.session_state["run_complete"] = True
     status.update(label="Analysis complete.", state="complete")
 
@@ -1233,6 +1506,7 @@ def _rerun_single_cuts_on_active_df() -> None:
     app.session_state["cross_cut_only_bytes"] = None
     app.session_state["filtered_results"] = {}
     app.session_state["filtered_workbook_bytes"] = None
+    _clear_all_cached_insights()
     _refresh_full_workbook()
 
 
@@ -1857,6 +2131,12 @@ def _render_single_cut_card(
                 app.session_state.setdefault(
                     "per_question_filter_errors", {}
                 ).pop(spec.canonical_id, None)
+                # Filter context changed — drop stale cached insights for this card.
+                for k in (
+                    f"insight_sc_{spec.canonical_id}",
+                    f"insight_breakdown_{spec.canonical_id}",
+                ):
+                    app.session_state.pop(k, None)
                 app.rerun()
 
         app.divider()
@@ -1872,10 +2152,29 @@ def _render_single_cut_card(
             )
             for warning in filtered.warnings:
                 app.warning(warning)
+            active_filter_strs = [
+                _format_filter(f) for f in filtered.filters_applied
+            ]
             if filtered.dispatch_mode == "single_cut_filtered":
                 _render_single_cut_result(filtered.single_cut_result, spec)
+                _render_insight_section(
+                    insight_key=f"insight_sc_{spec.canonical_id}",
+                    payload_factory=lambda: _build_insight_payload_single_cut(
+                        filtered.single_cut_result, spec, active_filter_strs
+                    ),
+                    table_kind="filtered_single_cut",
+                    title_hint=spec.question_text,
+                )
             elif filtered.dispatch_mode == "cross_cut_breakdown":
                 _render_cross_cut_preview(filtered.cross_cut_result)
+                _render_insight_section(
+                    insight_key=f"insight_breakdown_{spec.canonical_id}",
+                    payload_factory=lambda: _build_insight_payload_cross_cut(
+                        filtered.cross_cut_result
+                    ),
+                    table_kind=filtered.cross_cut_result.analysis_type.value.lower(),
+                    title_hint=spec.question_text,
+                )
             app.checkbox(
                 "Include in filtered workbook download",
                 value=True,
@@ -1887,9 +2186,22 @@ def _render_single_cut_card(
                 del app.session_state["filtered_results"][spec.canonical_id]
                 app.session_state[filter_key] = []
                 app.session_state["filtered_workbook_bytes"] = None
+                for k in (
+                    f"insight_sc_{spec.canonical_id}",
+                    f"insight_breakdown_{spec.canonical_id}",
+                ):
+                    app.session_state.pop(k, None)
                 app.rerun()
         else:
             _render_single_cut_result(result, spec)
+            _render_insight_section(
+                insight_key=f"insight_sc_{spec.canonical_id}",
+                payload_factory=lambda: _build_insight_payload_single_cut(
+                    result, spec, []
+                ),
+                table_kind="single_cut",
+                title_hint=spec.question_text,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -2612,6 +2924,13 @@ def _section_cross_cuts() -> None:
                 f"{len(result.audit_records)} audit records"
             )
             _render_cross_cut_preview(result)
+            _render_insight_section(
+                insight_key=f"insight_cc_{result.cross_cut_id}",
+                payload_factory=lambda r=result: _build_insight_payload_cross_cut(r),
+                table_kind=result.analysis_type.value.lower(),
+                title_hint=getattr(result, "synthetic_question_title", "")
+                or result.cross_cut_id,
+            )
             if result.warnings:
                 if app.checkbox(
                     f"Show {len(result.warnings)} warning(s)",
@@ -2639,6 +2958,9 @@ def _section_cross_cuts() -> None:
                         for r in app.session_state["cross_cut_results"]
                         if r.cross_cut_id != result.cross_cut_id
                     ]
+                    app.session_state.pop(
+                        f"insight_cc_{result.cross_cut_id}", None
+                    )
                     app.session_state["cross_cut_only_bytes"] = None
                     _refresh_full_workbook()
                     app.rerun()

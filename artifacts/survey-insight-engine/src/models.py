@@ -712,3 +712,28 @@ class FilteredSingleCutResult:
                 "cross_cut_result required for cross_cut_breakdown mode"
             )
         _require_non_negative_int(self.filtered_n, "filtered_n")
+
+
+@dataclass(frozen=True, slots=True)
+class InsightResult:
+    """AI-generated title and insight for a computed table.
+
+    The title is a 5-10 word descriptive label. The insight is a 2-3 sentence
+    observation grounded strictly in the table data. Numbers in the insight are
+    read from the table; the AI never computes anything.
+
+    If the API call failed or PORTKEY_API_KEY is unset, was_template is True and
+    the title/insight are fallback values. The caller can display them as-is and
+    optionally show a small template badge.
+    """
+
+    title: str
+    insight: str
+    was_template: bool = False
+    model_used: str = ""
+    tokens_used: int = 0
+    error_message: str = ""
+
+    def __post_init__(self) -> None:
+        _require_non_empty_string(self.title, "title")
+        _require_non_empty_string(self.insight, "insight")
