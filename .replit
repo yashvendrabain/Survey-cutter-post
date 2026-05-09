@@ -35,3 +35,8 @@ localPort = 21049
 externalPort = 3000
 
 [nix]
+
+[userenv]
+
+[userenv.shared]
+PORTKEY_API_KEY = "Tojet4Oi0P5CRwf6hjKJgjKasTRK"
