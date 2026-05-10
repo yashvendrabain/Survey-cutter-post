@@ -2896,8 +2896,32 @@ def _section_survey_classification() -> None:
                     return 0.2
                 return 0.0
 
+            # Filter out demographic/metadata questions when picking the
+            # AUTO-SELECTED default. The full all_eligible_questions list
+            # (including demographics) is preserved in the dropdown so the
+            # user can still manually choose one if they want.
+            classified_schema = app.session_state.get("schema")
+
+            def _is_demographic_or_metadata(opt) -> bool:
+                if classified_schema is None:
+                    return False
+                spec = classified_schema.get_question(opt.question_id)
+                if spec is None:
+                    return False
+                return spec.is_demographic or spec.question_type.value in (
+                    "METADATA_OR_ID",
+                    "OPEN_TEXT",
+                    "UNKNOWN",
+                )
+
+            eligible_for_outcome = [
+                opt
+                for opt in survey_type_result.all_eligible_questions
+                if not _is_demographic_or_metadata(opt)
+            ]
+
             rebalanced = sorted(
-                survey_type_result.all_eligible_questions,
+                eligible_for_outcome,
                 key=lambda opt: (
                     -(opt.relevance_score - _imbalance_penalty(opt)),
                     _imbalance_penalty(opt),
@@ -2907,7 +2931,6 @@ def _section_survey_classification() -> None:
             best_id = rebalanced[0].question_id if rebalanced else None
             survey_type_result = replace(
                 survey_type_result,
-                all_eligible_questions=rebalanced,
                 outcome_question_id=best_id,
             )
 

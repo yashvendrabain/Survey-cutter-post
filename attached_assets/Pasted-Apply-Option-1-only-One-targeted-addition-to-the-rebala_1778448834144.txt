@@ -1,0 +1,70 @@
+Apply Option 1 only. One targeted addition to the rebalance block in 
+_section_survey_classification() in app.py. Do not touch src/ at all.
+
+In the existing rebalance block (the one that calls _imbalance_penalty 
+and builds the rebalanced list), add a demographic filter BEFORE the 
+sort. Insert these lines immediately after the survey_type_result is 
+computed and stored, but before the rebalanced = sorted(...) call:
+
+    # Filter out demographic/metadata questions using the classified schema
+    # (is_demographic is set by classify_questions, available in session_state.schema)
+    classified_schema = st.session_state.get("schema")
+    
+    def _is_demographic_or_metadata(opt) -> bool:
+        if classified_schema is None:
+            return False
+        spec = classified_schema.get_question(opt.question_id)
+        if spec is None:
+            return False
+        return spec.is_demographic or spec.question_type.value in (
+            "METADATA_OR_ID", "OPEN_TEXT", "UNKNOWN"
+        )
+    
+    eligible_for_outcome = [
+        opt for opt in survey_type_result.all_eligible_questions
+        if not _is_demographic_or_metadata(opt)
+    ]
+
+Then replace the input to the rebalanced sort from:
+    survey_type_result.all_eligible_questions
+to:
+    eligible_for_outcome
+
+So the sort becomes:
+    rebalanced = sorted(
+        eligible_for_outcome,
+        key=lambda opt: (
+            -(opt.relevance_score - _imbalance_penalty(opt, st.session_state.decoded_df)),
+            _imbalance_penalty(opt, st.session_state.decoded_df),
+            opt.question_id,
+        ),
+    )
+
+IMPORTANT: The full all_eligible_questions list (including demographics) 
+should still be preserved in the dropdown so the user can manually select 
+a demographic as outcome if they want — we are only changing what gets 
+AUTO-SELECTED as the default. So when rebuilding the SurveyTypeResult 
+with dataclasses.replace(), set:
+    - all_eligible_questions = survey_type_result.all_eligible_questions  
+      (UNCHANGED — full list for dropdown)
+    - outcome_question_id = rebalanced[0].question_id if rebalanced else None  
+      (auto-select from filtered+sorted list only)
+
+VERIFICATION:
+
+1. Run pytest --tb=short -q — confirm still 280/280
+2. Re-run pipeline against sample data and confirm:
+   - vos is no longer auto-selected
+   - vos still appears in the dropdown (user can still pick it manually)
+   - New auto-selected outcome_question_id
+   - Top 5 dropdown entries (full list, including demographics)
+   - Confirm the auto-selected question is not demographic/metadata
+3. No new expanders introduced
+4. No errors
+
+Return:
+- Test count
+- New auto-selected outcome_question_id and its question_text
+- Confirmation vos still in dropdown but not auto-selected
+- Top 5 dropdown entries with effective scores
+- Any errors
