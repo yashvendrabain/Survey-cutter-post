@@ -779,3 +779,121 @@ class SurveyTypeResult:
             raise ValueError("candidate_outcome_questions must be a list")
         if not isinstance(self.all_eligible_questions, list):
             raise ValueError("all_eligible_questions must be a list")
+
+
+@dataclass(frozen=True, slots=True)
+class SegmentDefinition:
+    """Defines how to split an outcome variable into winner/loser groups."""
+
+    outcome_question_id: str
+    segment_mode: str
+    winner_values: tuple[int | str, ...] = ()
+    winner_threshold: Optional[float] = None
+    threshold_direction: str = "gte"
+    winner_label: str = "Winner"
+    loser_label: str = "Loser"
+
+    def __post_init__(self) -> None:
+        _require_non_empty_string(self.outcome_question_id, "outcome_question_id")
+        if self.segment_mode not in ("categorical", "numeric_threshold"):
+            raise ValueError("segment_mode must be 'categorical' or 'numeric_threshold'")
+        if self.segment_mode == "categorical" and not self.winner_values:
+            raise ValueError("winner_values required for categorical mode")
+        if self.segment_mode == "numeric_threshold" and self.winner_threshold is None:
+            raise ValueError("winner_threshold required for numeric_threshold mode")
+        if self.threshold_direction not in ("gte", "lte"):
+            raise ValueError("threshold_direction must be 'gte' or 'lte'")
+        _require_non_empty_string(self.winner_label, "winner_label")
+        _require_non_empty_string(self.loser_label, "loser_label")
+
+
+@dataclass(frozen=True, slots=True)
+class DifferentiatorResult:
+    """One question's strength as a differentiator between outcome segments."""
+
+    question_id: str
+    question_text: str
+    question_type: str
+    cramers_v: float
+    top_option_label: str
+    top_option_winner_rate: float
+    top_option_loser_rate: float
+    top_option_lift: float
+    winner_n: int
+    loser_n: int
+    p_value: Optional[float]
+    warnings: tuple[str, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        _require_non_empty_string(self.question_id, "question_id")
+        _require_non_empty_string(self.question_text, "question_text")
+        _require_non_empty_string(self.question_type, "question_type")
+        _require_rate(self.cramers_v, "cramers_v")
+        _require_non_empty_string(self.top_option_label, "top_option_label")
+        _require_rate(self.top_option_winner_rate, "top_option_winner_rate")
+        _require_rate(self.top_option_loser_rate, "top_option_loser_rate")
+        _require_numeric(self.top_option_lift, "top_option_lift")
+        _require_non_negative_int(self.winner_n, "winner_n")
+        _require_non_negative_int(self.loser_n, "loser_n")
+        if self.p_value is not None:
+            _require_rate(self.p_value, "p_value")
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileTrait:
+    """One defining trait in a winner profile."""
+
+    question_id: str
+    question_text: str
+    option_label: str
+    winner_rate: float
+    loser_rate: float
+    lift: float
+    rate_gap: float
+
+    def __post_init__(self) -> None:
+        _require_non_empty_string(self.question_id, "question_id")
+        _require_non_empty_string(self.question_text, "question_text")
+        _require_non_empty_string(self.option_label, "option_label")
+        _require_rate(self.winner_rate, "winner_rate")
+        _require_rate(self.loser_rate, "loser_rate")
+        _require_numeric(self.lift, "lift")
+        _require_numeric(self.rate_gap, "rate_gap")
+
+
+@dataclass(frozen=True, slots=True)
+class WinnerProfile:
+    """Composite archetype: top defining traits of the winner segment."""
+
+    outcome_question_id: str
+    winner_label: str
+    winner_n: int
+    loser_n: int
+    defining_traits: tuple[ProfileTrait, ...]
+
+    def __post_init__(self) -> None:
+        _require_non_empty_string(self.outcome_question_id, "outcome_question_id")
+        _require_non_empty_string(self.winner_label, "winner_label")
+        _require_non_negative_int(self.winner_n, "winner_n")
+        _require_non_negative_int(self.loser_n, "loser_n")
+
+
+@dataclass(frozen=True, slots=True)
+class OutcomeSegmentationResult:
+    """Complete output of compute_outcome_segmentation()."""
+
+    outcome_question_id: str
+    segment_definition: SegmentDefinition
+    winner_n: int
+    loser_n: int
+    total_n: int
+    differentiators: tuple[DifferentiatorResult, ...]
+    winner_profile: WinnerProfile
+    skipped_questions: tuple[tuple[str, str], ...]
+    warnings: tuple[str, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        _require_non_empty_string(self.outcome_question_id, "outcome_question_id")
+        _require_non_negative_int(self.winner_n, "winner_n")
+        _require_non_negative_int(self.loser_n, "loser_n")
+        _require_non_negative_int(self.total_n, "total_n")

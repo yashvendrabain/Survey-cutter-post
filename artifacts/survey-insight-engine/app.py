@@ -72,6 +72,8 @@ SESSION_DEFAULTS = {
     "data_map": None,
     "survey_type_result": None,
     "outcome_variable_id": None,
+    "segment_definition": None,
+    "segmentation_result": None,
 }
 
 
@@ -1290,6 +1292,7 @@ def _drain_pending_actions() -> None:
             app.session_state["global_filter_state"] = state
             app.session_state["global_filter_stats"] = stats
             app.session_state["active_df"] = filtered_df
+            _invalidate_stage_c_state()
             _rerun_single_cuts_on_active_df()
             _clear_all_cached_insights()
         except Exception as exc:  # noqa: BLE001
@@ -1431,6 +1434,7 @@ def _run_pipeline(
     app.session_state["survey_type_result"] = None
     app.session_state["outcome_variable_id"] = None
     app.session_state.pop("outcome_variable_selector", None)
+    _invalidate_stage_c_state()
     app.session_state["global_filter_state"] = GlobalFilterState()
     app.session_state["global_filter_stats"] = None
     app.session_state["global_filter_rows"] = []
@@ -1491,6 +1495,32 @@ def _run_cross_cut_specs(specs: list[Any]) -> None:
     app.session_state["cross_cut_skips"].extend(skips)
     app.session_state["cross_cut_only_bytes"] = None
     _refresh_full_workbook()
+
+
+_STAGE_C_WIDGET_KEYS = (
+    "seg_mode_radio",
+    "winner_values_multiselect",
+    "winner_label_input",
+    "loser_label_input",
+    "numeric_threshold_input",
+    "threshold_direction_radio",
+    "winner_label_num_input",
+    "loser_label_num_input",
+)
+
+
+def _invalidate_stage_c_state() -> None:
+    """Clear Stage C segment definition + result + widget keys.
+
+    Called whenever the underlying data context changes (new upload, global
+    filter applied/cleared, outcome variable swapped) so the displayed
+    segmentation result always matches the current context.
+    """
+    app = _require_streamlit()
+    app.session_state["segment_definition"] = None
+    app.session_state["segmentation_result"] = None
+    for key in _STAGE_C_WIDGET_KEYS:
+        app.session_state.pop(key, None)
 
 
 def _rerun_single_cuts_on_active_df() -> None:
@@ -2672,6 +2702,7 @@ def _clear_global_filter_action() -> None:
     app.session_state["global_filter_stats"] = None
     app.session_state["global_filter_rows"] = []
     app.session_state["active_df"] = app.session_state["decoded_df"]
+    _invalidate_stage_c_state()
     _rerun_single_cuts_on_active_df()
     app.rerun()
 
@@ -2908,6 +2939,9 @@ def _section_survey_classification() -> None:
     selected_id = option_ids[option_labels.index(selected_label)]
     if selected_id != app.session_state.get("outcome_variable_id"):
         app.session_state["outcome_variable_id"] = selected_id
+        # Outcome variable changed — invalidate stale Stage C state so the
+        # results displayed always match the currently selected outcome.
+        _invalidate_stage_c_state()
         app.rerun()
 
     if selected_id is not None:
@@ -2935,7 +2969,224 @@ def _section_survey_classification() -> None:
                 )
                 app.markdown("")
 
+    _render_segment_definition_ui()
+    _render_segmentation_results()
+
     app.divider()
+
+
+def _render_segment_definition_ui() -> None:
+    """Stage C: define winner/loser segments and run outcome segmentation."""
+    app = _require_streamlit()
+    outcome_id = app.session_state.get("outcome_variable_id")
+    if not outcome_id:
+        return
+
+    schema = app.session_state.get("schema")
+    if schema is None:
+        return
+    outcome_spec = schema.get_question(outcome_id)
+    if outcome_spec is None:
+        app.error(f"Outcome question {outcome_id} not found in schema.")
+        return
+
+    from src.models import SegmentDefinition
+
+    app.markdown("---")
+    app.markdown("### \u2699\uFE0F Segment Definition")
+    app.info(
+        "Define what 'winner' means for your outcome variable. This splits "
+        "respondents into two groups for segmentation analysis."
+    )
+
+    seg_mode = app.radio(
+        "Segmentation mode",
+        options=["categorical", "numeric_threshold"],
+        format_func=lambda x: (
+            "Categorical (select winner values)"
+            if x == "categorical"
+            else "Numeric threshold (above/below a value)"
+        ),
+        key="seg_mode_radio",
+        horizontal=True,
+    )
+
+    segment_definition = None
+
+    if seg_mode == "categorical":
+        options = list(outcome_spec.option_map.items())
+        if not options:
+            app.warning(
+                "No option codes found for this question. Try numeric threshold mode."
+            )
+        else:
+            option_labels = [f"{code}: {label}" for code, label in options]
+            selected_labels = app.multiselect(
+                "Select winner values",
+                options=option_labels,
+                help=(
+                    "Respondents matching these codes are 'winners'. "
+                    "All others are 'losers'."
+                ),
+                key="winner_values_multiselect",
+            )
+            winner_codes = tuple(
+                code
+                for code, label in options
+                if f"{code}: {label}" in selected_labels
+            )
+            if winner_codes:
+                winner_label = app.text_input(
+                    "Winner label", value="Winner", key="winner_label_input"
+                )
+                loser_label = app.text_input(
+                    "Loser label", value="Loser", key="loser_label_input"
+                )
+                segment_definition = SegmentDefinition(
+                    outcome_question_id=outcome_id,
+                    segment_mode="categorical",
+                    winner_values=winner_codes,
+                    winner_label=winner_label or "Winner",
+                    loser_label=loser_label or "Loser",
+                )
+            else:
+                app.warning("Select at least one winner value to continue.")
+    else:
+        threshold = app.number_input(
+            "Threshold value",
+            value=50.0,
+            key="numeric_threshold_input",
+        )
+        direction = app.radio(
+            "Winners are respondents who scored",
+            options=["gte", "lte"],
+            format_func=lambda x: (
+                f"\u2265 {threshold} (at or above threshold)"
+                if x == "gte"
+                else f"\u2264 {threshold} (at or below threshold)"
+            ),
+            key="threshold_direction_radio",
+            horizontal=True,
+        )
+        winner_label = app.text_input(
+            "Winner label", value="High", key="winner_label_num_input"
+        )
+        loser_label = app.text_input(
+            "Loser label", value="Low", key="loser_label_num_input"
+        )
+        segment_definition = SegmentDefinition(
+            outcome_question_id=outcome_id,
+            segment_mode="numeric_threshold",
+            winner_threshold=float(threshold),
+            threshold_direction=direction,
+            winner_label=winner_label or "High",
+            loser_label=loser_label or "Low",
+        )
+
+    if segment_definition is None:
+        return
+
+    app.session_state["segment_definition"] = segment_definition
+
+    if app.button(
+        "\u25B6 Run Outcome Segmentation",
+        key="run_segmentation_btn",
+        type="primary",
+    ):
+        from src.outcome_segmentation import compute_outcome_segmentation
+
+        # compute_outcome_segmentation expects a list[AuditRecord] it can
+        # `.append()` to. session_state["log"] is a CalculationLog (record-only),
+        # so we collect into a local list and forward into the log afterwards.
+        local_audit: list = []
+        with app.spinner("Running outcome segmentation..."):
+            try:
+                seg_result = compute_outcome_segmentation(
+                    decoded_df=app.session_state["active_df"],
+                    schema=schema,
+                    outcome_question_id=outcome_id,
+                    segment_definition=segment_definition,
+                    audit_log=local_audit,
+                    min_sample_size=30,
+                )
+            except Exception as exc:  # noqa: BLE001 - surface error to UI
+                app.error(f"Segmentation failed: {type(exc).__name__}: {exc}")
+                return
+            calc_log = app.session_state.get("log")
+            if calc_log is not None:
+                for audit in local_audit:
+                    calc_log.record(audit)
+            app.session_state["segmentation_result"] = seg_result
+            app.rerun()
+
+
+def _render_segmentation_results() -> None:
+    """Stage C: display winner/loser metrics, differentiators, and winner profile."""
+    app = _require_streamlit()
+    seg = app.session_state.get("segmentation_result")
+    if seg is None:
+        return
+
+    app.markdown("---")
+    app.markdown("### \U0001F4C8 Segmentation Results")
+
+    col1, col2, col3 = app.columns(3)
+    with col1:
+        app.metric("Winners", seg.winner_n)
+    with col2:
+        app.metric("Losers", seg.loser_n)
+    with col3:
+        app.metric("Differentiators Found", len(seg.differentiators))
+
+    for warning in seg.warnings:
+        app.warning(warning)
+
+    if seg.differentiators:
+        app.markdown("#### Top Differentiators (ranked by Cram\u00e9r's V)")
+        diff_data = [
+            {
+                "Question": f"{diff.question_id}: {diff.question_text[:60]}",
+                "Top Option": diff.top_option_label,
+                "Cram\u00e9r's V": f"{diff.cramers_v:.3f}",
+                "Winner Rate": f"{diff.top_option_winner_rate:.1%}",
+                "Loser Rate": f"{diff.top_option_loser_rate:.1%}",
+                "Lift": (
+                    f"{diff.top_option_lift:.2f}x"
+                    if diff.top_option_lift < 900
+                    else "\u221E"
+                ),
+                "p-value": (
+                    f"{diff.p_value:.3f}" if diff.p_value is not None else "N/A"
+                ),
+            }
+            for diff in seg.differentiators[:20]
+        ]
+        app.dataframe(diff_data, use_container_width=True)
+
+    if seg.winner_profile.defining_traits:
+        app.markdown(f"#### \U0001F3C6 {seg.winner_profile.winner_label} Profile")
+        app.caption(
+            "Composite archetype built from top "
+            f"{len(seg.winner_profile.defining_traits)} differentiating traits"
+        )
+        for trait in seg.winner_profile.defining_traits:
+            tcol1, tcol2 = app.columns([3, 1])
+            with tcol1:
+                app.markdown(f"**{trait.question_id}:** {trait.option_label}")
+                app.caption(trait.question_text[:80])
+            with tcol2:
+                app.metric(
+                    "Winner Rate",
+                    f"{trait.winner_rate:.1%}",
+                    delta=f"+{trait.rate_gap:.1%} vs losers",
+                )
+
+    if seg.skipped_questions:
+        with app.expander(
+            f"\u26A0\uFE0F {len(seg.skipped_questions)} questions skipped"
+        ):
+            for qid, reason in seg.skipped_questions:
+                app.caption(f"\u2022 {qid}: {reason}")
 
 
 # ---------------------------------------------------------------------------
