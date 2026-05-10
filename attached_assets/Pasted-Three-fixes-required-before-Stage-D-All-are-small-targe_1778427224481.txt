@@ -1,0 +1,59 @@
+Three fixes required before Stage D. All are small, targeted changes to 
+_render_segmentation_results() only. Do not touch any other function.
+
+FIX 1 — Surface per-differentiator warnings in the differentiators table
+
+In the dataframe construction at lines 3146-3163, add a "Notes" column:
+
+Current dict per row:
+{
+    "Question": ...,
+    "Top Option": ...,
+    "Cramér's V": ...,
+    "Winner Rate": ...,
+    "Loser Rate": ...,
+    "Lift": ...,
+    "p-value": ...,
+}
+
+Add this field to each row dict:
+    "Notes": " | ".join(diff.warnings) if diff.warnings else "",
+
+This surfaces "infinite_lift_loser_zero" and any future per-differentiator 
+warnings directly in the table where the analyst sees them.
+
+FIX 2 — Add a visible callout when any differentiator has infinite lift
+
+After the st.dataframe(...) call, add:
+
+    infinite_lift_diffs = [
+        diff for diff in seg.differentiators[:20]
+        if diff.top_option_lift >= 999.0
+    ]
+    if infinite_lift_diffs:
+        st.caption(
+            f"⚠️ {len(infinite_lift_diffs)} question(s) show infinite lift (∞) "
+            "— the loser segment had 0 respondents select this option. "
+            "Interpret with caution; check sample sizes."
+        )
+
+FIX 3 — Surface per-differentiator warnings in the winner profile traits
+
+In the winner profile rendering block (lines 3166 onward), find where each 
+trait is rendered. After the st.metric(...) call for each trait, add:
+
+    # Look up warnings for this trait from differentiators
+    matching_diff = next(
+        (d for d in seg.differentiators if d.question_id == trait.question_id),
+        None
+    )
+    if matching_diff and matching_diff.warnings:
+        st.caption(f"⚠️ {' | '.join(matching_diff.warnings)}")
+
+After making all 3 fixes:
+
+1. Run pytest --tb=short -q and confirm all 280 tests still pass
+2. Confirm no new st.expander nesting was introduced
+3. Return the exact modified lines for each fix so I can verify
+
+Do not proceed to smoke test yet — return the code snippets first.

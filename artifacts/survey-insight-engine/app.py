@@ -3158,10 +3158,24 @@ def _render_segmentation_results() -> None:
                 "p-value": (
                     f"{diff.p_value:.3f}" if diff.p_value is not None else "N/A"
                 ),
+                "Notes": " | ".join(diff.warnings) if diff.warnings else "",
             }
             for diff in seg.differentiators[:20]
         ]
         app.dataframe(diff_data, use_container_width=True)
+
+        infinite_lift_diffs = [
+            diff
+            for diff in seg.differentiators[:20]
+            if diff.top_option_lift >= 999.0
+        ]
+        if infinite_lift_diffs:
+            app.caption(
+                f"\u26A0\uFE0F {len(infinite_lift_diffs)} question(s) show "
+                "infinite lift (\u221E) \u2014 the loser segment had 0 "
+                "respondents select this option. Interpret with caution; "
+                "check sample sizes."
+            )
 
     if seg.winner_profile.defining_traits:
         app.markdown(f"#### \U0001F3C6 {seg.winner_profile.winner_label} Profile")
@@ -3179,6 +3193,18 @@ def _render_segmentation_results() -> None:
                     "Winner Rate",
                     f"{trait.winner_rate:.1%}",
                     delta=f"+{trait.rate_gap:.1%} vs losers",
+                )
+            matching_diff = next(
+                (
+                    d
+                    for d in seg.differentiators
+                    if d.question_id == trait.question_id
+                ),
+                None,
+            )
+            if matching_diff and matching_diff.warnings:
+                app.caption(
+                    f"\u26A0\uFE0F {' | '.join(matching_diff.warnings)}"
                 )
 
     if seg.skipped_questions:
