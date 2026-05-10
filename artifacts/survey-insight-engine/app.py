@@ -2898,8 +2898,11 @@ def _section_survey_classification() -> None:
 
             rebalanced = sorted(
                 survey_type_result.all_eligible_questions,
-                key=lambda opt: opt.relevance_score - _imbalance_penalty(opt),
-                reverse=True,
+                key=lambda opt: (
+                    -(opt.relevance_score - _imbalance_penalty(opt)),
+                    _imbalance_penalty(opt),
+                    opt.question_id,
+                ),
             )
             best_id = rebalanced[0].question_id if rebalanced else None
             survey_type_result = replace(

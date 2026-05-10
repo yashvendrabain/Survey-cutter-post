@@ -572,6 +572,11 @@ def _score_all_questions(
         qtype = _question_type(question)
         if qtype in _INELIGIBLE_TYPES:
             continue
+        # Very short question text is almost always a raw column name
+        # (e.g. "vos", "id", "os") that slipped through parsing — never a
+        # real survey question, so exclude entirely from eligible outcomes.
+        if len(text.strip()) <= 5:
+            continue
         score, reason = _score_outcome_relevance(qid, text, qtype, survey_type)
         scored.append(
             OutcomeVariableOption(
@@ -591,6 +596,9 @@ def _score_outcome_relevance(
     question_type: str,
     survey_type: str,
 ) -> tuple[float, str]:
+    # Short text is almost always a raw column name, not a real question.
+    if len(question_text.strip()) <= 10:
+        return (0.05, "Very short question text \u2014 likely metadata column")
     text_lower = question_text.lower()
 
     for signal in _PRIMARY_SIGNALS.get(survey_type, ()):

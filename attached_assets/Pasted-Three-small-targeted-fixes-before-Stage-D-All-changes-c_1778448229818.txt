@@ -1,0 +1,93 @@
+Three small targeted fixes before Stage D. All changes confined to the 
+imbalance penalty block in _section_survey_classification() and 
+_score_outcome_relevance() in survey_type_detector.py.
+
+FIX 1 — Deterministic tiebreaker in imbalance penalty sort
+
+In the rebalanced sort, replace the current single-key sort:
+
+    rebalanced = sorted(
+        survey_type_result.all_eligible_questions,
+        key=lambda opt: opt.relevance_score - _imbalance_penalty(opt, st.session_state.decoded_df),
+        reverse=True,
+    )
+
+With a three-key tiebreaker:
+
+    rebalanced = sorted(
+        survey_type_result.all_eligible_questions,
+        key=lambda opt: (
+            -(opt.relevance_score - _imbalance_penalty(opt, st.session_state.decoded_df)),
+            _imbalance_penalty(opt, st.session_state.decoded_df),
+            opt.question_id,
+        ),
+    )
+
+Tiebreaker logic (descending effective score → ascending penalty → 
+ascending question_id):
+- First key: highest effective score wins (negated for ascending sort)
+- Second key: on a tie, lower penalty wins (less imbalanced)
+- Third key: on a further tie, alphabetical question_id for determinism
+
+This ensures Q42 (penalty 0.40) loses to vos (penalty 0.20) on a tie, 
+and vos loses to any zero-penalty question on a further tie.
+
+FIX 2 — Exclude metadata and open_text from outcome candidates
+
+In src/survey_type_detector.py, in the second pass that builds 
+all_eligible_questions, the exclusion check currently reads:
+
+    Exclude: metadata_or_id, open_text
+
+Verify this exclusion is actually enforced in code. Search for the loop 
+that builds all_eligible_questions and confirm it has an explicit check 
+like:
+
+    if question.get("question_type") in ("metadata_or_id", "open_text"):
+        continue
+    if question.get("type_hint") in ("open_text",):
+        continue
+
+If the check is missing or incomplete, add it. The field to check depends 
+on what the schema dict looks like — check what keys are available on each 
+question dict and use the right one.
+
+Also add exclusion for questions whose question_text is 5 characters or 
+fewer (these are almost always raw column names like "vos", "id", "os" 
+that slipped through parsing).
+
+    if len(question.get("question_text", "").strip()) <= 5:
+        continue
+
+FIX 3 — Penalise short question_text in relevance scoring
+
+In _score_outcome_relevance() in survey_type_detector.py, add a guard 
+at the very top of the function before any keyword matching:
+
+    # Short text is almost always a raw column name, not a real question
+    if len(question_text.strip()) <= 10:
+        return (0.05, "Very short question text — likely metadata column")
+
+This catches "vos", "os", "id", "Q1", and similar raw column names that 
+have no real question text.
+
+VERIFICATION:
+
+1. Run pytest --tb=short -q — confirm still 280/280
+2. Re-run the pipeline against sample data and confirm:
+   - vos no longer appears in all_eligible_questions (excluded by FIX 2 
+     short-text check since "vos" is 3 chars)
+   - OR if vos has a longer question_text, confirm it scores 0.05 and 
+     sorts near the bottom
+   - New auto-selected outcome_question_id (report what it is)
+   - Q42 still shows ⚠️ prefix
+3. Report the top 5 questions in the dropdown after all fixes, with their 
+   effective scores, so I can confirm the ranking makes sense
+
+Return:
+- Test count
+- Whether vos was excluded or just deprioritised (and why — what is its 
+  full question_text in the schema?)
+- New auto-selected outcome_question_id
+- Top 5 dropdown entries with effective scores
+- Any errors
