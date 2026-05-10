@@ -41,6 +41,9 @@ from src.ui_constants import (
     TOOLTIP_THREE_DOWNLOADS,
 )
 
+from src.cross_cut_suggestions import score_suggestions_for_outcome
+from src.models import OutcomeSegmentationResult
+
 
 SESSION_DEFAULTS = {
     "decoded_df": None,
@@ -3626,6 +3629,224 @@ def _section_downloads() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Stage D: AI Analysis section
+# ---------------------------------------------------------------------------
+
+
+def _truncate(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 3] + "..."
+
+
+def _insight_rows_from_payload(
+    payload: dict[str, Any],
+    table_kind: str,
+) -> list[dict[str, Any]]:
+    if table_kind == "differentiator":
+        return [
+            {
+                "label": payload.get("top_option", ""),
+                "winner_rate": payload.get("winner_rate", 0),
+                "loser_rate": payload.get("loser_rate", 0),
+                "lift": payload.get("lift", 0),
+                "cramers_v": payload.get("cramers_v", 0),
+            }
+        ]
+    if table_kind == "winner_profile":
+        return list(payload.get("traits", []))
+    return []
+
+
+def _normalise_insight_payload(
+    table_payload: dict[str, Any],
+    table_kind: str,
+    title_hint: str,
+) -> dict[str, Any]:
+    payload = dict(table_payload)
+    payload.setdefault("table_kind", table_kind)
+    payload.setdefault("question_id", payload.get("question_id", ""))
+    payload.setdefault("question_text", payload.get("question_text", title_hint))
+    payload.setdefault("valid_n", payload.get("winner_n", 0))
+    payload.setdefault("missing_n", 0)
+    payload.setdefault("filters_applied", [])
+    payload.setdefault("summary", {})
+    payload.setdefault("rows", _insight_rows_from_payload(payload, table_kind))
+    return payload
+
+
+def _section_ai_analysis() -> None:
+    app = _require_streamlit()
+    if not app.session_state.get("run_complete"):
+        return
+
+    app.markdown("---")
+    app.markdown("## 5\ufe0f\u20e3 AI Analysis")
+
+    seg: OutcomeSegmentationResult | None = app.session_state.get(
+        "segmentation_result"
+    )
+    if seg is None:
+        app.info(
+            "Complete outcome segmentation in the Survey Classification "
+            "section above to unlock AI Analysis."
+        )
+        return
+
+    _render_outcome_summary_panel(seg)
+    _render_smart_cross_cut_suggestions_panel(seg)
+    _render_winner_profile_panel(seg)
+
+
+def _render_outcome_summary_panel(seg: OutcomeSegmentationResult) -> None:
+    app = _require_streamlit()
+    app.markdown("### \U0001F3AF Outcome Analysis")
+
+    col1, col2, col3, col4 = app.columns(4)
+    col1.metric("Outcome Variable", seg.outcome_question_id)
+    col2.metric("Winners", seg.winner_n)
+    col3.metric("Losers", seg.loser_n)
+    col4.metric("Differentiators", len(seg.differentiators))
+
+    for rank, diff in enumerate(seg.differentiators[:10], start=1):
+        with app.container():
+            c1, c2, c3, c4 = app.columns([3, 1, 1, 1])
+            c1.markdown(f"**{rank}. {_truncate(diff.question_text, 70)}**")
+            c2.caption("Cram\u00e9r's V")
+            c2.markdown(f"V={diff.cramers_v:.3f}")
+            c3.caption("Winner Rate")
+            c3.markdown(f"{diff.top_option_winner_rate:.1%}")
+            c4.caption("Lift")
+            lift_text = (
+                "\u221E"
+                if diff.top_option_lift >= 900
+                else f"{diff.top_option_lift:.2f}x"
+            )
+            c4.markdown(lift_text)
+
+            diff_payload = {
+                "question_id": diff.question_id,
+                "question_text": diff.question_text,
+                "top_option": diff.top_option_label,
+                "winner_rate": diff.top_option_winner_rate,
+                "loser_rate": diff.top_option_loser_rate,
+                "lift": diff.top_option_lift,
+                "cramers_v": diff.cramers_v,
+                "winner_n": diff.winner_n,
+                "loser_n": diff.loser_n,
+            }
+            title_hint = f"Key differentiator: {diff.question_text[:50]}"
+            _render_insight_section(
+                insight_key=f"insight_diff_{diff.question_id}",
+                payload_factory=lambda p=diff_payload, t=title_hint: (
+                    _normalise_insight_payload(p, "differentiator", t)
+                ),
+                table_kind="differentiator",
+                title_hint=title_hint,
+            )
+            app.divider()
+
+
+def _render_smart_cross_cut_suggestions_panel(
+    seg: OutcomeSegmentationResult,
+) -> None:
+    app = _require_streamlit()
+    app.markdown("### \U0001F517 Smart Cross-cut Suggestions")
+    app.caption("Ranked by relevance to your outcome variable")
+
+    if not app.session_state.get("cross_cut_results"):
+        app.info(
+            "Run cross cuts in Section 4 first to see outcome-ranked "
+            "suggestions here."
+        )
+        return
+
+    suggestions = app.session_state.get("cross_cut_suggestions", [])
+    if not suggestions:
+        app.info("No rule-based cross-cut suggestions are available.")
+        return
+
+    scored_suggestions = score_suggestions_for_outcome(suggestions, seg)
+    for suggestion in scored_suggestions[:10]:
+        analysis_type = suggestion.analysis_type
+        analysis_type_label = getattr(analysis_type, "value", str(analysis_type))
+        with app.expander(
+            f"[{suggestion.outcome_relevance_score:.2f}] "
+            f"{suggestion.synthetic_question_title}"
+        ):
+            app.markdown(
+                f"**Business question:** {suggestion.business_question}"
+            )
+            app.markdown(
+                "**Source questions:** "
+                f"{', '.join(suggestion.source_question_ids)}"
+            )
+            app.markdown(
+                "**Outcome relevance:** "
+                f"{suggestion.outcome_relevance_score:.2f}"
+            )
+            app.markdown(f"**Analysis type:** {analysis_type_label}")
+
+
+def _render_winner_profile_panel(seg: OutcomeSegmentationResult) -> None:
+    app = _require_streamlit()
+    app.markdown("### \U0001F3C6 Winner Profile")
+
+    profile = seg.winner_profile
+    if not profile.defining_traits:
+        app.warning(
+            "Not enough strong differentiators to build a winner profile. "
+            "Try selecting a different outcome variable or segment definition."
+        )
+        return
+
+    app.markdown(
+        f"**{profile.winner_label} Profile** "
+        f"(n={profile.winner_n} vs {profile.loser_label} n={profile.loser_n})"
+    )
+
+    for trait in profile.defining_traits:
+        with app.container():
+            c1, c2, c3 = app.columns([4, 1, 1])
+            c1.markdown(f"**{trait.question_id}:** {trait.option_label}")
+            c1.caption(_truncate(trait.question_text, 80))
+            c2.metric(profile.winner_label, f"{trait.winner_rate:.1%}")
+            c3.metric(
+                "vs " + profile.loser_label,
+                f"{trait.loser_rate:.1%}",
+                delta=f"{trait.rate_gap:+.1%}",
+            )
+            app.divider()
+
+    wp_payload = {
+        "winner_label": profile.winner_label,
+        "loser_label": profile.loser_label,
+        "winner_n": profile.winner_n,
+        "loser_n": profile.loser_n,
+        "traits": [
+            {
+                "question_id": trait.question_id,
+                "option_label": trait.option_label,
+                "winner_rate": trait.winner_rate,
+                "loser_rate": trait.loser_rate,
+                "lift": trait.lift,
+                "rate_gap": trait.rate_gap,
+            }
+            for trait in profile.defining_traits
+        ],
+    }
+    wp_title_hint = f"{profile.winner_label} archetype summary"
+    _render_insight_section(
+        insight_key="insight_winner_profile",
+        payload_factory=lambda p=wp_payload, t=wp_title_hint: (
+            _normalise_insight_payload(p, "winner_profile", t)
+        ),
+        table_kind="winner_profile",
+        title_hint=wp_title_hint,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -3660,6 +3881,7 @@ def main() -> None:
     _section_cross_cuts()
     app.divider()
     _section_downloads()
+    _section_ai_analysis()
 
 
 if __name__ == "__main__":

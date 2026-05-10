@@ -1,0 +1,80 @@
+Stage D implementation. Three files to add/update plus wiring verification.
+
+FILES TO ADD/UPDATE:
+1. src/cross_cut_suggestions.py — full replacement, paste from Codex
+2. tests/test_stage_d.py — new file, paste from Codex
+3. tests/test_cross_cut_suggestions.py — full replacement, paste from Codex
+4. app.py — ADD the following functions and wiring (do not replace app.py — 
+   integrate carefully):
+
+   ADD these new functions (paste verbatim from Codex):
+   - _section_ai_analysis()
+   - _render_outcome_summary_panel()
+   - _render_smart_cross_cut_suggestions_panel()
+   - _render_winner_profile_panel()
+   - _truncate()
+   - _extract_chart_rows() (helper at line 744 in Codex output)
+
+   ADD to top-level imports in app.py:
+   from src.cross_cut_suggestions import score_suggestions_for_outcome
+   from src.models import OutcomeSegmentationResult
+
+   ADD to main() function, after _render_results_section():
+   _section_ai_analysis()
+
+   ADD to SESSION_DEFAULTS dict:
+   "segmentation_result": None,
+
+STEP 1: RUN TESTS
+
+pytest tests/test_stage_d.py -v
+pytest tests/test_cross_cut_suggestions.py -v
+pytest --tb=short -q
+
+Expected: 5 new Stage D tests pass, 12 cross cut suggestion tests pass, 
+full suite at 285+ tests passing.
+
+If any fail, paste the full error back immediately.
+
+STEP 2: VERIFY NO NESTED EXPANDERS
+
+Search app.py for all st.expander (or app.expander) calls. 
+Confirm that none of the new expanders in 
+_render_smart_cross_cut_suggestions_panel() contain calls to 
+_render_insight_section() inside them.
+
+Report the total expander count before and after this change.
+
+STEP 3: SMOKE TEST
+
+1. Upload sample data and run analysis
+2. Run at least one cross cut in Section 4
+3. In the Survey Classification section, select an outcome variable 
+   and run segmentation (use Q24 or similar balanced question as outcome)
+4. Scroll to Section 5 "AI Analysis" and verify:
+
+   Sub-panel A (Outcome Analysis):
+   - 4 metrics render (Outcome Variable, Winners, Losers, Differentiators)
+   - Top 10 differentiator cards render with Cramér's V, Winner Rate, Lift
+   - "Generate AI insight" button appears below each differentiator card
+   - Click one button and confirm insight title + text renders
+
+   Sub-panel B (Smart Cross-cut Suggestions):
+   - Suggestions appear ranked by outcome_relevance_score descending
+   - Each expander shows business question, source questions, score, type
+   - Confirm scores are not all 0.1 (some should match differentiators)
+
+   Sub-panel C (Winner Profile):
+   - Winner profile traits render with winner/loser rate metrics
+   - "Generate AI insight" button appears at bottom
+   - Click it and confirm winner profile insight renders
+
+5. Report back:
+   - Test counts (Stage D, cross cut suggestions, full suite)
+   - Expander count before/after
+   - Sub-panel A: number of differentiator cards rendered
+   - Sub-panel B: top 3 suggestion scores
+   - Sub-panel C: number of winner profile traits rendered
+   - Any errors or blank sections
+
+Do not proceed to Stage E until I confirm Stage D is working.
