@@ -2875,6 +2875,39 @@ def _section_survey_classification() -> None:
             except Exception as exc:  # noqa: BLE001 - never block the UI on detection.
                 app.warning(f"Survey type detection failed: {type(exc).__name__}: {exc}")
                 return
+
+            # Penalise imbalanced outcome candidates so they sort lower in
+            # the dropdown and don't get auto-selected as the primary
+            # outcome. The detector itself is data-distribution-blind.
+            from dataclasses import replace
+
+            decoded_df = app.session_state["decoded_df"]
+
+            def _imbalance_penalty(opt) -> float:
+                if opt.question_id not in decoded_df.columns:
+                    return 0.0
+                col = decoded_df[opt.question_id].dropna()
+                if len(col) == 0:
+                    return 0.0
+                top_pct = col.value_counts(normalize=True).iloc[0]
+                if top_pct >= 0.95:
+                    return 0.4
+                if top_pct >= 0.90:
+                    return 0.2
+                return 0.0
+
+            rebalanced = sorted(
+                survey_type_result.all_eligible_questions,
+                key=lambda opt: opt.relevance_score - _imbalance_penalty(opt),
+                reverse=True,
+            )
+            best_id = rebalanced[0].question_id if rebalanced else None
+            survey_type_result = replace(
+                survey_type_result,
+                all_eligible_questions=rebalanced,
+                outcome_question_id=best_id,
+            )
+
             app.session_state["survey_type_result"] = survey_type_result
             if app.session_state.get("outcome_variable_id") is None:
                 app.session_state["outcome_variable_id"] = (
@@ -2911,15 +2944,32 @@ def _section_survey_classification() -> None:
         app.divider()
         return
 
+    decoded_df_for_labels = app.session_state.get("decoded_df")
+
+    def _outcome_label(opt) -> str:
+        truncated = opt.question_text[:70] + (
+            "\u2026" if len(opt.question_text) > 70 else ""
+        )
+        base = f"{opt.question_id}: {truncated}"
+        score = f"score: {opt.relevance_score:.2f}"
+        if (
+            decoded_df_for_labels is not None
+            and opt.question_id in decoded_df_for_labels.columns
+        ):
+            col = decoded_df_for_labels[opt.question_id].dropna()
+            if len(col) > 0:
+                top_val_pct = col.value_counts(normalize=True).iloc[0]
+                if top_val_pct >= 0.90:
+                    return (
+                        f"\u26A0\uFE0F {base} ({score} \u2014 "
+                        f"{top_val_pct:.0%} single value, likely too imbalanced)"
+                    )
+        return f"{base} ({score})"
+
     option_labels: list[str] = []
     option_ids: list[str | None] = []
     for opt in all_options:
-        truncated = opt.question_text[:80] + (
-            "\u2026" if len(opt.question_text) > 80 else ""
-        )
-        option_labels.append(
-            f"{opt.question_id}: {truncated} (score: {opt.relevance_score:.2f})"
-        )
+        option_labels.append(_outcome_label(opt))
         option_ids.append(opt.question_id)
     option_labels.append("None \u2014 no outcome variable")
     option_ids.append(None)

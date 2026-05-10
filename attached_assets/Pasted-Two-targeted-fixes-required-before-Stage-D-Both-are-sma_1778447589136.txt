@@ -1,0 +1,112 @@
+Two targeted fixes required before Stage D. Both are small changes.
+
+FIX 1 — Imbalance warning in outcome variable dropdown
+
+In _section_survey_classification(), in the block that builds the outcome 
+variable dropdown options, modify the option label construction to include 
+an imbalance hint.
+
+Current label construction:
+    option_labels = [
+        f"{opt.question_id}: {opt.question_text[:80]}{'...' if len(opt.question_text) > 80 else ''} (score: {opt.relevance_score:.2f})"
+        for opt in all_options
+    ]
+
+Replace with a helper that computes the winner/loser split for each 
+candidate and appends a warning if imbalanced:
+
+    def _outcome_label(opt, decoded_df):
+        base = f"{opt.question_id}: {opt.question_text[:70]}{'...' if len(opt.question_text) > 70 else ''}"
+        score = f"score: {opt.relevance_score:.2f}"
+        # Check imbalance — only for questions present in decoded_df
+        if opt.question_id in decoded_df.columns:
+            col = decoded_df[opt.question_id].dropna()
+            if len(col) > 0:
+                top_val_pct = col.value_counts(normalize=True).iloc[0]
+                if top_val_pct >= 0.90:
+                    return f"⚠️ {base} ({score} — {top_val_pct:.0%} single value, likely too imbalanced)"
+        return f"{base} ({score})"
+
+    option_labels = [
+        _outcome_label(opt, st.session_state.active_df)
+        for opt in all_options
+    ]
+
+This will flag Q42 as "⚠️ ... (98% single value, likely too imbalanced)" 
+so the user sees it before selecting and running segmentation.
+
+FIX 2 — Deprioritize imbalanced candidates in candidate_outcome_questions
+
+In src/survey_type_detector.py, in _score_outcome_relevance(), the 
+function has no awareness of actual data distribution. We cannot fix that 
+there (it doesn't receive decoded_df). 
+
+Instead, in detect_survey_type() in app.py wiring (the block in 
+_section_survey_classification() that calls detect_survey_type()), after 
+the result is computed, re-sort all_eligible_questions to penalise 
+imbalanced questions:
+
+After:
+    survey_type_result = detect_survey_type(
+        schema=st.session_state.schema,
+        decoded_df=st.session_state.decoded_df
+    )
+    st.session_state.survey_type_result = survey_type_result
+    st.session_state.outcome_variable_id = survey_type_result.outcome_question_id
+
+Add:
+    # Penalise imbalanced outcome candidates so they sort lower in dropdown
+    from src.models import OutcomeVariableOption
+    
+    def _imbalance_penalty(opt, decoded_df):
+        if opt.question_id not in decoded_df.columns:
+            return 0.0
+        col = decoded_df[opt.question_id].dropna()
+        if len(col) == 0:
+            return 0.0
+        top_pct = col.value_counts(normalize=True).iloc[0]
+        if top_pct >= 0.95:
+            return 0.4   # severe imbalance — drop score significantly
+        if top_pct >= 0.90:
+            return 0.2   # moderate imbalance
+        return 0.0
+    
+    rebalanced = sorted(
+        survey_type_result.all_eligible_questions,
+        key=lambda opt: opt.relevance_score - _imbalance_penalty(opt, st.session_state.decoded_df),
+        reverse=True,
+    )
+    
+    # Also update outcome_question_id if the top candidate after penalty differs
+    best_id = rebalanced[0].question_id if rebalanced else None
+    if best_id != survey_type_result.outcome_question_id:
+        st.session_state.outcome_variable_id = best_id
+    
+    # Store rebalanced list back — we replace only all_eligible_questions
+    # SurveyTypeResult is frozen so rebuild with updated field
+    from dataclasses import replace
+    survey_type_result = replace(
+        survey_type_result,
+        all_eligible_questions=rebalanced,
+        outcome_question_id=best_id,
+    )
+    st.session_state.survey_type_result = survey_type_result
+    st.session_state.outcome_variable_id = survey_type_result.outcome_question_id
+
+VERIFICATION:
+
+1. Run pytest --tb=short -q — confirm still 280/280
+2. Re-run the pipeline against sample data and confirm:
+   - Q42 now shows ⚠️ prefix in the dropdown
+   - Q42 is no longer the auto-selected outcome (penalised score should 
+     drop it below more balanced candidates)
+   - The new auto-selected outcome_question_id (report what it is)
+3. Confirm no new expander nesting introduced
+4. Confirm SurveyTypeResult dataclass replace() works without error 
+   (it is frozen=True so replace() from dataclasses is the correct method)
+
+Return:
+- Test count
+- New auto-selected outcome_question_id after penalty
+- The label text for Q42 in the dropdown (confirm ⚠️ prefix present)
+- Any errors
