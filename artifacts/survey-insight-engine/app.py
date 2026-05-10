@@ -69,6 +69,9 @@ SESSION_DEFAULTS = {
     "pending_per_question_filter": {},
     "global_filter_error": None,
     "per_question_filter_errors": {},
+    "data_map": None,
+    "survey_type_result": None,
+    "outcome_variable_id": None,
 }
 
 
@@ -1424,6 +1427,10 @@ def _run_pipeline(
     app = _require_streamlit()
     app.session_state["decoded_df"] = dataframe
     app.session_state["active_df"] = dataframe
+    app.session_state["data_map"] = data_map
+    app.session_state["survey_type_result"] = None
+    app.session_state["outcome_variable_id"] = None
+    app.session_state.pop("outcome_variable_selector", None)
     app.session_state["global_filter_state"] = GlobalFilterState()
     app.session_state["global_filter_stats"] = None
     app.session_state["global_filter_rows"] = []
@@ -2806,6 +2813,132 @@ def _section_global_filter() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Section 2.5 — Survey type classification + outcome variable selector
+# ---------------------------------------------------------------------------
+
+
+def _section_survey_classification() -> None:
+    """Detect survey type after first run and let the user pick an outcome variable.
+
+    Detection is deterministic and cached in ``session_state.survey_type_result``;
+    it only runs once per uploaded survey. The outcome variable defaults to the
+    detector's top suggestion but can be overridden via the dropdown below.
+    """
+    app = _require_streamlit()
+    if not app.session_state.get("run_complete"):
+        return
+
+    data_map = app.session_state.get("data_map")
+    if data_map is None:
+        return
+
+    if app.session_state.get("survey_type_result") is None:
+        with app.spinner("Detecting survey type..."):
+            from src.survey_type_detector import detect_survey_type
+
+            try:
+                survey_type_result = detect_survey_type(
+                    schema=data_map,
+                    decoded_df=app.session_state["decoded_df"],
+                )
+            except Exception as exc:  # noqa: BLE001 - never block the UI on detection.
+                app.warning(f"Survey type detection failed: {type(exc).__name__}: {exc}")
+                return
+            app.session_state["survey_type_result"] = survey_type_result
+            if app.session_state.get("outcome_variable_id") is None:
+                app.session_state["outcome_variable_id"] = (
+                    survey_type_result.outcome_question_id
+                )
+
+    result = app.session_state["survey_type_result"]
+    app.markdown("### \U0001F4CA Survey Classification")
+    col1, col2 = app.columns([1, 2])
+    with col1:
+        app.metric("Survey Type", result.survey_type.replace("_", " ").title())
+        app.metric("Confidence", f"{result.confidence:.0%}")
+    with col2:
+        app.markdown("**Detection Signals:**")
+        for signal in result.signals[:3]:
+            app.caption(f"\u2022 {signal}")
+        if len(result.signals) > 3:
+            with app.expander(f"Show {len(result.signals) - 3} more signals"):
+                for signal in result.signals[3:]:
+                    app.caption(f"\u2022 {signal}")
+
+    app.markdown("---")
+    app.markdown("### \U0001F3AF Outcome Variable Selection")
+    app.info(
+        "Select the primary outcome variable for segmentation analysis. "
+        "Auto-selected based on survey type; you can override."
+    )
+
+    all_options = result.all_eligible_questions
+    if not all_options:
+        app.warning(
+            "No measurable questions detected. Segmentation analysis will be unavailable."
+        )
+        app.divider()
+        return
+
+    option_labels: list[str] = []
+    option_ids: list[str | None] = []
+    for opt in all_options:
+        truncated = opt.question_text[:80] + (
+            "\u2026" if len(opt.question_text) > 80 else ""
+        )
+        option_labels.append(
+            f"{opt.question_id}: {truncated} (score: {opt.relevance_score:.2f})"
+        )
+        option_ids.append(opt.question_id)
+    option_labels.append("None \u2014 no outcome variable")
+    option_ids.append(None)
+
+    current_outcome = app.session_state.get("outcome_variable_id")
+    default_index = (
+        option_ids.index(current_outcome) if current_outcome in option_ids else 0
+    )
+
+    selected_label = app.selectbox(
+        "Outcome Variable",
+        options=option_labels,
+        index=default_index,
+        help="Auto-selected based on survey type. Override if needed.",
+        key="outcome_variable_selector",
+    )
+    selected_id = option_ids[option_labels.index(selected_label)]
+    if selected_id != app.session_state.get("outcome_variable_id"):
+        app.session_state["outcome_variable_id"] = selected_id
+        app.rerun()
+
+    if selected_id is not None:
+        selected_opt = next(
+            opt for opt in all_options if opt.question_id == selected_id
+        )
+        app.success(
+            f"**Selected:** {selected_opt.question_id} \u2014 {selected_opt.reason}"
+        )
+    else:
+        app.warning(
+            "No outcome variable selected. Segmentation analysis will be "
+            "unavailable in later stages."
+        )
+
+    if len(result.candidate_outcome_questions) > 1:
+        with app.expander(
+            f"\U0001F4CB Top {len(result.candidate_outcome_questions)} "
+            "Outcome Candidates (auto-ranked)"
+        ):
+            for opt in result.candidate_outcome_questions:
+                app.markdown(f"**{opt.question_id}** \u2014 {opt.question_text}")
+                app.caption(
+                    f"Relevance: {opt.relevance_score:.2f} | {opt.reason}"
+                )
+                app.markdown("")
+
+    app.divider()
+
+
+# ---------------------------------------------------------------------------
 # Section 3 — Single cuts
 # ---------------------------------------------------------------------------
 
@@ -3168,6 +3301,7 @@ def main() -> None:
     app.divider()
     _section_global_filter()
     app.divider()
+    _section_survey_classification()
     _section_single_cuts()
     app.divider()
     _section_cross_cuts()

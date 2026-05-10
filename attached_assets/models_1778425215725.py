@@ -571,32 +571,80 @@ class FilterSpec:
 
     filter_question_id: str
     filter_value: int | str | None = None
-    filter_values: tuple[int | str, ...] | None = None
 
     def __post_init__(self) -> None:
         _require_non_empty_string(self.filter_question_id, "filter_question_id")
 
     def is_breakdown(self) -> bool:
-        """True if this filter has no specific value(s).
+        """True if this filter has no specific value."""
+        return self.filter_value is None
 
-        Empty ``filter_values`` is treated the same as ``None`` to keep
-        ``is_breakdown()`` consistent with ``get_effective_values()``.
-        """
-        if self.filter_value is not None:
-            return False
-        return not self.filter_values
 
-    def get_effective_values(self) -> list | None:
-        """Return the list of values to filter on, or None for breakdown.
+@dataclass(frozen=True, slots=True)
+class InsightResult:
+    """AI-generated title and insight for a computed table.
 
-        ``filter_value`` (single) takes precedence over ``filter_values`` (multi)
-        when both are set, preserving backward-compatible semantics.
-        """
-        if self.filter_value is not None:
-            return [self.filter_value]
-        if self.filter_values:
-            return list(self.filter_values)
-        return None
+    The title is a 5-10 word descriptive label. The insight is a 2-3 sentence
+    observation grounded strictly in the table data. Numbers in the insight are
+    read from the table; the AI never computes anything.
+
+    If the API call failed or PORTKEY_API_KEY is unset, was_template is True and
+    the title/insight are fallback values. The caller can display them as-is and
+    optionally show a small template badge.
+    """
+
+    title: str
+    insight: str
+    was_template: bool = False
+    model_used: str = ""
+    tokens_used: int = 0
+    error_message: str = ""
+
+    def __post_init__(self) -> None:
+        _require_non_empty_string(self.title, "title")
+        _require_non_empty_string(self.insight, "insight")
+
+
+@dataclass(frozen=True, slots=True)
+class OutcomeVariableOption:
+    """Candidate outcome variable surfaced for user selection."""
+
+    question_id: str
+    question_text: str
+    question_type: str
+    relevance_score: float
+    reason: str
+
+    def __post_init__(self) -> None:
+        _require_non_empty_string(self.question_id, "question_id")
+        _require_non_empty_string(self.question_text, "question_text")
+        _require_non_empty_string(self.question_type, "question_type")
+        _require_rate(self.relevance_score, "relevance_score")
+        _require_non_empty_string(self.reason, "reason")
+
+
+@dataclass(frozen=True, slots=True)
+class SurveyTypeResult:
+    """Deterministic survey type classification and outcome suggestions."""
+
+    survey_type: str
+    outcome_question_id: Optional[str]
+    confidence: float
+    signals: list[str]
+    candidate_outcome_questions: list[OutcomeVariableOption]
+    all_eligible_questions: list[OutcomeVariableOption]
+
+    def __post_init__(self) -> None:
+        _require_non_empty_string(self.survey_type, "survey_type")
+        if self.outcome_question_id is not None:
+            _require_non_empty_string(self.outcome_question_id, "outcome_question_id")
+        _require_rate(self.confidence, "confidence")
+        if not isinstance(self.signals, list):
+            raise ValueError("signals must be a list")
+        if not isinstance(self.candidate_outcome_questions, list):
+            raise ValueError("candidate_outcome_questions must be a list")
+        if not isinstance(self.all_eligible_questions, list):
+            raise ValueError("all_eligible_questions must be a list")
 
 
 @dataclass(frozen=True, slots=True)
@@ -627,19 +675,10 @@ class GlobalFilterState:
     def description(self) -> str:
         if not self.filters:
             return "(no global filter)"
-        parts: list[str] = []
-        for filter_spec in self.filters:
-            values = filter_spec.get_effective_values() or []
-            if len(values) == 1:
-                parts.append(
-                    f"{filter_spec.filter_question_id} == {values[0]!r}"
-                )
-            else:
-                parts.append(
-                    f"{filter_spec.filter_question_id} in "
-                    f"{[v for v in values]!r}"
-                )
-        return " AND ".join(parts)
+        return " AND ".join(
+            f"{filter_spec.filter_question_id} == {filter_spec.filter_value!r}"
+            for filter_spec in self.filters
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -712,70 +751,3 @@ class FilteredSingleCutResult:
                 "cross_cut_result required for cross_cut_breakdown mode"
             )
         _require_non_negative_int(self.filtered_n, "filtered_n")
-
-
-@dataclass(frozen=True, slots=True)
-class InsightResult:
-    """AI-generated title and insight for a computed table.
-
-    The title is a 5-10 word descriptive label. The insight is a 2-3 sentence
-    observation grounded strictly in the table data. Numbers in the insight are
-    read from the table; the AI never computes anything.
-
-    If the API call failed or PORTKEY_API_KEY is unset, was_template is True and
-    the title/insight are fallback values. The caller can display them as-is and
-    optionally show a small template badge.
-    """
-
-    title: str
-    insight: str
-    was_template: bool = False
-    model_used: str = ""
-    tokens_used: int = 0
-    error_message: str = ""
-
-    def __post_init__(self) -> None:
-        _require_non_empty_string(self.title, "title")
-        _require_non_empty_string(self.insight, "insight")
-
-
-@dataclass(frozen=True, slots=True)
-class OutcomeVariableOption:
-    """Candidate outcome variable surfaced for user selection."""
-
-    question_id: str
-    question_text: str
-    question_type: str
-    relevance_score: float
-    reason: str
-
-    def __post_init__(self) -> None:
-        _require_non_empty_string(self.question_id, "question_id")
-        _require_non_empty_string(self.question_text, "question_text")
-        _require_non_empty_string(self.question_type, "question_type")
-        _require_rate(self.relevance_score, "relevance_score")
-        _require_non_empty_string(self.reason, "reason")
-
-
-@dataclass(frozen=True, slots=True)
-class SurveyTypeResult:
-    """Deterministic survey type classification and outcome suggestions."""
-
-    survey_type: str
-    outcome_question_id: Optional[str]
-    confidence: float
-    signals: list[str]
-    candidate_outcome_questions: list[OutcomeVariableOption]
-    all_eligible_questions: list[OutcomeVariableOption]
-
-    def __post_init__(self) -> None:
-        _require_non_empty_string(self.survey_type, "survey_type")
-        if self.outcome_question_id is not None:
-            _require_non_empty_string(self.outcome_question_id, "outcome_question_id")
-        _require_rate(self.confidence, "confidence")
-        if not isinstance(self.signals, list):
-            raise ValueError("signals must be a list")
-        if not isinstance(self.candidate_outcome_questions, list):
-            raise ValueError("candidate_outcome_questions must be a list")
-        if not isinstance(self.all_eligible_questions, list):
-            raise ValueError("all_eligible_questions must be a list")
