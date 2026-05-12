@@ -620,8 +620,10 @@ class InsightResult:
     error_message: str = ""
 
     def __post_init__(self) -> None:
-        _require_non_empty_string(self.title, "title")
-        _require_non_empty_string(self.insight, "insight")
+        if not isinstance(self.title, str):
+            raise ValueError("title must be a string")
+        if not isinstance(self.insight, str):
+            raise ValueError("insight must be a string")
 
 
 @dataclass(frozen=True, slots=True)
