@@ -87,7 +87,6 @@ SESSION_DEFAULTS = {
     "outcome_variable_id": None,
     "segment_definition": None,
     "segmentation_result": None,
-    "active_section": "1",
 }
 
 
@@ -340,51 +339,10 @@ def _inject_global_css() -> None:
         return
 
     app.markdown(
-        '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/3.5.0/tabler-icons.min.css">',
-        unsafe_allow_html=True,
-    )
-
-    app.markdown(
         """
     <style>
     #MainMenu { visibility: hidden; }
     footer { visibility: hidden; }
-    header[data-testid="stHeader"] { display: none; }
-
-    .main .block-container {
-        padding-top: 0 !important;
-        padding-bottom: 1rem !important;
-        max-width: 100% !important;
-    }
-
-    .brand-header {
-        background: #CC0000;
-        color: #FFF;
-        padding: 12px 24px;
-        margin: 0 -1rem 16px -1rem;
-        display: flex;
-        align-items: center;
-        gap: 14px;
-        border-bottom: 1px solid #A30000;
-        font-family: Arial, sans-serif;
-    }
-    .brand-title { font-size: 15px; font-weight: 500; letter-spacing: 0.01em; }
-    .brand-sep { color: rgba(255,255,255,0.4); font-size: 14px; }
-    .brand-context { font-size: 12px; color: rgba(255,255,255,0.82); }
-    .brand-context strong { color: #FFF; font-weight: 500; }
-
-    section[data-testid="stSidebar"] { background: #FAFAFA; border-right: 0.5px solid #E5E5E5; }
-    section[data-testid="stSidebar"] .block-container { padding-top: 1rem; }
-
-    .sb-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; font-size: 13px; color: #444; border-left: 3px solid transparent; margin-bottom: 1px; cursor: default; }
-    .sb-item:hover { background: #F0F0F0; }
-    .sb-item.active { background: #FCEBEB !important; color: #CC0000 !important; border-left-color: #CC0000 !important; font-weight: 500; }
-    .sb-count { font-size: 11px; color: #999; background: #EFEFEF; padding: 1px 7px; border-radius: 10px; }
-    .sb-item.active .sb-count { color: #CC0000; background: #FADADA; }
-    .sb-section { padding: 16px 16px 6px; font-size: 10px; font-weight: 600; color: #999; text-transform: uppercase; letter-spacing: 0.1em; }
-    .sb-runlog { margin-top: 16px; padding: 12px 16px; border-top: 1px solid #E5E5E5; font-size: 12px; color: #666; }
-    .sb-runlog-row { display: flex; justify-content: space-between; padding: 4px 0; }
-    .sb-runlog-row strong { color: #1A1A1A; font-weight: 500; }
 
     .insight-card { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; background: #FFF; border: 0.5px solid #E5E5E5; border-left: 3px solid #CC0000; border-radius: 6px; margin-bottom: 8px; font-family: Arial, sans-serif; }
     .insight-icon { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; background: #FCEBEB; color: #CC0000; border-radius: 4px; font-size: 14px; flex-shrink: 0; margin-top: 1px; }
@@ -403,146 +361,30 @@ def _inject_global_css() -> None:
 
     div[data-testid="stDataFrame"] { font-size: 12px; }
 
-    div[data-testid="stButton"] button { font-size: 12px; padding: 5px 12px; border-radius: 6px; }
-    div[data-testid="stButton"] button[kind="primary"] { background: #CC0000; border-color: #CC0000; }
-    div[data-testid="stButton"] button[kind="primary"]:hover { background: #B30000; border-color: #B30000; }
-
-    /* Streamlit sidebar padding override */
-    section[data-testid="stSidebar"] > div:first-child {
-        padding-top: 0 !important;
-        padding-left: 0 !important;
-        padding-right: 0 !important;
+    /* Nav bar buttons */
+    div[data-testid="stButton"] button {
+        border-radius: 6px !important;
+        font-size: 12px !important;
+        padding: 6px 8px !important;
     }
-    section[data-testid="stSidebar"] .stMarkdown {
-        padding-left: 0 !important;
-        padding-right: 0 !important;
+    div[data-testid="stButton"] button[kind="primary"] {
+        background: #CC0000 !important;
+        border-color: #CC0000 !important;
+        color: #FFF !important;
     }
-    section[data-testid="stSidebar"] .element-container {
-        margin-bottom: 0 !important;
-    }
-    section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"] {
-        gap: 0 !important;
-    }
-
-    /* Sidebar radio group - reset */
-    section[data-testid="stSidebar"] .stRadio > label {
-        display: none !important;
-    }
-    section[data-testid="stSidebar"] .stRadio > div {
-        gap: 0 !important;
-        display: flex !important;
-        flex-direction: column !important;
-    }
-    section[data-testid="stSidebar"] .stRadio > div > label > div:first-child {
-        display: none !important;
-    }
-    section[data-testid="stSidebar"] .stRadio > div > label {
-        padding: 9px 16px !important;
-        font-size: 13px !important;
-        font-family: Arial, sans-serif !important;
-        color: #444 !important;
-        border-left: 3px solid transparent !important;
-        border-radius: 0 !important;
-        cursor: pointer !important;
-        background: transparent !important;
-        display: flex !important;
-        align-items: center !important;
-        margin: 0 !important;
-        width: 100% !important;
-    }
-    section[data-testid="stSidebar"] .stRadio > div > label:hover {
-        background: #F5F5F5 !important;
-        color: #1A1A1A !important;
-    }
-    section[data-testid="stSidebar"] .stRadio > div > label.nav-active,
-    section[data-testid="stSidebar"] .stRadio > div > label:has(input:checked) {
-        background: #FCEBEB !important;
-        border-left-color: #CC0000 !important;
-        color: #CC0000 !important;
-        font-weight: 500 !important;
+    div[data-testid="stButton"] button[kind="primary"]:hover {
+        background: #B30000 !important;
+        border-color: #B30000 !important;
     }
     </style>
-    <script>
-    function applyNavActive() {
-        const labels = document.querySelectorAll(
-            'section[data-testid="stSidebar"] .stRadio > div > label'
-        );
-        labels.forEach(label => {
-            const input = label.querySelector('input[type="radio"]');
-            label.classList.remove('nav-active');
-            if (input && input.checked) {
-                label.classList.add('nav-active');
-            }
-        });
-    }
-    document.addEventListener('DOMContentLoaded', applyNavActive);
-    const observer = new MutationObserver(applyNavActive);
-    observer.observe(document.body, { subtree: true, childList: true });
-    setTimeout(applyNavActive, 500);
-    setTimeout(applyNavActive, 1500);
-    </script>
     """,
         unsafe_allow_html=True,
     )
-    # Components iframe runs scripts; CSS :has() handles modern browsers,
-    # this JS handles older ones by toggling .nav-active on radio change.
-    try:
-        from streamlit.components.v1 import html as _components_html
-        _components_html(
-            """
-            <script>
-            (function() {
-                const doc = window.parent ? window.parent.document : document;
-                function applyNavActive() {
-                    const labels = doc.querySelectorAll(
-                        'section[data-testid=\"stSidebar\"] .stRadio > div > label'
-                    );
-                    labels.forEach(label => {
-                        const input = label.querySelector('input[type=\"radio\"]');
-                        if (input && input.checked) {
-                            label.classList.add('nav-active');
-                        } else {
-                            label.classList.remove('nav-active');
-                        }
-                    });
-                }
-                applyNavActive();
-                const observer = new MutationObserver(applyNavActive);
-                observer.observe(doc.body, { subtree: true, childList: true, attributes: true });
-            })();
-            </script>
-            """,
-            height=0,
-        )
-    except Exception:
-        pass
     app.session_state["_global_css_injected"] = True
-
 
 def _inject_theme_css() -> None:
     """Backwards-compatible alias retained for any internal callers."""
     _inject_global_css()
-
-
-def _render_brand_header() -> None:
-    app = _require_streamlit()
-    schema = app.session_state.get("schema")
-    if schema is not None and hasattr(schema, "total_respondents"):
-        n = schema.total_respondents
-        context = f"<strong>Dataset loaded</strong> · {n:,} respondents"
-    else:
-        context = "<strong>No dataset loaded</strong> · upload to begin"
-
-    app.markdown(
-        f"""
-    <div class="brand-header">
-        <div class="brand-title">Survey Analysis Engine</div>
-        <div class="brand-sep">/</div>
-        <div class="brand-context">{context}</div>
-    </div>
-    """,
-        unsafe_allow_html=True,
-    )
 
 
 def _section_header(
@@ -1560,7 +1402,6 @@ def _drain_pending_actions() -> None:
             app.session_state["global_filter_state"] = state
             app.session_state["global_filter_stats"] = stats
             app.session_state["active_df"] = filtered_df
-            app.session_state["active_section"] = "3"
             _invalidate_stage_c_state()
             _rerun_single_cuts_on_active_df()
             _clear_all_cached_insights()
@@ -1723,7 +1564,6 @@ def _run_pipeline(
     app.session_state["filtered_workbook_bytes"] = None
     _clear_all_cached_insights()
     app.session_state["run_complete"] = True
-    app.session_state["active_section"] = "2"
     status.update(label="Analysis complete.", state="complete")
 
 
@@ -1766,7 +1606,6 @@ def _run_cross_cut_specs(specs: list[Any]) -> None:
     app.session_state["cross_cut_results"] = list(existing.values())
     app.session_state["cross_cut_skips"].extend(skips)
     app.session_state["cross_cut_only_bytes"] = None
-    app.session_state["active_section"] = "4"
     _refresh_full_workbook()
 
 
@@ -2628,109 +2467,6 @@ def _render_manual_cross_cut() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _render_sidebar() -> None:
-    """Clickable workflow navigator + run-log card."""
-    app = _require_streamlit()
-    has_data = app.session_state.get("schema") is not None
-    has_results = bool(app.session_state.get("results"))
-    has_crosscuts = bool(app.session_state.get("cross_cut_results"))
-    has_segmentation = app.session_state.get("segmentation_result") is not None
-    n_singlecuts = len(app.session_state.get("results", []))
-    n_crosscuts = len(app.session_state.get("cross_cut_results", []))
-    seg = app.session_state.get("segmentation_result")
-    n_diffs = len(seg.differentiators) if seg else 0
-    gf_state = app.session_state.get("global_filter_state")
-    n_filters = len(gf_state.filters) if gf_state is not None and hasattr(gf_state, "filters") else 0
-
-    def _step_label(num: str, name: str, count: str, done: bool) -> str:
-        icon = "✓" if done else "○"
-        return f"{icon}  {num}. {name}  ·  {count}"
-
-    section_ids = ["1", "2", "3", "4", "5"]
-    id_to_label = {
-        "1": _step_label("1", "Upload",        "done" if has_data else "—",          has_data),
-        "2": _step_label("2", "Global filter", str(n_filters) if n_filters else "—", n_filters > 0),
-        "3": _step_label("3", "Single cuts",   str(n_singlecuts) if n_singlecuts else "—", n_singlecuts > 0),
-        "4": _step_label("4", "Cross cuts",    str(n_crosscuts) if n_crosscuts else "—",   n_crosscuts > 0),
-        "5": _step_label("5", "AI analysis",   str(n_diffs) if n_diffs else "—",          has_segmentation),
-    }
-
-    current_id = app.session_state.get("active_section", "1")
-    if current_id not in section_ids:
-        current_id = "1"
-    # Sync widget state with active_section so auto-advance is authoritative
-    if app.session_state.get("sidebar_nav_radio") != current_id:
-        app.session_state["sidebar_nav_radio"] = current_id
-
-    with app.sidebar:
-        app.markdown(
-            """
-            <div style="padding: 4px 0 14px; border-bottom: 1px solid #E5E5E5; margin-bottom: 8px;">
-                <div style="font-size: 13px; font-weight: 600; color: #1A1A1A;">Survey Analysis Engine</div>
-                <div style="font-size: 11px; color: #888; margin-top: 2px;">Workflow navigator</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        app.markdown(
-            '<div style="font-size: 10px; font-weight: 600; color: #999; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px;">Workflow</div>',
-            unsafe_allow_html=True,
-        )
-
-        chosen_id = app.radio(
-            label="Workflow steps",
-            options=section_ids,
-            format_func=lambda sid: id_to_label[sid],
-            key="sidebar_nav_radio",
-            label_visibility="collapsed",
-        )
-
-        if chosen_id != current_id:
-            app.session_state["active_section"] = chosen_id
-            app.rerun()
-
-        if seg is not None:
-            laggard_label = seg.segment_definition.loser_label
-            app.markdown(
-                '<div style="font-size: 10px; font-weight: 600; color: #999; text-transform: uppercase; letter-spacing: 0.1em; margin: 20px 0 6px;">Last run</div>',
-                unsafe_allow_html=True,
-            )
-            app.markdown(
-                f"""
-                <div style="padding: 10px 12px; background: #FFF; border: 0.5px solid #E5E5E5; border-radius: 6px; font-size: 12px;">
-                    <div style="display: flex; justify-content: space-between; padding: 3px 0;">
-                        <span style="color: #888;">Outcome</span>
-                        <strong style="color: #1A1A1A; font-weight: 500;">{seg.outcome_question_id}</strong>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; padding: 3px 0;">
-                        <span style="color: #888;">Winners</span>
-                        <strong style="color: #1A1A1A; font-weight: 500;">{seg.winner_n:,}</strong>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; padding: 3px 0;">
-                        <span style="color: #888;">{laggard_label}s</span>
-                        <strong style="color: #1A1A1A; font-weight: 500;">{seg.loser_n:,}</strong>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; padding: 3px 0;">
-                        <span style="color: #888;">Differentiators</span>
-                        <strong style="color: #CC0000; font-weight: 500;">{n_diffs}</strong>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        else:
-            app.markdown(
-                """
-                <div style="padding: 12px 12px; margin-top: 16px; font-size: 11px;
-                     color: #999; border-top: 1px solid #E5E5E5; line-height: 1.5;">
-                    Run segmentation in step 5 to see results here.
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-
 def _section_upload() -> None:
     app = _require_streamlit()
     _section_header("1", SECTION_UPLOAD, anchor="section-1", meta="CSV \u00b7 XLSX \u00b7 DOCX")
@@ -3369,7 +3105,6 @@ def _render_segment_definition_ui() -> None:
                 for audit in local_audit:
                     calc_log.record(audit)
             app.session_state["segmentation_result"] = seg_result
-            app.session_state["active_section"] = "5"
             app.rerun()
 
 
@@ -4094,38 +3829,79 @@ def _render_winner_profile_panel(seg: OutcomeSegmentationResult) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _render_nav_bar() -> None:
+    """Horizontal navigation bar with section tabs."""
+    app = _require_streamlit()
+
+    n_singlecuts = len(app.session_state.get("results", []))
+    n_crosscuts = len(app.session_state.get("cross_cut_results", []))
+    seg = app.session_state.get("segmentation_result")
+    n_diffs = len(seg.differentiators) if seg else 0
+    gf_state = app.session_state.get("global_filter_state")
+    n_filters = len(gf_state.filters) if gf_state is not None and hasattr(gf_state, "filters") else 0
+    has_data = app.session_state.get("schema") is not None
+
+    valid_ids = {"upload", "filter", "singlecuts", "crosscuts", "ai", "downloads"}
+    if app.session_state.get("active_section") not in valid_ids:
+        app.session_state["active_section"] = "upload"
+
+    tabs = [
+        ("upload",     "📤 Upload"        + ("  ✓" if has_data else "")),
+        ("filter",     "🔍 Filter"        + (f"  ({n_filters})" if n_filters else "")),
+        ("singlecuts", "📊 Single cuts"   + (f"  ({n_singlecuts})" if n_singlecuts else "")),
+        ("crosscuts",  "🔀 Cross cuts"    + (f"  ({n_crosscuts})" if n_crosscuts else "")),
+        ("ai",         "🧠 AI analysis"   + (f"  ({n_diffs})" if n_diffs else "")),
+        ("downloads",  "⬇️ Downloads"),
+    ]
+
+    cols = app.columns(len(tabs))
+    for i, (section_id, label) in enumerate(tabs):
+        is_active = app.session_state["active_section"] == section_id
+        button_type = "primary" if is_active else "secondary"
+        if cols[i].button(
+            label,
+            key=f"navbtn_{section_id}",
+            type=button_type,
+            use_container_width=True,
+        ):
+            app.session_state["active_section"] = section_id
+            app.rerun()
+
+
 def main() -> None:
     app = _require_streamlit()
     app.set_page_config(
         page_title=APP_TITLE,
         page_icon="📊",
         layout="wide",
-        initial_sidebar_state="expanded",
+        initial_sidebar_state="collapsed",
     )
     _initialise_session_state()
     _inject_global_css()
-    _render_brand_header()
     _drain_pending_actions()
-    _render_sidebar()
+
+    _render_nav_bar()
+    app.divider()
 
     gf_error = app.session_state.get("global_filter_error")
     if gf_error:
         app.error(f"Global filter failed: {gf_error}")
 
-    active = app.session_state.get("active_section", "1")
+    active = app.session_state.get("active_section", "upload")
 
-    if active == "1":
+    if active == "upload":
         _section_upload()
-    elif active == "2":
+    elif active == "filter":
         _section_global_filter()
-        _section_survey_classification()
-    elif active == "3":
-        _section_single_cuts()
-    elif active == "4":
-        _section_cross_cuts()
-    elif active == "5":
-        _section_ai_analysis()
         app.divider()
+        _section_survey_classification()
+    elif active == "singlecuts":
+        _section_single_cuts()
+    elif active == "crosscuts":
+        _section_cross_cuts()
+    elif active == "ai":
+        _section_ai_analysis()
+    elif active == "downloads":
         _section_downloads()
     else:
         _section_upload()
