@@ -424,53 +424,98 @@ def _inject_global_css() -> None:
         gap: 0 !important;
     }
 
-    /* Sidebar radio -> nav items */
-    section[data-testid="stSidebar"] div[role="radiogroup"] {
-        gap: 2px !important;
-        display: flex !important;
-        flex-direction: column !important;
-    }
-    section[data-testid="stSidebar"] div[role="radiogroup"] > label {
-        display: flex !important;
-        align-items: center !important;
-        padding: 9px 12px !important;
-        font-size: 13px !important;
-        color: #444 !important;
-        border-left: 3px solid transparent !important;
-        border-radius: 4px !important;
-        cursor: pointer !important;
-        background: transparent !important;
-        transition: background 0.1s ease !important;
-        margin: 0 !important;
-    }
-    section[data-testid="stSidebar"] div[role="radiogroup"] > label:hover {
-        background: #F0F0F0 !important;
-    }
-    section[data-testid="stSidebar"] div[role="radiogroup"] > label > div:first-child {
-        display: none !important;
-    }
-    section[data-testid="stSidebar"] div[role="radiogroup"] > label > div:last-child {
-        font-size: 13px !important;
-        font-family: Arial, sans-serif !important;
-        font-weight: 400 !important;
-        color: #444 !important;
-        width: 100% !important;
-    }
-    section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) {
-        background: #FCEBEB !important;
-        border-left-color: #CC0000 !important;
-    }
-    section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) > div:last-child {
-        color: #CC0000 !important;
-        font-weight: 500 !important;
-    }
+    /* Sidebar radio group - reset */
     section[data-testid="stSidebar"] .stRadio > label {
         display: none !important;
     }
+    section[data-testid="stSidebar"] .stRadio > div {
+        gap: 0 !important;
+        display: flex !important;
+        flex-direction: column !important;
+    }
+    section[data-testid="stSidebar"] .stRadio > div > label > div:first-child {
+        display: none !important;
+    }
+    section[data-testid="stSidebar"] .stRadio > div > label {
+        padding: 9px 16px !important;
+        font-size: 13px !important;
+        font-family: Arial, sans-serif !important;
+        color: #444 !important;
+        border-left: 3px solid transparent !important;
+        border-radius: 0 !important;
+        cursor: pointer !important;
+        background: transparent !important;
+        display: flex !important;
+        align-items: center !important;
+        margin: 0 !important;
+        width: 100% !important;
+    }
+    section[data-testid="stSidebar"] .stRadio > div > label:hover {
+        background: #F5F5F5 !important;
+        color: #1A1A1A !important;
+    }
+    section[data-testid="stSidebar"] .stRadio > div > label.nav-active,
+    section[data-testid="stSidebar"] .stRadio > div > label:has(input:checked) {
+        background: #FCEBEB !important;
+        border-left-color: #CC0000 !important;
+        color: #CC0000 !important;
+        font-weight: 500 !important;
+    }
     </style>
+    <script>
+    function applyNavActive() {
+        const labels = document.querySelectorAll(
+            'section[data-testid="stSidebar"] .stRadio > div > label'
+        );
+        labels.forEach(label => {
+            const input = label.querySelector('input[type="radio"]');
+            label.classList.remove('nav-active');
+            if (input && input.checked) {
+                label.classList.add('nav-active');
+            }
+        });
+    }
+    document.addEventListener('DOMContentLoaded', applyNavActive);
+    const observer = new MutationObserver(applyNavActive);
+    observer.observe(document.body, { subtree: true, childList: true });
+    setTimeout(applyNavActive, 500);
+    setTimeout(applyNavActive, 1500);
+    </script>
     """,
         unsafe_allow_html=True,
     )
+    # Components iframe runs scripts; CSS :has() handles modern browsers,
+    # this JS handles older ones by toggling .nav-active on radio change.
+    try:
+        from streamlit.components.v1 import html as _components_html
+        _components_html(
+            """
+            <script>
+            (function() {
+                const doc = window.parent ? window.parent.document : document;
+                function applyNavActive() {
+                    const labels = doc.querySelectorAll(
+                        'section[data-testid=\"stSidebar\"] .stRadio > div > label'
+                    );
+                    labels.forEach(label => {
+                        const input = label.querySelector('input[type=\"radio\"]');
+                        if (input && input.checked) {
+                            label.classList.add('nav-active');
+                        } else {
+                            label.classList.remove('nav-active');
+                        }
+                    });
+                }
+                applyNavActive();
+                const observer = new MutationObserver(applyNavActive);
+                observer.observe(doc.body, { subtree: true, childList: true, attributes: true });
+            })();
+            </script>
+            """,
+            height=0,
+        )
+    except Exception:
+        pass
     app.session_state["_global_css_injected"] = True
 
 
