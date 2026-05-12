@@ -1680,6 +1680,21 @@ def _run_pipeline(
 
     status.update(label=PIPELINE_STAGES[4], state="running")
     output_path = "/tmp/survey_analysis.xlsx"
+    from src.ai_insights import categorize_questions_into_themes
+
+    questions_for_themes = [
+        {
+            "question_id": q.canonical_id,
+            "question_text": q.question_text,
+            "question_type": q.question_type.value,
+            "is_demographic": getattr(q, "is_demographic", False),
+        }
+        for q in schema.questions
+    ]
+    themes = categorize_questions_into_themes(
+        questions_for_themes,
+        cache=_INSIGHT_CACHE,
+    )
     export_single_cuts(
         results=results,
         skips=skips,
@@ -1687,6 +1702,8 @@ def _run_pipeline(
         quality_report=quality_report,
         log=log,
         output_path=output_path,
+        themes=themes,
+        decoded_df=dataframe,
     )
 
     app = _require_streamlit()
@@ -1719,18 +1736,35 @@ def _run_pipeline(
 
 
 def _refresh_full_workbook() -> None:
+    from src.ai_insights import categorize_questions_into_themes
     from src.excel_exporter import export_single_cuts
 
     app = _require_streamlit()
+    schema = app.session_state["schema"]
+    questions_for_themes = [
+        {
+            "question_id": q.canonical_id,
+            "question_text": q.question_text,
+            "question_type": q.question_type.value,
+            "is_demographic": getattr(q, "is_demographic", False),
+        }
+        for q in schema.questions
+    ]
+    themes = categorize_questions_into_themes(
+        questions_for_themes,
+        cache=_INSIGHT_CACHE,
+    )
     export_single_cuts(
         results=app.session_state["results"],
         skips=app.session_state["skips"],
-        schema=app.session_state["schema"],
+        schema=schema,
         quality_report=app.session_state["quality_report"],
         log=app.session_state["log"],
         output_path=app.session_state["output_path"],
         cross_cut_results=app.session_state["cross_cut_results"],
         cross_cut_skips=app.session_state["cross_cut_skips"],
+        themes=themes,
+        decoded_df=app.session_state.get("decoded_df"),
     )
 
 

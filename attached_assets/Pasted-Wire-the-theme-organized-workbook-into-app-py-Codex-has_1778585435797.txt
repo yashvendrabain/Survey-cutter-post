@@ -1,0 +1,102 @@
+Wire the theme-organized workbook into app.py.
+
+Codex has delivered:
+- src/ai_insights.py — added categorize_questions_into_themes()
+- src/excel_exporter.py — full replacement with theme-organized sheets
+- tests/test_excel_exporter.py — 3 new tests
+- tests/test_ai_insights.py — 2 new tests
+
+STEP 1 — REPLACE FILES VERBATIM
+
+Replace these from the Codex attachments:
+1. src/ai_insights.py
+2. src/excel_exporter.py
+3. tests/test_excel_exporter.py
+4. tests/test_ai_insights.py
+
+STEP 2 — APPLY WIRING SNIPPET TO app.py
+
+Find where export_single_cuts() (or the workbook export function) 
+is currently called in app.py. Search:
+
+    grep -n "export_single_cuts\|write_workbook" artifacts/survey-insight-engine/app.py
+
+It will be in _run_pipeline() or _refresh_full_workbook() or 
+_handle_run() — wherever the workbook is generated.
+
+BEFORE that export call, add:
+
+    from src.ai_insights import categorize_questions_into_themes
+    
+    questions_for_themes = [
+        {
+            "question_id": q.canonical_id,
+            "question_text": q.question_text,
+            "question_type": q.question_type.value,
+            "is_demographic": q.is_demographic,
+        }
+        for q in schema.questions
+    ]
+    themes = categorize_questions_into_themes(
+        questions_for_themes,
+        cache=_INSIGHT_CACHE,
+    )
+
+Then update the export call to pass themes and decoded_df:
+
+    export_single_cuts(
+        results=results,
+        skips=skips,
+        schema=schema,
+        quality_report=quality_report,
+        log=log,
+        output_path=output_path,
+        themes=themes,
+        decoded_df=dataframe,  # use whatever variable holds the decoded df in this scope
+    )
+
+If you find multiple export call sites, apply the same wiring 
+pattern to each. Common variable names for the decoded df in 
+app.py: dataframe, decoded_df, df, active_df. Use whichever 
+variable is already in scope.
+
+STEP 3 — RUN TESTS
+
+pytest --tb=short -q
+
+Expected: 331 tests pass (matches Codex's run).
+
+STEP 4 — SMOKE TEST
+
+1. Upload sample data and run analysis
+2. Click the workbook download button
+3. Open the .xlsx file
+4. Verify:
+   - There is NO sheet per question (no SC_Q1_, SC_Q2_, etc.)
+   - Instead there are 4-8 theme sheets (e.g. "Revenue Growth", 
+     "Customer Strategy", "Demographics", etc.)
+   - Each theme sheet has:
+     - Red "THEME: ..." banner at top
+     - Demographic filter row with dropdown arrows (▼)
+     - Two custom filter slots
+     - Multiple question tables stacked vertically
+     - Each question table has Option / Count / % / Denominator
+     - % column shows formulas like =IFERROR(B5/SUBTOTAL(9,B5:B15),0)
+     - Denominator column shows =SUBTOTAL(9,B5:B15)
+   - Single_Cut_Index sheet shows which theme each question is on
+   - Run_Summary, Question_Metadata, Calculation_Log, Filter_Log 
+     all present
+
+5. In the Excel file, click one of the demographic dropdowns 
+   (e.g. Industry), pick a value. Verify the AutoFilter actually 
+   filters rows AND the % column updates to reflect only visible rows.
+
+Report:
+- Test count
+- Theme sheet count in the output workbook (paste sheet names)
+- One sample question — paste the formula text from the % column 
+  (should start with "=IFERROR" or similar)
+- Demographic dropdown filtering works? (yes/no)
+- % column recalculates when filter applied? (yes/no)
+- Any errors during export
+- Any visual issues in the Excel file

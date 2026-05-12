@@ -669,10 +669,8 @@ class TestExcelExporter(unittest.TestCase):
             workbook.sheetnames[-4:],
             ["Calculation_Log", "Filter_Log", "Data_Quality", "Warnings"],
         )
-        self.assertIn("SC_Q_SS_EXPORT", workbook.sheetnames)
-        self.assertIn("SC_Q_MS_EXPORT", workbook.sheetnames)
-        self.assertIn("SC_Q_NUM_EXPORT", workbook.sheetnames)
-        self.assertIn("SC_Q_GRID_EXPORT", workbook.sheetnames)
+        self.assertIn("All Questions", workbook.sheetnames)
+        self.assertFalse(any(name.startswith("SC_") for name in workbook.sheetnames))
 
     def test_run_summary_contains_correct_totals(self) -> None:
         output_path = self.export_workbook()
@@ -698,87 +696,154 @@ class TestExcelExporter(unittest.TestCase):
 
         self.assertEqual(workbook["Question_Metadata"].max_row, 7)
 
-    def test_single_cut_index_links_to_sc_sheets(self) -> None:
+    def test_single_cut_index_links_to_theme_sheets(self) -> None:
         output_path = self.export_workbook()
         workbook = load_workbook(output_path, read_only=False, data_only=True)
         self.addCleanup(workbook.close)
         ws = workbook["Single_Cut_Index"]
 
-        self.assertEqual(ws["D2"].value, "SC_Q_SS_EXPORT")
-        self.assertIsNotNone(ws["D2"].hyperlink)
-        self.assertIn("SC_Q_SS_EXPORT", workbook.sheetnames)
+        self.assertEqual(ws["D2"].value, "All Questions")
+        self.assertEqual(ws["E2"].value, "All Questions")
+        self.assertIsNotNone(ws["E2"].hyperlink)
+        self.assertIn("All Questions", workbook.sheetnames)
 
     def test_sc_sheet_for_single_select_has_distribution_table(self) -> None:
         output_path = self.export_workbook()
-        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        workbook = load_workbook(output_path, read_only=True, data_only=False)
         self.addCleanup(workbook.close)
-        ws = workbook["SC_Q_SS_EXPORT"]
+        ws = workbook["All Questions"]
 
-        self.assertEqual(ws["A9"].value, "FULL DISTRIBUTION (n=10)")
-        self.assertEqual([ws["A10"].value, ws["B10"].value, ws["C10"].value, ws["D10"].value], ["Code", "Label", "Count", "%"])
-        self.assertEqual(ws["A11"].value, 1)
-        self.assertEqual(ws["B11"].value, "Yes")
-        self.assertEqual(ws["C11"].value, 6)
-        self.assertEqual(ws["D11"].value, 0.6)
+        self.assertEqual(ws["A8"].value, "Q_SS_EXPORT - Single select export question")
+        self.assertEqual([ws["A11"].value, ws["B11"].value, ws["C11"].value, ws["D11"].value], ["Option", "Count", "%", "Denominator"])
+        self.assertEqual(ws["A12"].value, "Yes")
+        self.assertEqual(ws["B12"].value, 6)
+        self.assertIn("SUBTOTAL", ws["C12"].value)
 
     def test_sc_sheet_for_multi_select_has_selections_table(self) -> None:
         output_path = self.export_workbook()
-        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        workbook = load_workbook(output_path, read_only=True, data_only=False)
         self.addCleanup(workbook.close)
-        ws = workbook["SC_Q_MS_EXPORT"]
+        ws = workbook["All Questions"]
 
-        self.assertEqual(ws["A10"].value, "Sub-Column ID")
-        self.assertEqual(ws["C10"].value, "Count selected")
-        self.assertEqual(ws["D10"].value, "Selection %")
-        self.assertEqual(ws["A11"].value, "Q_MS_EXPORTr1")
-        self.assertEqual(ws["D11"].value, 0.5)
-        self.assertEqual(ws["A14"].value, "Respondents who answered any: 10")
+        self.assertEqual(ws["A16"].value, "Q_MS_EXPORT - Multi select export question")
+        self.assertEqual(ws["A19"].value, "Option")
+        self.assertEqual(ws["B19"].value, "Count")
+        self.assertEqual(ws["A20"].value, "First")
+        self.assertIn("SUBTOTAL", ws["C20"].value)
 
     def test_sc_sheet_for_numeric_has_stats_table(self) -> None:
         output_path = self.export_workbook()
         workbook = load_workbook(output_path, read_only=True, data_only=True)
         self.addCleanup(workbook.close)
-        ws = workbook["SC_Q_NUM_EXPORT"]
+        ws = workbook["All Questions"]
 
-        self.assertEqual(ws["A10"].value, "Statistic")
-        self.assertEqual(ws["B10"].value, "Value")
-        self.assertEqual(ws["A11"].value, "Mean")
-        self.assertEqual(ws["B11"].value, 5.5)
-        self.assertEqual(ws["A12"].value, "Median")
-        self.assertEqual(ws["B12"].value, 5.5)
+        self.assertEqual(ws["A24"].value, "Q_NUM_EXPORT - Numeric export question")
+        self.assertEqual(ws["A28"].value, "Valid N")
+        self.assertEqual(ws["B30"].value, 5.5)
+        self.assertEqual(ws["A31"].value, "Median")
+        self.assertEqual(ws["B31"].value, 5.5)
 
     def test_sc_sheet_for_grid_has_compact_distribution_table(self) -> None:
         output_path = self.export_workbook()
-        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        workbook = load_workbook(output_path, read_only=True, data_only=False)
         self.addCleanup(workbook.close)
-        ws = workbook["SC_Q_GRID_EXPORT"]
+        ws = workbook["All Questions"]
 
         self.assertEqual(
-            [ws["A10"].value, ws["B10"].value, ws["C10"].value, ws["D10"].value],
+            [ws["A43"].value, ws["B43"].value, ws["C43"].value, ws["D43"].value],
             ["Option", "Count", "%", "Denominator"],
         )
-        self.assertEqual(ws["A11"].value, "Grid first row")
-        self.assertEqual(ws["B11"].value, 10)
-        self.assertEqual(ws["D11"].value, 10)
-        self.assertEqual(ws["A13"].value, "TOTAL (selected at least once)")
-        self.assertEqual(ws["B13"].value, 20)
+        self.assertEqual(ws["A44"].value, "Grid first row")
+        self.assertEqual(ws["B44"].value, 10)
+        self.assertIn("SUBTOTAL", ws["D44"].value)
 
     def test_sc_sheet_has_autofilter(self) -> None:
         output_path = self.export_workbook()
         workbook = load_workbook(output_path, read_only=False, data_only=True)
         self.addCleanup(workbook.close)
-        ws = workbook["SC_Q_SS_EXPORT"]
+        ws = workbook["All Questions"]
 
-        self.assertIsNotNone(ws.auto_filter.ref)
+        self.assertGreater(len(ws.tables), 0)
 
     def test_sc_sheet_filter_block_no_filter(self) -> None:
         output_path = self.export_workbook()
         workbook = load_workbook(output_path, read_only=True, data_only=True)
         self.addCleanup(workbook.close)
-        ws = workbook["SC_Q_SS_EXPORT"]
+        ws = workbook["All Questions"]
 
-        self.assertEqual(ws["A1"].value, "Filter")
-        self.assertEqual(ws["B1"].value, "None (full sample)")
+        self.assertEqual(ws["A1"].value, "THEME: All Questions")
+        self.assertEqual(ws["A3"].value, "Optional custom filters (pick any question):")
+
+    def test_workbook_has_one_sheet_per_theme(self) -> None:
+        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = (
+            FIXTURE_DIR
+            / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
+        )
+        results, skips, schema, quality_report, log = make_export_fixture()
+        themes = {
+            "themes": [
+                {
+                    "name": "Theme One",
+                    "question_ids": ["Q_SS_EXPORT", "Q_MS_EXPORT"],
+                },
+                {"name": "Theme Two", "question_ids": ["Q_NUM_EXPORT"]},
+            ]
+        }
+        export_single_cuts(
+            results,
+            skips,
+            schema,
+            quality_report,
+            log,
+            str(output_path),
+            themes=themes,
+        )
+
+        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        self.addCleanup(workbook.close)
+
+        self.assertIn("Theme One", workbook.sheetnames)
+        self.assertIn("Theme Two", workbook.sheetnames)
+        self.assertFalse(any(name.startswith("SC_") for name in workbook.sheetnames))
+
+    def test_question_block_uses_subtotal_formula_for_percent(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=True, data_only=False)
+        self.addCleanup(workbook.close)
+        ws = workbook["All Questions"]
+
+        self.assertTrue(ws["C12"].value.startswith("="))
+        self.assertIn("SUBTOTAL", ws["C12"].value)
+
+    def test_demographic_filter_row_has_data_validation(self) -> None:
+        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = (
+            FIXTURE_DIR
+            / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
+        )
+        results, skips, schema, quality_report, log = make_export_fixture()
+        questions = tuple(
+            replace(question, is_demographic=question.canonical_id == "Q_SS_EXPORT")
+            for question in schema.questions
+        )
+        schema = replace(schema, questions=questions)
+        decoded_df = pd.DataFrame({"Q_SS_EXPORT": ["Yes", "No", "Yes"]})
+        export_single_cuts(
+            results,
+            skips,
+            schema,
+            quality_report,
+            log,
+            str(output_path),
+            decoded_df=decoded_df,
+        )
+
+        workbook = load_workbook(output_path, read_only=False, data_only=True)
+        self.addCleanup(workbook.close)
+        ws = workbook["Demographics"]
+
+        self.assertGreater(len(ws.data_validations.dataValidation), 0)
 
     def test_grid_single_select_excel_format(self) -> None:
         FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
@@ -799,18 +864,16 @@ class TestExcelExporter(unittest.TestCase):
 
         workbook = load_workbook(output_path, read_only=True, data_only=True)
         self.addCleanup(workbook.close)
-        ws = workbook["SC_Q_GRID_FORMAT"]
+        ws = workbook["All Questions"]
 
         self.assertEqual(
-            [ws["A10"].value, ws["B10"].value, ws["C10"].value, ws["D10"].value],
+            [ws["A11"].value, ws["B11"].value, ws["C11"].value, ws["D11"].value],
             ["Option", "Count", "%", "Denominator"],
         )
-        self.assertEqual(ws["A11"].value, "Option A")
-        self.assertEqual(ws["B11"].value, 50)
-        self.assertEqual(ws["A12"].value, "Option B")
-        self.assertEqual(ws["B12"].value, 30)
-        self.assertEqual(ws["A13"].value, "TOTAL (selected at least once)")
-        self.assertEqual(ws["B13"].value, 80)
+        self.assertEqual(ws["A12"].value, "Option A")
+        self.assertEqual(ws["B12"].value, 50)
+        self.assertEqual(ws["A13"].value, "Option B")
+        self.assertEqual(ws["B13"].value, 30)
 
         values = [
             cell
@@ -874,22 +937,16 @@ class TestExcelExporter(unittest.TestCase):
         self.addCleanup(workbook.close)
 
         self.assertTrue(all(len(sheet_name) <= 31 for sheet_name in workbook.sheetnames))
-        long_sheets = [
-            sheet_name
-            for sheet_name in workbook.sheetnames
-            if sheet_name.startswith("SC_Q_VERY_LONG")
-        ]
-        self.assertEqual(len(long_sheets), 1)
-        self.assertEqual(len(long_sheets[0]), 31)
+        self.assertIn("All Questions", workbook.sheetnames)
 
     def test_percentages_stored_as_raw_floats(self) -> None:
         output_path = self.export_workbook()
-        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        workbook = load_workbook(output_path, read_only=True, data_only=False)
         self.addCleanup(workbook.close)
-        value = workbook["SC_Q_SS_EXPORT"]["D11"].value
+        value = workbook["All Questions"]["C12"].value
 
-        self.assertEqual(value, 0.6)
-        self.assertLessEqual(value, 1.0)
+        self.assertTrue(value.startswith("="))
+        self.assertIn("SUBTOTAL", value)
 
     def test_workbook_opens_without_corruption(self) -> None:
         output_path = self.export_workbook()
