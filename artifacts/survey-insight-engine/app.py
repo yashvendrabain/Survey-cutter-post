@@ -2133,6 +2133,39 @@ def _build_filter_spec(
     return FilterSpec(filter_question_id=q_id, filter_values=tuple(resolved))
 
 
+def _build_grid_display_rows(
+    result: Any, schema: Any
+) -> list[dict[str, Any]]:
+    """Build UI display rows for a binary grid result.
+
+    Returns one ``{"Option": label, "Count": count}`` dict per sub-question,
+    using the schema's ``grid_row_labels`` for display labels and the
+    highest-coded distribution entry (typically value=1, "Checked") for
+    counts. Sub-questions with a zero count are omitted.
+    """
+    spec = next(
+        (q for q in schema.questions if q.canonical_id == result.question_id),
+        None,
+    )
+    grid_row_labels = getattr(spec, "grid_row_labels", None) or {}
+
+    rows: list[dict[str, Any]] = []
+    for sub_id, row_result in result.rows.items():
+        label = grid_row_labels.get(sub_id, sub_id)
+        dist = getattr(row_result, "distribution", {}) or {}
+        if 1 in dist:
+            count = dist[1].get("count", 0)
+        elif dist:
+            max_code = max(dist.keys(), key=lambda k: str(k))
+            count = dist[max_code].get("count", 0)
+        else:
+            count = 0
+        if not count:
+            continue
+        rows.append({"Option": label, "Count": count})
+    return rows
+
+
 def _render_single_cut_result(result: Any, spec: Any) -> None:
     """Display a SingleCutResult with branded HTML for SS/MS distributions."""
     from src.models import (

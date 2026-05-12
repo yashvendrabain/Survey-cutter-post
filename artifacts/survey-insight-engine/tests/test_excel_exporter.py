@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timezone
+import importlib.util
 from pathlib import Path
 import unittest
 from uuid import uuid4
@@ -523,6 +524,67 @@ def sheet_values(workbook_path: Path, sheet_name: str) -> list[object]:
 
 
 class TestExcelExporter(unittest.TestCase):
+    def grid_single_select_format_fixture(
+        self,
+    ) -> tuple[GridSingleSelectResult, SurveySchema]:
+        row_a = SingleSelectResult(
+            question_id="Q_GRID_FORMAT.r1",
+            question_type=QuestionType.SINGLE_SELECT,
+            valid_n=80,
+            missing_n=0,
+            denominator_policy=DenominatorPolicy.VALID_RESPONSES,
+            distribution={1: {"label": "Checked", "count": 50, "rate": 0.625}},
+        )
+        row_b = SingleSelectResult(
+            question_id="Q_GRID_FORMAT.r2",
+            question_type=QuestionType.SINGLE_SELECT,
+            valid_n=80,
+            missing_n=0,
+            denominator_policy=DenominatorPolicy.VALID_RESPONSES,
+            distribution={1: {"label": "Checked", "count": 30, "rate": 0.375}},
+        )
+        row_c = SingleSelectResult(
+            question_id="Q_GRID_FORMAT.r3",
+            question_type=QuestionType.SINGLE_SELECT,
+            valid_n=80,
+            missing_n=0,
+            denominator_policy=DenominatorPolicy.VALID_RESPONSES,
+            distribution={1: {"label": "Checked", "count": 0, "rate": 0.0}},
+        )
+        result = GridSingleSelectResult(
+            question_id="Q_GRID_FORMAT",
+            question_type=QuestionType.GRID_SINGLE_SELECT,
+            valid_n=80,
+            missing_n=0,
+            denominator_policy=DenominatorPolicy.VALID_RESPONSES,
+            rows={"r1": row_a, "r2": row_b, "r3": row_c},
+            overall_valid_n=80,
+        )
+        schema = SurveySchema(
+            questions=(
+                QuestionSpec(
+                    question_id="[Q_GRID_FORMAT]",
+                    canonical_id="Q_GRID_FORMAT",
+                    question_text="Grid format question",
+                    question_type=QuestionType.GRID_SINGLE_SELECT,
+                    raw_columns=("r1", "r2", "r3"),
+                    option_map={0: "Unchecked", 1: "Checked"},
+                    value_range=(0, 1),
+                    grid_row_labels={
+                        "r1": "Option A",
+                        "r2": "Option B",
+                        "r3": "Option C",
+                    },
+                ),
+            ),
+            respondent_id_column="respondent_id",
+            total_respondents=80,
+            source_datamap_path="datamap.xlsx",
+            source_rawdata_path="raw.csv",
+            parsed_at=UTC_NOW,
+        )
+        return result, schema
+
     def export_workbook(self) -> Path:
         FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
@@ -652,11 +714,12 @@ class TestExcelExporter(unittest.TestCase):
         self.addCleanup(workbook.close)
         ws = workbook["SC_Q_SS_EXPORT"]
 
-        self.assertEqual([ws["A7"].value, ws["B7"].value, ws["C7"].value, ws["D7"].value], ["Code", "Label", "Count", "%"])
-        self.assertEqual(ws["A8"].value, 1)
-        self.assertEqual(ws["B8"].value, "Yes")
-        self.assertEqual(ws["C8"].value, 6)
-        self.assertEqual(ws["D8"].value, 0.6)
+        self.assertEqual(ws["A9"].value, "FULL DISTRIBUTION (n=10)")
+        self.assertEqual([ws["A10"].value, ws["B10"].value, ws["C10"].value, ws["D10"].value], ["Code", "Label", "Count", "%"])
+        self.assertEqual(ws["A11"].value, 1)
+        self.assertEqual(ws["B11"].value, "Yes")
+        self.assertEqual(ws["C11"].value, 6)
+        self.assertEqual(ws["D11"].value, 0.6)
 
     def test_sc_sheet_for_multi_select_has_selections_table(self) -> None:
         output_path = self.export_workbook()
@@ -664,12 +727,12 @@ class TestExcelExporter(unittest.TestCase):
         self.addCleanup(workbook.close)
         ws = workbook["SC_Q_MS_EXPORT"]
 
-        self.assertEqual(ws["A7"].value, "Sub-Column ID")
-        self.assertEqual(ws["C7"].value, "Count selected")
-        self.assertEqual(ws["D7"].value, "Selection %")
-        self.assertEqual(ws["A8"].value, "Q_MS_EXPORTr1")
-        self.assertEqual(ws["D8"].value, 0.5)
-        self.assertEqual(ws["A11"].value, "Respondents who answered any: 10")
+        self.assertEqual(ws["A10"].value, "Sub-Column ID")
+        self.assertEqual(ws["C10"].value, "Count selected")
+        self.assertEqual(ws["D10"].value, "Selection %")
+        self.assertEqual(ws["A11"].value, "Q_MS_EXPORTr1")
+        self.assertEqual(ws["D11"].value, 0.5)
+        self.assertEqual(ws["A14"].value, "Respondents who answered any: 10")
 
     def test_sc_sheet_for_numeric_has_stats_table(self) -> None:
         output_path = self.export_workbook()
@@ -677,21 +740,104 @@ class TestExcelExporter(unittest.TestCase):
         self.addCleanup(workbook.close)
         ws = workbook["SC_Q_NUM_EXPORT"]
 
-        self.assertEqual(ws["A7"].value, "Mean")
-        self.assertEqual(ws["B7"].value, 5.5)
-        self.assertEqual(ws["A8"].value, "Median")
-        self.assertEqual(ws["B8"].value, 5.5)
+        self.assertEqual(ws["A10"].value, "Statistic")
+        self.assertEqual(ws["B10"].value, "Value")
+        self.assertEqual(ws["A11"].value, "Mean")
+        self.assertEqual(ws["B11"].value, 5.5)
+        self.assertEqual(ws["A12"].value, "Median")
+        self.assertEqual(ws["B12"].value, 5.5)
 
-    def test_sc_sheet_for_grid_has_per_row_blocks(self) -> None:
+    def test_sc_sheet_for_grid_has_compact_distribution_table(self) -> None:
         output_path = self.export_workbook()
         workbook = load_workbook(output_path, read_only=True, data_only=True)
         self.addCleanup(workbook.close)
         ws = workbook["SC_Q_GRID_EXPORT"]
 
-        self.assertEqual(ws["A7"].value, "Per-row distributions")
-        self.assertEqual(ws["A9"].value, "Grid first row (n=10)")
-        self.assertEqual(ws["A10"].value, "Code")
-        self.assertEqual(ws["A15"].value, "Grid second row (n=10)")
+        self.assertEqual(
+            [ws["A10"].value, ws["B10"].value, ws["C10"].value, ws["D10"].value],
+            ["Option", "Count", "%", "Denominator"],
+        )
+        self.assertEqual(ws["A11"].value, "Grid first row")
+        self.assertEqual(ws["B11"].value, 10)
+        self.assertEqual(ws["D11"].value, 10)
+        self.assertEqual(ws["A13"].value, "TOTAL (selected at least once)")
+        self.assertEqual(ws["B13"].value, 20)
+
+    def test_sc_sheet_has_autofilter(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=False, data_only=True)
+        self.addCleanup(workbook.close)
+        ws = workbook["SC_Q_SS_EXPORT"]
+
+        self.assertIsNotNone(ws.auto_filter.ref)
+
+    def test_sc_sheet_filter_block_no_filter(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        self.addCleanup(workbook.close)
+        ws = workbook["SC_Q_SS_EXPORT"]
+
+        self.assertEqual(ws["A1"].value, "Filter")
+        self.assertEqual(ws["B1"].value, "None (full sample)")
+
+    def test_grid_single_select_excel_format(self) -> None:
+        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = (
+            FIXTURE_DIR
+            / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
+        )
+        result, schema = self.grid_single_select_format_fixture()
+        _results, _skips, _schema, quality_report, _log = make_export_fixture()
+        export_single_cuts(
+            [result],
+            [],
+            schema,
+            quality_report,
+            CalculationLog(),
+            str(output_path),
+        )
+
+        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        self.addCleanup(workbook.close)
+        ws = workbook["SC_Q_GRID_FORMAT"]
+
+        self.assertEqual(
+            [ws["A10"].value, ws["B10"].value, ws["C10"].value, ws["D10"].value],
+            ["Option", "Count", "%", "Denominator"],
+        )
+        self.assertEqual(ws["A11"].value, "Option A")
+        self.assertEqual(ws["B11"].value, 50)
+        self.assertEqual(ws["A12"].value, "Option B")
+        self.assertEqual(ws["B12"].value, 30)
+        self.assertEqual(ws["A13"].value, "TOTAL (selected at least once)")
+        self.assertEqual(ws["B13"].value, 80)
+
+        values = [
+            cell
+            for row in ws.iter_rows(values_only=True)
+            for cell in row
+            if cell is not None
+        ]
+        self.assertNotIn("Option C", values)
+        self.assertNotIn("Per-row distributions", values)
+        self.assertNotIn("Code", values)
+
+    def test_grid_single_select_ui_format(self) -> None:
+        app_path = Path(__file__).resolve().parents[1] / "app.py"
+        spec = importlib.util.spec_from_file_location("survey_insight_app", app_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        app_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(app_module)
+
+        result, schema = self.grid_single_select_format_fixture()
+        rows = app_module._build_grid_display_rows(result, schema)
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["Option"], "Option A")
+        self.assertEqual(rows[0]["Count"], 50)
+        self.assertEqual(rows[1]["Option"], "Option B")
+        self.assertNotIn("Option C", [row["Option"] for row in rows])
 
     def test_calculation_log_one_row_per_audit_record(self) -> None:
         output_path = self.export_workbook()
@@ -740,7 +886,7 @@ class TestExcelExporter(unittest.TestCase):
         output_path = self.export_workbook()
         workbook = load_workbook(output_path, read_only=True, data_only=True)
         self.addCleanup(workbook.close)
-        value = workbook["SC_Q_SS_EXPORT"]["D8"].value
+        value = workbook["SC_Q_SS_EXPORT"]["D11"].value
 
         self.assertEqual(value, 0.6)
         self.assertLessEqual(value, 1.0)
@@ -1115,18 +1261,39 @@ class TestExcelExporter(unittest.TestCase):
         ws = workbook["FSC_Q_SS_EXPORT_01"]
         values = sheet_values(output_path, "FSC_Q_SS_EXPORT_01")
 
-        self.assertEqual(ws["A1"].value, "Target question:")
-        self.assertEqual(ws["A4"].value, "Q_SS_EXPORT")
-        self.assertIn("  Q_SEG_1 == 1 (Segment 1)", values)
+        self.assertEqual(ws["A1"].value, "Filters applied")
+        self.assertEqual(ws["A4"].value, "Target question:")
+        self.assertEqual(ws["B5"].value, "Q_SS_EXPORT")
+        self.assertIn("Q_SEG_1", values)
+        self.assertIn("= Segment 1", values)
+        self.assertIn("FILTERED VIEW: Q_SEG_1 == 1 (Segment 1) (n=6)", values)
         self.assertIn("Code", values)
         self.assertIn("Yes", values)
         self.assertIn(6, values)
+
+    def test_sc_sheet_filtered_section_present_when_filter_active(self) -> None:
+        output_path = self.export_filtered_workbook()
+        workbook = load_workbook(output_path, read_only=False, data_only=True)
+        self.addCleanup(workbook.close)
+        ws = workbook["FSC_Q_SS_EXPORT_01"]
+        values = [
+            cell
+            for row in ws.iter_rows(values_only=True)
+            for cell in row
+            if cell is not None
+        ]
+
+        self.assertIn("FILTERED VIEW: Q_SEG_1 == 1 (Segment 1) (n=6)", values)
+        self.assertIn("n=6 respondents match filter", values)
+        self.assertIsNotNone(ws.auto_filter.ref)
 
     def test_fsc_sheet_for_cross_cut_breakdown_renders_correctly(self) -> None:
         output_path = self.export_filtered_workbook()
         values = sheet_values(output_path, "FSC_Q_TGT_1")
 
-        self.assertIn("  Q_SEG_1 (breakdown - no specific value)", values)
+        self.assertIn("Filters applied", values)
+        self.assertIn("Q_SEG_1", values)
+        self.assertIn("(breakdown)", values)
         self.assertIn("Rows (vertical): Q_SEG_1", values)
         self.assertIn("Columns (horizontal): Q_TGT_1", values)
         self.assertIn("Counts", values)
