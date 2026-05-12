@@ -380,6 +380,9 @@ def _inject_global_css() -> None:
     """,
         unsafe_allow_html=True,
     )
+    app.markdown(_THEME_CSS, unsafe_allow_html=True)
+    app.markdown(_THEME_CSS_DAY18, unsafe_allow_html=True)
+    app.markdown(_CUSTOM_HEADER_HTML, unsafe_allow_html=True)
     app.session_state["_global_css_injected"] = True
 
 def _inject_theme_css() -> None:
@@ -3829,6 +3832,216 @@ def _render_winner_profile_panel(seg: OutcomeSegmentationResult) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _render_sidebar() -> None:
+    """Branded, structured sidebar showing only what is useful mid-session."""
+    import html as _html
+
+    app = _require_streamlit()
+    with app.sidebar:
+        # ---- LOGO / TITLE ---------------------------------------------------
+        app.markdown(
+            """
+            <div style="padding:16px 0 8px 0;border-bottom:3px solid #CC0000;
+              margin-bottom:16px;">
+              <div style="font-size:16px;font-weight:700;color:#0A0A0A;
+                font-family:Arial;letter-spacing:0.03em;">
+                Survey Analysis Engine
+              </div>
+              <div style="font-size:10px;color:#888;font-family:Arial;
+                margin-top:2px;">Bain &amp; Company</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        if app.session_state.get("run_complete"):
+            lr = app.session_state.get("load_report")
+            gf_stats = app.session_state.get("global_filter_stats")
+            results = app.session_state.get("results", [])
+
+            app.markdown("**Session**")
+
+            if lr is not None:
+                app.markdown(
+                    f"""
+                    <div style="font-size:10px;color:#666;font-family:Arial;
+                      line-height:1.9;background:#F8F8F8;padding:10px;
+                      border-left:3px solid #E0E0E0;margin-bottom:12px;">
+                      <b>File</b><br>{_html.escape(str(lr.raw_data_source))}<br>
+                      <b>Input type</b><br>
+                      {_html.escape(lr.scenario.replace('_', ' '))}<br>
+                      <b>Respondents</b><br>{lr.raw_rows:,}<br>
+                      <b>Questions</b><br>{lr.questions_parsed}
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+            gf_state = app.session_state.get("global_filter_state")
+            if (
+                gf_state is not None
+                and gf_state.is_active()
+                and gf_stats
+            ):
+                app.markdown(
+                    f"""
+                    <div style="background:#FFF5F5;border-left:3px solid #CC0000;
+                      padding:10px;font-size:10px;font-family:Arial;
+                      line-height:1.9;margin-bottom:12px;">
+                      <b style="color:#CC0000;">● Global Filter Active</b><br>
+                      {_html.escape(gf_state.description())}<br>
+                      <b>{gf_stats.get('rows_after', 0):,}</b>&nbsp;of&nbsp;
+                      {gf_stats.get('rows_before', 0):,}&nbsp;respondents
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            else:
+                app.markdown(
+                    """
+                    <div style="font-size:10px;color:#888;font-family:Arial;
+                      padding:8px 0;margin-bottom:8px;">
+                      ○ No global filter · full dataset
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+            skips = app.session_state.get("skips", [])
+            errors = [s for s in skips if s.skip_reason == "calculation_error"]
+            log = app.session_state.get("log")
+            log_len = len(log) if log else 0
+            cc_results = app.session_state.get("cross_cut_results", [])
+            err_color = "#CC0000" if errors else "#2E7D32"
+            app.markdown(
+                f"""
+                <div style="font-size:10px;color:#666;font-family:Arial;
+                  line-height:2.0;border-top:1px solid #E0E0E0;
+                  padding-top:10px;margin-bottom:12px;">
+                  <b>Single cuts</b>&nbsp;{len(results)}<br>
+                  <b>Skipped</b>&nbsp;{len(skips)}<br>
+                  <b>Errors</b>&nbsp;
+                  <span style="color:{err_color};">{len(errors)}</span><br>
+                  <b>Audit records</b>&nbsp;{log_len}<br>
+                  <b>Cross cuts</b>&nbsp;{len(cc_results)}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            # ---- QUESTIONS (master-detail nav) ----------------------------
+            app.markdown("**Questions**")
+            selected_qid = app.session_state.get("selected_question_id")
+            if selected_qid is None and results:
+                selected_qid = results[0].question_id
+                app.session_state["selected_question_id"] = selected_qid
+
+            app.text_input(
+                "Search",
+                placeholder="Filter by ID or text",
+                key="sidebar_q_search",
+                label_visibility="collapsed",
+            )
+            needle = (
+                app.session_state.get("sidebar_q_search") or ""
+            ).strip().lower()
+
+            schema_obj = app.session_state.get("schema")
+            shown = 0
+            for result in results:
+                if schema_obj is None:
+                    continue
+                spec = schema_obj.get_question(result.question_id)
+                if spec is None:
+                    continue
+                if needle:
+                    hay = f"{spec.canonical_id} {spec.question_text or ''}".lower()
+                    if needle not in hay:
+                        continue
+                shown += 1
+                label = (
+                    f"{spec.canonical_id} \u2014 "
+                    f"{spec.question_text or ''}".strip()
+                )
+                btn_type = (
+                    "primary"
+                    if result.question_id == selected_qid
+                    else "secondary"
+                )
+                if app.button(
+                    label,
+                    key=f"sidebar_qbtn_{result.question_id}",
+                    type=btn_type,
+                    use_container_width=True,
+                ):
+                    app.session_state["selected_question_id"] = (
+                        result.question_id
+                    )
+                    app.rerun()
+            if needle and shown == 0:
+                app.caption(f"No questions match '{needle}'.")
+            else:
+                app.caption(f"{shown} of {len(results)} shown")
+
+            app.markdown("**Navigate**")
+            app.markdown(
+                """
+                <div style="font-size:11px;font-family:Arial;line-height:2.2;
+                  color:#333;">
+                  <a href="#section-1" style="color:#CC0000;
+                    text-decoration:none;">↑ 1. Upload</a><br>
+                  <a href="#section-2" style="color:#CC0000;
+                    text-decoration:none;">⊕ 2. Global Filter</a><br>
+                  <a href="#section-3" style="color:#CC0000;
+                    text-decoration:none;">— 3. Single Cuts</a><br>
+                  <a href="#section-4" style="color:#CC0000;
+                    text-decoration:none;">╫ 4. Cross Cuts</a><br>
+                  <a href="#section-5" style="color:#CC0000;
+                    text-decoration:none;">↓ 5. Downloads</a>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        else:
+            app.markdown(
+                """
+                <div style="font-size:11px;color:#666;font-family:Arial;
+                  line-height:1.9;padding:8px 0;">
+                  <b>Getting started:</b><br>
+                  1. Upload your survey files<br>
+                  2. Click Run Analysis<br>
+                  3. Apply filters if needed<br>
+                  4. Explore and download
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        app.markdown("---")
+        with app.expander("Help", expanded=False):
+            app.markdown(
+                """
+                <div style="font-size:10px;font-family:Arial;color:#444;
+                  line-height:1.9;">
+                  <b>Supported file types</b><br>CSV, XLSX, DOCX<br><br>
+                  <b>Three input scenarios</b><br>
+                  A: Raw data + data map<br>
+                  B: Combined XLSX (2 sheets)<br>
+                  C: Raw data + Word survey doc<br><br>
+                  <b>Filters</b><br>
+                  Global filter restricts everything.<br>
+                  Per-question filter applies only<br>
+                  to that single question.<br><br>
+                  <b>Outlier flags</b><br>
+                  ⬆ Red = high outlier (&gt;2σ above mean)<br>
+                  ↓ Amber = low outlier (&gt;1.5σ below)
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+
 def _render_nav_bar() -> None:
     """Horizontal navigation bar with section tabs."""
     app = _require_streamlit()
@@ -3874,11 +4087,12 @@ def main() -> None:
         page_title=APP_TITLE,
         page_icon="📊",
         layout="wide",
-        initial_sidebar_state="collapsed",
+        initial_sidebar_state="expanded",
     )
     _initialise_session_state()
     _inject_global_css()
     _drain_pending_actions()
+    _render_sidebar()
 
     _render_nav_bar()
     app.divider()
