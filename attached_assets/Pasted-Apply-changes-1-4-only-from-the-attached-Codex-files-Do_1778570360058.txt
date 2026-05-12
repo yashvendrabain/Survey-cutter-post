@@ -1,0 +1,60 @@
+Apply changes 1-4 only from the attached Codex files. 
+Do NOT replace app.py wholesale.
+
+STEP 1 — Replace these src/ files verbatim from attachments:
+- src/single_cut/ grid calculator file (Change 1)
+- src/single_cut/ numeric allocation calculator file (Change 2)
+- src/cross_cut_suggestions.py (Change 4 suggestion labels)
+- src/excel_exporter.py (Changes 1 and 2 Excel updates)
+
+STEP 2 — Add new test files verbatim from attachments:
+- tests/test_grid.py (if new)
+- tests/test_numeric.py (if new)
+- Any updates to tests/test_single_cut_engine.py
+
+STEP 3 — Apply app.py changes as PATCHES only (do NOT replace app.py):
+
+PATCH A — Change 3: Move _section_survey_classification() call
+
+Find in main() or the section router where 
+_section_survey_classification() is currently called.
+Remove it from the filter section.
+Add it at the TOP of _section_ai_analysis() instead, 
+followed by app.divider().
+
+PATCH B — Change 4: Cross cut display titles in app.py
+
+Find _render_smart_cross_cut_suggestions_panel() in app.py.
+Replace the expander label construction with the 
+_suggestion_label() helper from the Codex app.py attachment.
+Copy only that helper function and the updated expander line.
+
+Find _section_cross_cuts() in app.py.
+Apply the _cross_cut_display_title() helper for cross cut 
+result cards — copy only that helper and the updated title lines.
+
+PATCH C — Change 5: Remove question text truncation
+
+Run this grep and fix every match:
+    grep -n "question_text\[:" artifacts/survey-insight-engine/app.py
+
+For every match:
+- UI labels (selectbox, expander, markdown): remove truncation entirely
+- Dataframe cells: keep at max 80 chars
+- AI payloads: keep at max 60 chars
+
+STEP 4 — Change 6: Nav bar fixes
+
+Apply the _render_nav_bar() replacement and CSS updates from 
+the Codex output I will paste separately for this change.
+Do not apply this from the attached app.py.
+
+STEP 5 — Run tests:
+pytest --tb=short -q
+
+Expected: all existing tests pass + any new grid/numeric tests pass.
+Report test count and any failures.
+
+DO NOT use the attached app.py (app_1778569905167.py) as a 
+full replacement — it is a shorter older version and would wipe 
+4000+ lines of current work.

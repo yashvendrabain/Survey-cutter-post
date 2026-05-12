@@ -93,7 +93,7 @@ def export_single_cuts(
     for result in results:
         _write_sc_sheet(workbook, result, schema, formats, sc_sheet_names[result.question_id])
     if cross_cut_results:
-        _write_cross_cut_index(workbook, cross_cut_results, cc_sheet_names, formats)
+        _write_cross_cut_index(workbook, cross_cut_results, cc_sheet_names, schema, formats)
         for result in cross_cut_results:
             _write_cc_sheet(
                 workbook,
@@ -135,7 +135,7 @@ def export_cross_cuts_only(
         for result in cross_cut_results
     }
 
-    _write_cross_cut_index(workbook, cross_cut_results, cc_sheet_names, formats)
+    _write_cross_cut_index(workbook, cross_cut_results, cc_sheet_names, schema, formats)
     for result in cross_cut_results:
         _write_cc_sheet(
             workbook,
@@ -380,7 +380,7 @@ def _write_sc_sheet(
     elif isinstance(result, MultiSelectResult):
         _write_multi_select_body(ws, result, formats, start_row=6)
     elif isinstance(result, NumericResult):
-        _write_numeric_body(ws, result, formats, start_row=6)
+        _write_numeric_body(ws, result, formats, start_row=6, schema=schema)
 
     if result.warnings:
         last_row = _find_last_used_row(ws) + 2
@@ -415,6 +415,39 @@ def _write_single_select_body(
     _write(ws, row_index, 2, total_count, formats["count"])
     _write(ws, row_index, 3, total_rate, formats["pct"])
     return row_index
+
+
+def _write_grid_single_select_body(
+    ws: Any,
+    result: SingleSelectResult,
+    formats: dict[str, Any],
+    start_row: int,
+) -> int:
+    _write_header_row(ws, start_row, ["Code", "Label", "Count", "%"], formats)
+    row_index = start_row + 1
+    total_count = 0
+    total_rate = 0.0
+    for code, payload in sorted(result.distribution.items(), key=lambda item: _sort_key(item[0])):
+        count = int(payload["count"])
+        rate = float(payload["rate"])
+        if not _is_grid_display_option(code, count, rate):
+            continue
+        total_count += count
+        total_rate += rate
+        _write(ws, row_index, 0, code)
+        _write(ws, row_index, 1, payload["label"])
+        _write(ws, row_index, 2, count, formats["count"])
+        _write(ws, row_index, 3, rate, formats["pct"])
+        row_index += 1
+    total_rate = 1.0 if math.isclose(total_rate, 1.0) else total_rate
+    _write(ws, row_index, 1, "Total", formats["bold"])
+    _write(ws, row_index, 2, total_count, formats["count"])
+    _write(ws, row_index, 3, total_rate, formats["pct"])
+    return row_index
+
+
+def _is_grid_display_option(code: object, count: int, rate: float) -> bool:
+    return code not in (0, "0") and (count > 0 or rate > 0.0)
 
 
 def _write_multi_select_body(
@@ -459,6 +492,7 @@ def _write_numeric_body(
     result: NumericResult,
     formats: dict[str, Any],
     start_row: int,
+    schema: SurveySchema | None = None,
 ) -> int:
     rows = [
         ("Mean", result.mean),
@@ -478,14 +512,27 @@ def _write_numeric_body(
 
     if result.question_type is QuestionType.NUMERIC_ALLOCATION:
         row_index += 1
-        _write(ws, row_index, 0, "Per-option allocation means", formats["bold"])
+        _write(ws, row_index, 0, "Per-option allocation statistics", formats["bold"])
         row_index += 1
-        _write_header_row(ws, row_index, ["Option", "Mean", "Median"], formats)
+        _write_header_row(
+            ws,
+            row_index,
+            ["Option", "Mean", "Median", "Valid N", "Missing N"],
+            formats,
+        )
         row_index += 1
+        spec = schema.get_question(result.question_id) if schema is not None else None
         for option_id, payload in (result.per_option_stats or {}).items():
-            _write(ws, row_index, 0, option_id)
+            option_label = (
+                spec.option_map.get(option_id, option_id)
+                if spec is not None
+                else option_id
+            )
+            _write(ws, row_index, 0, option_label)
             _write(ws, row_index, 1, payload["mean"], formats["stat"])
             _write(ws, row_index, 2, payload["median"], formats["stat"])
+            _write(ws, row_index, 3, payload.get("valid_n", 0), formats["count"])
+            _write(ws, row_index, 4, payload.get("missing_n", 0), formats["count"])
             row_index += 1
         row_index += 1
         allocation_rows = [
@@ -513,6 +560,16 @@ def _write_grid_body(
     _write(ws, row_index, 0, "Per-row distributions", formats["bold"])
     row_index += 2
     for sub_column_id, row_result in result.rows.items():
+        has_display_options = any(
+            _is_grid_display_option(
+                code,
+                int(payload["count"]),
+                float(payload["rate"]),
+            )
+            for code, payload in row_result.distribution.items()
+        )
+        if not has_display_options:
+            continue
         row_label = row_labels.get(sub_column_id, sub_column_id)
         _write(
             ws,
@@ -522,7 +579,7 @@ def _write_grid_body(
             formats["bold"],
         )
         row_index += 1
-        row_index = _write_single_select_body(ws, row_result, formats, row_index) + 2
+        row_index = _write_grid_single_select_body(ws, row_result, formats, row_index) + 2
     _write(ws, row_index, 0, "Overall valid N:", formats["bold"])
     _write(ws, row_index, 1, result.overall_valid_n, formats["count"])
     return row_index
@@ -532,6 +589,7 @@ def _write_cross_cut_index(
     workbook: Any,
     cross_cut_results: list[CrossCutResult],
     cc_sheet_names: dict[str, str],
+    schema: SurveySchema,
     formats: dict[str, Any],
 ) -> None:
     ws = workbook.add_worksheet("Cross_Cut_Index")
@@ -541,6 +599,7 @@ def _write_cross_cut_index(
         "Analysis Type",
         "Sheet Name",
         "Source Questions",
+        "question_labels",
         "Filter",
         "Audit Records",
         "Warnings",
@@ -565,9 +624,10 @@ def _write_cross_cut_index(
             sheet_name,
         )
         _write(ws, row_index, 4, ", ".join(result.source_question_ids))
-        _write(ws, row_index, 5, filter_expr)
-        _write(ws, row_index, 6, len(result.audit_records), formats["count"])
-        _write(ws, row_index, 7, " | ".join(result.warnings))
+        _write(ws, row_index, 5, _question_labels_text(schema, result.source_question_ids))
+        _write(ws, row_index, 6, filter_expr)
+        _write(ws, row_index, 7, len(result.audit_records), formats["count"])
+        _write(ws, row_index, 8, " | ".join(result.warnings))
     ws.freeze_panes(1, 0)
     _autofit(ws)
 
@@ -732,7 +792,7 @@ def _write_single_cut_result_body(
     if isinstance(result, MultiSelectResult):
         return _write_multi_select_body(ws, result, formats, start_row)
     if isinstance(result, NumericResult):
-        return _write_numeric_body(ws, result, formats, start_row)
+        return _write_numeric_body(ws, result, formats, start_row, schema)
     _write(ws, start_row, 0, "Unsupported single-cut result type", formats["bold"])
     return start_row
 
@@ -786,26 +846,29 @@ def _write_cc_sheet(
     for row_index, (label, value) in enumerate(header_rows):
         _write(ws, row_index, 0, label, formats["bold"])
         _write(ws, row_index, 1, value)
+    _write(ws, 2, 2, "question_labels", formats["bold"])
+    _write(ws, 2, 3, _question_labels_text(schema, result.source_question_ids))
 
+    body_start_row = len(header_rows) + 1
     if result.analysis_type is AnalysisType.CROSS_TAB:
         last_row = _write_cross_tab_body(
-            workbook, ws, result, schema, formats, 7, sheet_name
+            workbook, ws, result, schema, formats, body_start_row, sheet_name
         )
     elif result.analysis_type is AnalysisType.SEGMENT_PROFILE:
         last_row = _write_segment_profile_body(
-            workbook, ws, result, schema, formats, 7, sheet_name
+            workbook, ws, result, schema, formats, body_start_row, sheet_name
         )
     elif result.analysis_type is AnalysisType.GROUP_COMPARISON:
         last_row = _write_group_comparison_body(
-            workbook, ws, result, schema, formats, 7, sheet_name
+            workbook, ws, result, schema, formats, body_start_row, sheet_name
         )
     elif result.analysis_type is AnalysisType.EXPECTED_VS_REALIZED:
         last_row = _write_expected_vs_realized_body(
-            workbook, ws, result, schema, formats, 7, sheet_name
+            workbook, ws, result, schema, formats, body_start_row, sheet_name
         )
     else:
-        _write(ws, 7, 0, "Unsupported cross-cut result type", formats["bold"])
-        last_row = 7
+        _write(ws, body_start_row, 0, "Unsupported cross-cut result type", formats["bold"])
+        last_row = body_start_row
 
     if result.warnings:
         last_row += 2
@@ -813,7 +876,7 @@ def _write_cc_sheet(
         for offset, warning in enumerate(result.warnings, start=1):
             _write(ws, last_row + offset, 0, warning)
 
-    ws.freeze_panes(7, 0)
+    ws.freeze_panes(body_start_row, 0)
     _autofit(ws)
 
 
@@ -1700,6 +1763,13 @@ def _question_text(schema: SurveySchema, question_id: str) -> str:
 
 def _question_label(schema: SurveySchema, question_id: str) -> str:
     return f"{question_id}: {_question_text(schema, question_id)}"
+
+
+def _question_labels_text(
+    schema: SurveySchema,
+    question_ids: tuple[str, ...],
+) -> str:
+    return " × ".join(_question_label(schema, question_id) for question_id in question_ids)
 
 
 def _filter_value_label(filter_expr: str | None, filter_spec: Any) -> str:

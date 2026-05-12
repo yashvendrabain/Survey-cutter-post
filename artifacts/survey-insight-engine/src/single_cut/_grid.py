@@ -12,6 +12,7 @@ from src.models import (
     GridSingleSelectResult,
     QuestionSpec,
     QuestionType,
+    SingleSelectResult,
 )
 from src.single_cut._single_select import compute_single_select
 
@@ -56,13 +57,16 @@ def compute_grid(
             analysis_eligible=True,
             parent_question_id=question_spec.canonical_id,
         )
-        rows[sub_column_id] = compute_single_select(
+        row_result = compute_single_select(
             row_spec,
             df,
             log,
             filter_mask=filter_mask,
             filter_expr=filter_expr,
         )
+        row_result = _checked_only_row_result(row_result)
+        if row_result is not None:
+            rows[sub_column_id] = row_result
 
     present_columns = [
         sub_column_id
@@ -107,3 +111,34 @@ def compute_grid(
         audit_records=(parent_audit,),
         warnings=tuple(warnings),
     )
+
+
+def _checked_only_row_result(
+    row_result: SingleSelectResult,
+) -> SingleSelectResult | None:
+    filtered_distribution = {
+        code: payload
+        for code, payload in row_result.distribution.items()
+        if not _is_unchecked_value(code)
+        and (
+            int(payload.get("count", 0)) > 0
+            or float(payload.get("rate", 0.0)) > 0.0
+        )
+    }
+    if not filtered_distribution:
+        return None
+
+    return SingleSelectResult(
+        question_id=row_result.question_id,
+        question_type=row_result.question_type,
+        valid_n=row_result.valid_n,
+        missing_n=row_result.missing_n,
+        denominator_policy=row_result.denominator_policy,
+        distribution=filtered_distribution,
+        warnings=row_result.warnings,
+        audit_records=row_result.audit_records,
+    )
+
+
+def _is_unchecked_value(value: object) -> bool:
+    return value == 0 or value == "0"

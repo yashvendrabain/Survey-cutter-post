@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import numpy as np
 import pandas as pd
 
 from src.calc_primitives import allocation_summary, numeric_summary
 from src.calculation_log import CalculationLog
-from src.models import NumericResult, QuestionSpec, QuestionType
+from src.models import AuditRecord, NumericResult, QuestionSpec, QuestionType
 
 try:
     from config import DEFAULT_ALLOCATION_TARGET, ALLOCATION_TOLERANCE
@@ -132,7 +134,16 @@ def _compute_allocation(
     )
     log.record(audit)
 
-    per_option_stats = summary["per_option"]
+    per_option_stats = _allocation_per_option_stats(columns)
+    per_option_audits = _allocation_per_option_audits(
+        question_spec=question_spec,
+        columns=columns,
+        per_option_stats=per_option_stats,
+        filter_expr=filter_expr,
+    )
+    for per_option_audit in per_option_audits:
+        log.record(per_option_audit)
+
     aggregate = _aggregate_per_option_means(per_option_stats)
     warnings: list[str] = []
     excluded_n = int(summary["excluded_tolerance_n"])
@@ -161,13 +172,80 @@ def _compute_allocation(
         allocation_tolerance=tolerance,
         allocation_excluded_n=excluded_n,
         per_option_stats=per_option_stats,
-        audit_records=(audit,),
+        audit_records=(audit, *per_option_audits),
         warnings=tuple(warnings),
     )
 
 
+def _allocation_per_option_stats(
+    columns: dict[str, pd.Series],
+) -> dict[str, dict[str, float | int]]:
+    stats: dict[str, dict[str, float | int]] = {}
+    for column_id, series in columns.items():
+        numeric = pd.to_numeric(series, errors="coerce")
+        valid_values = numeric.dropna()
+        valid_n = int(valid_values.count())
+        missing_n = int(numeric.isna().sum())
+        stats[column_id] = {
+            "mean": float(valid_values.mean()) if valid_n else float("nan"),
+            "median": float(valid_values.median()) if valid_n else float("nan"),
+            "valid_n": valid_n,
+            "missing_n": missing_n,
+        }
+    return stats
+
+
+def _allocation_per_option_audits(
+    question_spec: QuestionSpec,
+    columns: dict[str, pd.Series],
+    per_option_stats: dict[str, dict[str, float | int]],
+    filter_expr: str | None,
+) -> tuple[AuditRecord, ...]:
+    audits: list[AuditRecord] = []
+    for column_id, series in columns.items():
+        numeric = pd.to_numeric(series, errors="coerce")
+        valid_values = numeric.dropna()
+        valid_n = int(per_option_stats[column_id]["valid_n"])
+        missing_n = int(per_option_stats[column_id]["missing_n"])
+        numerator = float(valid_values.sum()) if valid_n else 0.0
+        timestamp = datetime.now(timezone.utc)
+        audits.append(
+            AuditRecord(
+                output_sheet=f"SC_{question_spec.canonical_id}",
+                metric_name="numeric_allocation_mean",
+                source_question_id=question_spec.canonical_id,
+                source_columns=(column_id,),
+                filter_expr=filter_expr,
+                numerator=numerator,
+                denominator=valid_n,
+                formula="mean = df[col].dropna().mean()",
+                value_raw=float(per_option_stats[column_id]["mean"]),
+                valid_n=valid_n,
+                missing_n=missing_n,
+                timestamp=timestamp,
+            )
+        )
+        audits.append(
+            AuditRecord(
+                output_sheet=f"SC_{question_spec.canonical_id}",
+                metric_name="numeric_allocation_median",
+                source_question_id=question_spec.canonical_id,
+                source_columns=(column_id,),
+                filter_expr=filter_expr,
+                numerator=numerator,
+                denominator=valid_n,
+                formula="median = df[col].dropna().median()",
+                value_raw=float(per_option_stats[column_id]["median"]),
+                valid_n=valid_n,
+                missing_n=missing_n,
+                timestamp=timestamp,
+            )
+        )
+    return tuple(audits)
+
+
 def _aggregate_per_option_means(
-    per_option_stats: dict[str, dict[str, float]]
+    per_option_stats: dict[str, dict[str, float | int]]
 ) -> dict[str, float]:
     all_means = np.array(
         [payload["mean"] for payload in per_option_stats.values()],

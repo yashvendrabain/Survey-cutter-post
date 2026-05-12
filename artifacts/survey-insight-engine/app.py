@@ -2871,10 +2871,7 @@ def _section_survey_classification() -> None:
     decoded_df_for_labels = app.session_state.get("decoded_df")
 
     def _outcome_label(opt) -> str:
-        truncated = opt.question_text[:70] + (
-            "\u2026" if len(opt.question_text) > 70 else ""
-        )
-        base = f"{opt.question_id}: {truncated}"
+        base = f"{opt.question_id}: {opt.question_text}"
         score = f"score: {opt.relevance_score:.2f}"
         if (
             decoded_df_for_labels is not None
@@ -3137,7 +3134,7 @@ def _render_segmentation_results() -> None:
         app.markdown("#### Top Differentiators (ranked by Cram\u00e9r's V)")
         diff_data = [
             {
-                "Question": f"{diff.question_id}: {diff.question_text[:60]}",
+                "Question": f"{diff.question_id}: {diff.question_text[:80]}",
                 "Top Option": diff.top_option_label,
                 "Cram\u00e9r's V": f"{diff.cramers_v:.3f}",
                 f"{_winner_lbl} Rate": f"{diff.top_option_winner_rate:.1%}",
@@ -3179,7 +3176,7 @@ def _render_segmentation_results() -> None:
             tcol1, tcol2 = app.columns([3, 1])
             with tcol1:
                 app.markdown(f"**{trait.question_id}:** {trait.option_label}")
-                app.caption(trait.question_text[:80])
+                app.caption(trait.question_text)
             with tcol2:
                 app.metric(
                     f"{_winner_lbl} Rate",
@@ -3273,6 +3270,45 @@ def _section_single_cuts() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _source_question_labels(
+    question_ids: tuple[str, ...],
+    schema: Any,
+    *,
+    include_ids: bool = True,
+    max_chars: int = 60,
+) -> str:
+    parts: list[str] = []
+    for question_id in question_ids:
+        spec = schema.get_question(question_id) if schema is not None else None
+        if spec is None:
+            parts.append(question_id)
+            continue
+        text = spec.question_text[:max_chars]
+        if len(spec.question_text) > max_chars:
+            text += "..."
+        parts.append(f"{question_id}: {text}" if include_ids else text)
+    return " \u00d7 ".join(parts)
+
+
+def _suggestion_label(suggestion: Any, schema: Any) -> str:
+    if schema is None:
+        return suggestion.synthetic_question_title
+    return _source_question_labels(suggestion.source_question_ids, schema, max_chars=60)
+
+
+def _cross_cut_display_title(result: Any, schema: Any) -> str:
+    source_question_ids = getattr(result, "source_question_ids", ())
+    if schema is None or not source_question_ids:
+        return getattr(
+            result,
+            "synthetic_question_title",
+            getattr(result, "cross_cut_id", str(result)),
+        )
+    return _source_question_labels(
+        source_question_ids, schema, include_ids=False, max_chars=50
+    )
+
+
 def _section_cross_cuts() -> None:
     app = _require_streamlit()
     app.markdown('<div id="section-crosscuts"></div>', unsafe_allow_html=True)
@@ -3305,7 +3341,7 @@ def _section_cross_cuts() -> None:
     for result in results:
         cc_pending_insight: dict[str, Any] | None = None
         with app.expander(
-            f"{result.cross_cut_id} \u2014 {result.synthetic_question_title}",
+            f"{result.cross_cut_id} \u2014 {_cross_cut_display_title(result, schema)}",
             expanded=False,
         ):
             # Show full source-question text as a header so analysts know
@@ -3314,11 +3350,8 @@ def _section_cross_cuts() -> None:
             for qid in result.source_question_ids:
                 q = schema.get_question(qid) if schema is not None else None
                 if q and q.question_text:
-                    short = q.question_text.strip()
-                    if len(short) > 60:
-                        short = short[:57] + "\u2026"
                     source_lines.append(
-                        f"{_html.escape(qid)}: {_html.escape(short)}"
+                        f"{_html.escape(qid)}: {_html.escape(q.question_text.strip())}"
                     )
                 else:
                     source_lines.append(_html.escape(qid))
@@ -3601,6 +3634,8 @@ def _normalise_insight_payload(
 
 def _section_ai_analysis() -> None:
     app = _require_streamlit()
+    _section_survey_classification()
+    app.divider()
     app.markdown('<div id="section-ai"></div>', unsafe_allow_html=True)
     if not app.session_state.get("run_complete"):
         return
@@ -3751,12 +3786,13 @@ def _render_smart_cross_cut_suggestions_panel(
         return
 
     scored_suggestions = score_suggestions_for_outcome(suggestions, seg)
+    schema = app.session_state.get("schema")
     for suggestion in scored_suggestions[:10]:
         analysis_type = suggestion.analysis_type
         analysis_type_label = getattr(analysis_type, "value", str(analysis_type))
         with app.expander(
             f"[{suggestion.outcome_relevance_score:.2f}] "
-            f"{suggestion.synthetic_question_title}"
+            f"{_suggestion_label(suggestion, schema)}"
         ):
             app.markdown(
                 f"**Business question:** {suggestion.business_question}"
@@ -4194,7 +4230,6 @@ def main() -> None:
     _section_upload()
     app.divider()
     _section_global_filter()
-    _section_survey_classification()
     app.divider()
     _section_single_cuts()
     app.divider()

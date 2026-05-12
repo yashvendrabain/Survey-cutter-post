@@ -34,19 +34,34 @@ Q_NUM_2_P50 = 50.0
 Q_NUM_2_P75 = 70.0
 
 Q_ALLOC_1_PER_OPTION = {
-    "Q_ALLOC_1r1": {"mean": 49.107142857142854, "median": 50.0},
-    "Q_ALLOC_1r2": {"mean": 30.214285714285715, "median": 30.0},
-    "Q_ALLOC_1r3": {"mean": 20.678571428571427, "median": 20.0},
+    "Q_ALLOC_1r1": {
+        "mean": 48.5,
+        "median": 50.0,
+        "valid_n": 30,
+        "missing_n": 0,
+    },
+    "Q_ALLOC_1r2": {
+        "mean": 30.866666666666667,
+        "median": 30.0,
+        "valid_n": 30,
+        "missing_n": 0,
+    },
+    "Q_ALLOC_1r3": {
+        "mean": 20.633333333333333,
+        "median": 20.0,
+        "valid_n": 30,
+        "missing_n": 0,
+    },
 }
 Q_ALLOC_1_AGGREGATE = {
     "mean": 33.333333333333336,
-    "median": 30.214285714285715,
-    "std": 14.468664827991624,
-    "min": 20.678571428571427,
-    "max": 49.107142857142854,
-    "p25": 25.44642857142857,
-    "p50": 30.214285714285715,
-    "p75": 39.660714285714285,
+    "median": 30.866666666666667,
+    "std": 14.096138163025755,
+    "min": 20.633333333333333,
+    "max": 48.5,
+    "p25": 25.75,
+    "p50": 30.866666666666667,
+    "p75": 39.68333333333334,
 }
 Q_ALLOC_2_AGGREGATE = {
     "mean": 33.333333333333336,
@@ -234,13 +249,61 @@ class TestNumeric(unittest.TestCase):
         self.assertEqual(
             result.per_option_stats,
             {
-                "Q_ALLOC_2r1": {"mean": 50.0, "median": 50.0},
-                "Q_ALLOC_2r2": {"mean": 30.0, "median": 30.0},
-                "Q_ALLOC_2r3": {"mean": 20.0, "median": 20.0},
+                "Q_ALLOC_2r1": {
+                    "mean": 50.0,
+                    "median": 50.0,
+                    "valid_n": 25,
+                    "missing_n": 5,
+                },
+                "Q_ALLOC_2r2": {
+                    "mean": 30.0,
+                    "median": 30.0,
+                    "valid_n": 25,
+                    "missing_n": 5,
+                },
+                "Q_ALLOC_2r3": {
+                    "mean": 20.0,
+                    "median": 20.0,
+                    "valid_n": 25,
+                    "missing_n": 5,
+                },
             },
         )
         self.assertEqual(result.mean, Q_ALLOC_2_AGGREGATE["mean"])
         self.assertEqual(result.std, Q_ALLOC_2_AGGREGATE["std"])
+
+    def test_numeric_allocation_shows_mean_and_median(self) -> None:
+        dataframe = pd.DataFrame(
+            {
+                "Q33r1": [10, 20, 30],
+                "Q33r2": [90, 80, 70],
+            }
+        )
+        log = CalculationLog()
+        spec = make_allocation_spec("Q33", ("Q33r1", "Q33r2"))
+
+        result = compute_numeric(spec, dataframe, log)
+
+        self.assertEqual(
+            result.per_option_stats,
+            {
+                "Q33r1": {
+                    "mean": 20.0,
+                    "median": 20.0,
+                    "valid_n": 3,
+                    "missing_n": 0,
+                },
+                "Q33r2": {
+                    "mean": 80.0,
+                    "median": 80.0,
+                    "valid_n": 3,
+                    "missing_n": 0,
+                },
+            },
+        )
+        metric_names = [record.metric_name for record in log.all_records()]
+        self.assertEqual(metric_names.count("numeric_allocation_mean"), 2)
+        self.assertEqual(metric_names.count("numeric_allocation_median"), 2)
 
     def test_allocation_aggregate_stats_correct(self) -> None:
         dataframe = load_golden()

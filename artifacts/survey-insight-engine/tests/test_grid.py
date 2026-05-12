@@ -174,6 +174,41 @@ class TestGrid(unittest.TestCase):
         self.assertEqual(result.overall_valid_n, 0)
         self.assertIn("no grid rows present in raw data", result.warnings)
 
+    def test_grid_single_select_excludes_unchecked_rows(self) -> None:
+        dataframe = pd.DataFrame(
+            {
+                "Q_GRID_BINr1": [1, 0, 0],
+                "Q_GRID_BINr2": [0, 0, 0],
+                "Q_GRID_BINr3": [0, 1, 0],
+                "Q_GRID_BINr4": [0, 0, 0],
+            }
+        )
+        labels = {
+            "Q_GRID_BINr1": "Selected first",
+            "Q_GRID_BINr2": "Never selected second",
+            "Q_GRID_BINr3": "Selected third",
+            "Q_GRID_BINr4": "Never selected fourth",
+        }
+        spec = QuestionSpec(
+            question_id="[Q_GRID_BIN]",
+            canonical_id="Q_GRID_BIN",
+            question_text="Binary grid",
+            question_type=QuestionType.GRID_SINGLE_SELECT,
+            raw_columns=tuple(labels),
+            option_map={0: "Unchecked", 1: "Checked"},
+            value_range=(0, 1),
+            denominator_policy=DenominatorPolicy.VALID_RESPONSES,
+            grid_row_labels=labels,
+        )
+        log = CalculationLog()
+
+        result = compute_grid(spec, dataframe, log)
+
+        self.assertEqual(tuple(result.rows), ("Q_GRID_BINr1", "Q_GRID_BINr3"))
+        for row_result in result.rows.values():
+            self.assertEqual(tuple(row_result.distribution), (1,))
+            self.assertGreater(row_result.distribution[1]["count"], 0)
+
     def test_grid_audit_records_logged_per_row_plus_parent(self) -> None:
         dataframe = load_golden()
         log = CalculationLog()

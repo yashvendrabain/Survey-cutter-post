@@ -166,7 +166,7 @@ def _segment_profile_candidates(schema: SurveySchema) -> list[Candidate]:
                         f"SP_{demographic.canonical_id}_"
                         f"{_safe_id_part(option_value)}_{target.canonical_id}"
                     ),
-                    title=f"{target.canonical_id} within {option_label}",
+                    title=f"{_question_title(target)} within {option_label}",
                     analysis_type=AnalysisType.SEGMENT_PROFILE,
                     source_question_ids=(
                         demographic.canonical_id,
@@ -201,7 +201,7 @@ def _demographic_cross_tab_candidates(schema: SurveySchema) -> list[Candidate]:
             )
             candidate = _candidate(
                 cross_cut_id=f"CT_{first.canonical_id}_{second.canonical_id}",
-                title=f"{first.canonical_id} x {second.canonical_id}",
+                title=f"{_question_title(first)} x {_question_title(second)}",
                 analysis_type=AnalysisType.CROSS_TAB,
                 source_question_ids=(first.canonical_id, second.canonical_id),
                 reason=(
@@ -221,7 +221,7 @@ def _group_comparison_candidates(schema: SurveySchema) -> list[Candidate]:
         for metric in _direct_numeric_questions(schema):
             candidate = _candidate(
                 cross_cut_id=f"GC_{demographic.canonical_id}_{metric.canonical_id}",
-                title=f"{metric.canonical_id} by {demographic.canonical_id}",
+                title=f"{_question_title(metric)} by {_question_title(demographic)}",
                 analysis_type=AnalysisType.GROUP_COMPARISON,
                 source_question_ids=(demographic.canonical_id, metric.canonical_id),
                 reason=(
@@ -246,7 +246,7 @@ def _expected_vs_realized_candidates(schema: SurveySchema) -> list[Candidate]:
             expected, realized = ordered
             candidate = _candidate(
                 cross_cut_id=f"EVR_{expected.canonical_id}_{realized.canonical_id}",
-                title=f"{expected.canonical_id} vs {realized.canonical_id}",
+                title=f"{_question_title(expected)} vs {_question_title(realized)}",
                 analysis_type=AnalysisType.EXPECTED_VS_REALIZED,
                 source_question_ids=(expected.canonical_id, realized.canonical_id),
                 reason=(
@@ -380,6 +380,10 @@ def _tokens(text: str) -> set[str]:
         for token in (match.group(0).lower() for match in TOKEN_PATTERN.finditer(text))
         if token not in STOPWORDS
     }
+
+
+def _question_title(question: QuestionSpec) -> str:
+    return f"{question.canonical_id}: {question.question_text}"
 
 
 def _sorted_options(question: QuestionSpec) -> list[tuple[int | str, str]]:
