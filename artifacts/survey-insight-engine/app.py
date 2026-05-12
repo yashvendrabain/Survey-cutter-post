@@ -333,6 +333,23 @@ _CUSTOM_HEADER_HTML = """
 """
 
 
+def _custom_header_html() -> str:
+    app = _require_streamlit()
+    schema = app.session_state.get("schema")
+    if schema is not None and hasattr(schema, "total_respondents"):
+        context = (
+            f"{schema.total_respondents:,} respondents loaded"
+        )
+    else:
+        context = "No dataset loaded \u2014 upload to begin"
+    return (
+        '<div class="custom-header">'
+        '<div class="custom-header-title">Survey Analysis Engine</div>'
+        f'<div class="custom-header-tagline">{html.escape(context)}</div>'
+        '</div>'
+    )
+
+
 def _inject_global_css() -> None:
     app = _require_streamlit()
 
@@ -380,7 +397,7 @@ def _inject_global_css() -> None:
     )
     app.markdown(_THEME_CSS, unsafe_allow_html=True)
     app.markdown(_THEME_CSS_DAY18, unsafe_allow_html=True)
-    app.markdown(_CUSTOM_HEADER_HTML, unsafe_allow_html=True)
+    app.markdown(_custom_header_html(), unsafe_allow_html=True)
 
 def _inject_theme_css() -> None:
     """Backwards-compatible alias retained for any internal callers."""
@@ -4189,17 +4206,25 @@ def _render_nav_bar() -> None:
         }});
 
         function onScroll() {{
-            var scrollPos = window.scrollY + 120;
+            var scrollTop = window.scrollY || document.documentElement.scrollTop || 0;
             var current = sections[0];
+            var bestOffset = -Infinity;
             sections.forEach(function(id) {{
                 var el = document.getElementById(id);
-                if (el && el.offsetTop <= scrollPos) current = id;
+                if (!el) return;
+                var sectionTop = el.getBoundingClientRect().top + scrollTop - 120;
+                if (sectionTop <= scrollTop && sectionTop > bestOffset) {{
+                    bestOffset = sectionTop;
+                    current = id;
+                }}
             }});
             setActive(current);
         }}
 
         window.addEventListener('scroll', onScroll, {{ passive: true }});
+        document.addEventListener('scroll', onScroll, {{ passive: true }});
         try {{ window.parent.addEventListener('scroll', onScroll, {{ passive: true }}); }} catch(e) {{}}
+        setInterval(onScroll, 200);
         setTimeout(onScroll, 800);
     }})();
     </script>

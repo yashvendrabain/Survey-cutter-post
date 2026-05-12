@@ -1,0 +1,236 @@
+Two targeted fixes to app.py. No logic changes.
+
+══════════════════════════════════════════════════════════════════════
+FIX 1 — ADD PROPER RED HEADER (replaces st.title placeholder)
+══════════════════════════════════════════════════════════════════════
+
+Find _render_header() at line 204. Replace the entire function body:
+
+CURRENT:
+def _render_header() -> None:
+    app = _require_streamlit()
+    app.set_page_config(page_title=APP_NAME, layout="wide")
+    app.title(f"{APP_NAME} {VERSION}")
+    app.caption(
+        "Upload raw survey data and a data map to produce audited "
+        "single-cut and cross-cut analysis in Excel."
+    )
+
+REPLACE WITH:
+def _render_header() -> None:
+    app = _require_streamlit()
+    app.set_page_config(page_title=APP_NAME, layout="wide")
+    
+    # Inject header CSS + red fixed bar
+    schema = app.session_state.get("schema")
+    if schema is not None and hasattr(schema, "total_respondents"):
+        context = f"<strong>{APP_NAME}</strong> &nbsp;·&nbsp; {schema.total_respondents:,} respondents loaded"
+    else:
+        context = f"<strong>{APP_NAME}</strong> &nbsp;·&nbsp; No dataset loaded — upload to begin"
+    
+    app.markdown(
+        f"""
+        <style>
+        /* Fixed red header */
+        .brand-header {{
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            z-index: 999999 !important;
+            background: #CC0000 !important;
+            color: #FFFFFF !important;
+            padding: 0 24px !important;
+            height: 50px !important;
+            display: flex !important;
+            align-items: center !important;
+            gap: 12px !important;
+            border-bottom: 1px solid #A30000 !important;
+            font-family: Arial, sans-serif !important;
+            box-sizing: border-box !important;
+        }}
+        .brand-header-title {{
+            font-size: 14px !important;
+            font-weight: 500 !important;
+            color: #FFF !important;
+            letter-spacing: 0.01em !important;
+        }}
+        .brand-header-title strong {{
+            font-weight: 600 !important;
+        }}
+        /* Hide Streamlit default chrome */
+        #MainMenu {{ visibility: hidden; }}
+        footer {{ visibility: hidden; }}
+        header[data-testid="stHeader"] {{ display: none !important; }}
+        /* Push content below fixed header + nav bar */
+        .main .block-container {{
+            padding-top: 110px !important;
+            max-width: 100% !important;
+        }}
+        </style>
+        <div class="brand-header">
+            <span class="brand-header-title">{context}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+NOTE: _render_header() is called every Streamlit rerun (it's in 
+main() with no session flag guard). This is intentional — the fixed 
+header must re-inject on every rerun or it disappears after uploads.
+
+══════════════════════════════════════════════════════════════════════
+FIX 2 — NAV BAR: FIX POSITIONING + SCROLLSPY + STYLING
+══════════════════════════════════════════════════════════════════════
+
+The nav bar JS currently calls positionNavBar() which looks for 
+.brand-header. Now that .brand-header exists (Fix 1), positioning 
+will work automatically.
+
+But two things still need fixing in _render_nav_bar():
+
+PART A — The nav bar CSS top value is hardcoded to 50px but the JS 
+dynamically sets it via positionNavBar(). The CSS default of 50px 
+is correct (header is 50px). Leave it — no change needed here.
+
+PART B — The scrollspy only fires on window scroll. But Streamlit 
+renders inside an iframe in some deployments and the scroll event 
+fires on the iframe document, not window. Fix the scroll listener:
+
+Find this line in the script block inside _render_nav_bar():
+    window.addEventListener('scroll', updateActiveTab, { passive: true });
+
+Replace with:
+    // Listen on both window and document for scroll (iframe compat)
+    window.addEventListener('scroll', updateActiveTab, { passive: true });
+    document.addEventListener('scroll', updateActiveTab, { passive: true });
+    
+    // Also poll every 200ms as fallback for Streamlit iframe environments
+    setInterval(updateActiveTab, 200);
+
+PART C — The section anchors need scroll-margin-top to account for 
+the fixed header + nav bar combined height (50px + 44px = 94px, 
+plus a small buffer = 110px).
+
+The current CSS has:
+    .section-anchor {
+        scroll-margin-top: 120px;
+    }
+
+Change to:
+    .section-anchor {
+        scroll-margin-top: 110px !important;
+        display: block !important;
+    }
+
+PART D — The nav bar needs to re-render with updated counts on every 
+Streamlit rerun. Currently _render_nav_bar() is called from main() 
+on every rerun — this is correct. Verify this is the case:
+
+Check main() and confirm _render_nav_bar() is called on every run 
+(not guarded by a session flag). If it has a guard like 
+"_nav_injected", remove it.
+
+PART E — Make the scrollspy threshold smarter.
+
+Current scrollspy uses getBoundingClientRect().top <= 120.
+This means a section only becomes active when its top edge is 
+within 120px of the viewport top. But sections can be very tall
+(single cuts can be 1000px+), so the user scrolls deep into 
+a section and the tab stays active — that's correct behavior.
+
+However the first tab (Upload) never re-activates when scrolling 
+back to top. Fix:
+
+CURRENT in updateActiveTab():
+    var activeId = tabs[0].getAttribute('data-target');
+    tabs.forEach(function(tab) {
+        var section = document.getElementById(
+            tab.getAttribute('data-target')
+        );
+        if (section && section.getBoundingClientRect().top <= 120) {
+            activeId = tab.getAttribute('data-target');
+        }
+    });
+
+REPLACE WITH:
+    var scrollTop = window.scrollY || document.documentElement.scrollTop;
+    var activeId = tabs[0].getAttribute('data-target');
+    var bestOffset = -Infinity;
+    
+    tabs.forEach(function(tab) {
+        var section = document.getElementById(tab.getAttribute('data-target'));
+        if (!section) return;
+        var sectionTop = section.getBoundingClientRect().top + scrollTop - 120;
+        if (sectionTop <= scrollTop && sectionTop > bestOffset) {
+            bestOffset = sectionTop;
+            activeId = tab.getAttribute('data-target');
+        }
+    });
+
+This finds the section whose top is closest to (but not past) 
+the current scroll position — much more accurate.
+
+══════════════════════════════════════════════════════════════════════
+FIX 3 — VERIFY QUESTION LABELS ARE ALREADY FULL TEXT
+══════════════════════════════════════════════════════════════════════
+
+Run these greps and confirm NO truncation exists in UI labels:
+
+grep -n "question_text\[:" artifacts/survey-insight-engine/app.py
+grep -n "\.question_text\[:5\|\.question_text\[:6\|\.question_text\[:7\|\.question_text\[:8" artifacts/survey-insight-engine/app.py
+
+If any matches found in selectbox labels, expander titles, or 
+st.markdown calls — remove the slice.
+If matches are ONLY in dataframe cell construction or AI payloads — 
+leave them (80 chars for tables, 60 chars for AI is correct).
+
+Paste the grep output in your report.
+
+Also check _question_label_map() at line 818 — it currently builds:
+    f"{spec.canonical_id}: {spec.question_text}"
+This is already full text. Confirm it's used in all filter 
+selectboxes (search for _question_label_map in app.py).
+
+If any selectbox uses a different label builder that truncates,
+replace it with _question_label_map() or _question_label().
+
+══════════════════════════════════════════════════════════════════════
+VERIFICATION
+══════════════════════════════════════════════════════════════════════
+
+1. Run pytest --tb=short -q → all tests pass
+
+2. Reload app:
+   - Red bar visible at top (50px, full width, #CC0000)
+   - "Survey Analysis Engine · No dataset loaded" in white text
+   - Nav bar visible directly below red header (Upload, Filter, 
+     Single cuts, Cross cuts, AI analysis, Downloads)
+   - Nav tabs look like flat text tabs (NO blue hyperlinks, 
+     NO border boxes)
+
+3. Upload sample data:
+   - Red header updates to show "1,100 respondents loaded"
+   - Red header stays visible after upload (does NOT disappear)
+   - Upload tab gets green ✓ badge
+
+4. Scroll test:
+   - Scroll past Single cuts section → Single cuts tab goes red
+   - Scroll past Cross cuts section → Cross cuts tab goes red
+   - Scroll back to top → Upload tab goes red
+   - Tab highlight moves smoothly as you scroll
+
+5. Click a nav tab:
+   - Page smoothly scrolls to that section
+   - That tab goes red
+
+6. Grep output for question truncation (paste the result)
+
+Report:
+- Test count
+- Red header: visible and stays fixed? (yes/no)
+- Nav bar: looks like flat tabs not hyperlinks? (yes/no)
+- Scrollspy: tab updates as you scroll? (yes/no)
+- Header context: shows respondent count after upload? (yes/no)
+- Grep output for truncation
+- Any errors
