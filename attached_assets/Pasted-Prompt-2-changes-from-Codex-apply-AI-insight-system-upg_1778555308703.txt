@@ -1,0 +1,135 @@
+Prompt 2 changes from Codex — apply AI insight system upgrade.
+Three files to update. Apply carefully.
+
+FILES TO REPLACE VERBATIM:
+1. src/ai_insights.py — full replacement from Codex
+
+FILES TO PATCH (app.py — targeted changes only):
+
+PATCH A — Module level (already in Codex output, verify present):
+Line ~29: from src.ai_insights import generate_insight
+Line ~31: from src.models import InsightResult, OutcomeSegmentationResult  
+Line ~34: _INSIGHT_CACHE: dict[str, Any] = {}
+Line ~9: import html  (for XSS escaping in _render_insight_card)
+
+PATCH B — Cache invalidation on global filter change
+Search app.py for the block where global filter is applied or cleared.
+It likely contains session_state assignments for "active_df" or 
+"global_filter_state". In that block, add:
+
+    _INSIGHT_CACHE.clear()
+
+Do this for BOTH the "apply filter" path and the "clear filter" path.
+This ensures insights regenerate when the underlying data changes.
+
+PATCH C — Add _render_insight_card() function
+Paste the full function verbatim from Codex (lines 739-825 of Codex 
+app.py output). Place it AFTER _render_insight_section() and BEFORE 
+_normalise_insight_payload().
+
+PATCH D — Replace _render_outcome_summary_panel() entirely
+The new version auto-generates insights for each differentiator card.
+Replace the current function with the Codex version (lines 1184-1240).
+Key change: generate_insight() is called directly with cache, 
+_render_insight_card() renders the result above the stats bar.
+
+PATCH E — Wire auto-insight for filtered single cuts
+Find the function that renders individual single cut cards 
+(_render_single_cut_card or equivalent). Inside it, find where 
+_render_insight_section() is called.
+
+Add this logic AROUND the existing _render_insight_section() call:
+
+    canonical_id = result.spec.canonical_id  # adjust variable name 
+                                              # to match actual scope
+    has_active_filter = bool(
+        app.session_state.get(f"filters_{canonical_id}")
+    )
+    
+    if has_active_filter:
+        # Build filtered payload from available result fields
+        filtered_payload = {
+            "question_text": result.spec.question_text 
+                             if hasattr(result.spec, "question_text") 
+                             else str(canonical_id),
+            "question_type": str(result.spec.question_type),
+            "filter_description": str(
+                app.session_state.get(f"filters_{canonical_id}", {})
+            ),
+            "filtered_n": getattr(result, "valid_n", 0),
+            "total_n": app.session_state.get("schema", {}) and 
+                       getattr(app.session_state.schema, 
+                               "total_respondents", 0) or 0,
+            "distribution": {},  # table already shown above
+            "top_option": "",
+            "top_option_pct": "",
+        }
+        with app.spinner("Generating insight..."):
+            auto_insight = generate_insight(
+                table_payload=filtered_payload,
+                table_kind="filtered_single_cut",
+                title_hint=str(canonical_id),
+                cache=_INSIGHT_CACHE,
+            )
+        _render_insight_card(auto_insight)
+    else:
+        # Keep existing manual button behavior
+        _render_insight_section(
+            insight_key=f"insight_sc_{canonical_id}",
+            payload_factory=lambda p=filtered_payload, t=str(canonical_id): 
+                _normalise_insight_payload(p, "single_cut", t),
+            table_kind="single_cut",
+            title_hint=str(canonical_id),
+        )
+
+Note: read the actual _render_single_cut_card function carefully 
+before applying this patch. Use the real variable names from that 
+scope — don't blindly copy the pseudocode above. The key logic is:
+- Check if f"filters_{canonical_id}" is truthy in session_state
+- If yes: auto-generate with _render_insight_card
+- If no: existing _render_insight_section button
+
+PATCH F — Update table_kind on existing manual single cut insight calls
+In any existing _render_insight_section() call for plain single cuts 
+(not filtered), ensure table_kind="single_cut" is passed, not 
+"generic" or any other value. This routes through 
+_format_single_cut_payload() for better AI prompts.
+
+STEP 1: RUN TESTS
+
+pytest --tb=short -q
+
+Expected: 288+ tests pass, 0 failures.
+If any fail, paste full error immediately.
+
+STEP 2: VERIFY CACHE INVALIDATION
+
+Search app.py and confirm _INSIGHT_CACHE.clear() appears in at least 
+TWO places:
+1. Inside _run_pipeline() — on new file upload
+2. Inside global filter apply/clear handler
+
+Report the line numbers of both clear() calls.
+
+STEP 3: SMOKE TEST
+
+1. Upload sample data, run analysis
+2. Select Q24 as outcome, run quartile segmentation
+3. Scroll to Section 5 — verify:
+   a. Each differentiator card shows RED insight card automatically 
+      (no button click needed)
+   b. Insight text is a single sentence with a number in it
+   c. Stats bar (Cramér's V, Winner Rate, Laggard Rate, Lift) 
+      appears BELOW the red card
+   d. Top option caption appears below stats
+4. Click on a single cut in Section 3 — verify manual button still 
+   present (no auto-generation without filter)
+5. Apply a filter to a single cut — verify insight auto-generates 
+   without button click
+6. Report:
+   - First 3 insight headlines generated for differentiators 
+     (paste exact text)
+   - Confirm each headline contains a number
+   - Any errors or blank sections
+
+Do not proceed to Prompt 3 until all 3 smoke test items confirmed.

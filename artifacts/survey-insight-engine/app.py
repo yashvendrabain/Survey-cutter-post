@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import os
 import sys
 import tempfile
@@ -41,8 +42,12 @@ from src.ui_constants import (
     TOOLTIP_THREE_DOWNLOADS,
 )
 
+from src.ai_insights import generate_insight
 from src.cross_cut_suggestions import score_suggestions_for_outcome
-from src.models import OutcomeSegmentationResult
+from src.models import InsightResult, OutcomeSegmentationResult
+
+
+_INSIGHT_CACHE: dict[str, Any] = {}
 
 
 SESSION_DEFAULTS = {
@@ -700,6 +705,95 @@ def _render_insight_section(
             )
 
 
+def _render_insight_card(insight: InsightResult) -> None:
+    app = _require_streamlit()
+    if not insight or not insight.insight:
+        return
+
+    if not app.session_state.get("_insight_css_injected"):
+        app.markdown(
+            """
+        <style>
+        .insight-card {
+            background: linear-gradient(135deg, #CC0000 0%, #8B0000 100%);
+            border-radius: 8px;
+            padding: 20px 24px;
+            margin: 12px 0 8px 0;
+            box-shadow: 0 4px 12px rgba(204, 0, 0, 0.25);
+            position: relative;
+            overflow: hidden;
+        }
+        .insight-card::before {
+            content: '"';
+            position: absolute;
+            top: -10px;
+            left: 16px;
+            font-size: 80px;
+            color: rgba(255,255,255,0.15);
+            font-family: Georgia, serif;
+            line-height: 1;
+        }
+        .insight-headline {
+            color: #FFFFFF;
+            font-size: 15px;
+            font-weight: 600;
+            line-height: 1.5;
+            margin: 0;
+            padding-left: 8px;
+            letter-spacing: 0.01em;
+        }
+        .insight-footer {
+            color: rgba(255,255,255,0.6);
+            font-size: 11px;
+            margin-top: 10px;
+            padding-left: 8px;
+        }
+        .insight-template {
+            background: linear-gradient(135deg, #666666 0%, #444444 100%);
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin: 8px 0;
+        }
+        .insight-template p {
+            color: rgba(255,255,255,0.7);
+            font-size: 13px;
+            margin: 0;
+            font-style: italic;
+        }
+        </style>
+        """,
+            unsafe_allow_html=True,
+        )
+        app.session_state["_insight_css_injected"] = True
+
+    headline = html.escape(insight.insight)
+    if insight.was_template:
+        app.markdown(
+            f"""
+        <div class="insight-template">
+            <p>\U0001F4A1 {headline}</p>
+        </div>
+        """,
+            unsafe_allow_html=True,
+        )
+        return
+
+    footer = (
+        f"AI insight \u00b7 {html.escape(insight.model_used)}"
+        if insight.model_used
+        else "AI insight"
+    )
+    app.markdown(
+        f"""
+    <div class="insight-card">
+        <p class="insight-headline">{headline}</p>
+        <p class="insight-footer">{footer}</p>
+    </div>
+    """,
+        unsafe_allow_html=True,
+    )
+
+
 def _copy_button(df: Any, key: str) -> None:
     """Render a Copy Table button that copies the DataFrame as TSV.
 
@@ -1298,6 +1392,7 @@ def _drain_pending_actions() -> None:
             _invalidate_stage_c_state()
             _rerun_single_cuts_on_active_df()
             _clear_all_cached_insights()
+            _INSIGHT_CACHE.clear()
         except Exception as exc:  # noqa: BLE001
             app.session_state["global_filter_error"] = (
                 f"{type(exc).__name__}: {exc}"
@@ -1431,6 +1526,7 @@ def _run_pipeline(
     )
 
     app = _require_streamlit()
+    _INSIGHT_CACHE.clear()
     app.session_state["decoded_df"] = dataframe
     app.session_state["active_df"] = dataframe
     app.session_state["data_map"] = data_map
@@ -2248,7 +2344,20 @@ def _render_single_cut_card(
     # nesting expanders, and _render_insight_section uses an expander to show
     # the API error detail when the AI call fails.
     if pending_insight is not None:
-        _render_insight_section(**pending_insight)
+        # Auto-generate insight when a per-question filter is active;
+        # otherwise keep the manual "Generate insight" button.
+        if pending_insight["table_kind"] != "single_cut":
+            with app.spinner("Generating insight..."):
+                auto_payload = pending_insight["payload_factory"]()
+                auto_insight = generate_insight(
+                    table_payload=auto_payload,
+                    table_kind=pending_insight["table_kind"],
+                    title_hint=str(pending_insight["title_hint"]),
+                    cache=_INSIGHT_CACHE,
+                )
+            _render_insight_card(auto_insight)
+        else:
+            _render_insight_section(**pending_insight)
 
 
 # ---------------------------------------------------------------------------
@@ -2707,6 +2816,7 @@ def _clear_global_filter_action() -> None:
     app.session_state["active_df"] = app.session_state["decoded_df"]
     _invalidate_stage_c_state()
     _rerun_single_cuts_on_active_df()
+    _INSIGHT_CACHE.clear()
     app.rerun()
 
 
@@ -3705,27 +3815,16 @@ def _render_outcome_summary_panel(seg: OutcomeSegmentationResult) -> None:
     app = _require_streamlit()
     app.markdown("### \U0001F3AF Outcome Analysis")
 
+    laggard_label = seg.segment_definition.loser_label
     col1, col2, col3, col4 = app.columns(4)
     col1.metric("Outcome Variable", seg.outcome_question_id)
     col2.metric("Winners", seg.winner_n)
-    col3.metric("Losers", seg.loser_n)
+    col3.metric(laggard_label + "s", seg.loser_n)
     col4.metric("Differentiators", len(seg.differentiators))
 
     for rank, diff in enumerate(seg.differentiators[:10], start=1):
         with app.container():
-            c1, c2, c3, c4 = app.columns([3, 1, 1, 1])
-            c1.markdown(f"**{rank}. {_truncate(diff.question_text, 70)}**")
-            c2.caption("Cram\u00e9r's V")
-            c2.markdown(f"V={diff.cramers_v:.3f}")
-            c3.caption("Winner Rate")
-            c3.markdown(f"{diff.top_option_winner_rate:.1%}")
-            c4.caption("Lift")
-            lift_text = (
-                "\u221E"
-                if diff.top_option_lift >= 900
-                else f"{diff.top_option_lift:.2f}x"
-            )
-            c4.markdown(lift_text)
+            app.markdown(f"**{rank}.** {_truncate(diff.question_text, 70)}")
 
             diff_payload = {
                 "question_id": diff.question_id,
@@ -3738,15 +3837,36 @@ def _render_outcome_summary_panel(seg: OutcomeSegmentationResult) -> None:
                 "winner_n": diff.winner_n,
                 "loser_n": diff.loser_n,
             }
-            title_hint = f"Key differentiator: {diff.question_text[:50]}"
-            _render_insight_section(
-                insight_key=f"insight_diff_{diff.question_id}",
-                payload_factory=lambda p=diff_payload, t=title_hint: (
-                    _normalise_insight_payload(p, "differentiator", t)
-                ),
-                table_kind="differentiator",
-                title_hint=title_hint,
+            with app.spinner(
+                f"Generating insight for {_truncate(diff.question_text, 40)}..."
+            ):
+                insight = generate_insight(
+                    table_payload=diff_payload,
+                    table_kind="differentiator",
+                    title_hint=diff.question_text[:50],
+                    cache=_INSIGHT_CACHE,
+                )
+            _render_insight_card(insight)
+
+            c1, c2, c3, c4 = app.columns(4)
+            c1.metric("Cram\u00e9r's V", f"{diff.cramers_v:.3f}")
+            c2.metric(
+                f"{seg.segment_definition.winner_label} Rate",
+                f"{diff.top_option_winner_rate:.1%}",
             )
+            c3.metric(
+                f"{seg.segment_definition.loser_label} Rate",
+                f"{diff.top_option_loser_rate:.1%}",
+            )
+            c4.metric(
+                "Lift",
+                "\u221E" if diff.top_option_lift >= 900 else f"{diff.top_option_lift:.2f}x",
+            )
+            app.caption(f"Top differentiating option: **{diff.top_option_label}**")
+
+            if diff.warnings:
+                app.caption(f"\u26A0\uFE0F {' | '.join(diff.warnings)}")
+
             app.divider()
 
 
