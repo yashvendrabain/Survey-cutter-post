@@ -2944,21 +2944,6 @@ def _section_survey_classification() -> None:
                 )
 
     result = app.session_state["survey_type_result"]
-    app.markdown("### \U0001F4CA Survey Classification")
-    col1, col2 = app.columns([1, 2])
-    with col1:
-        app.metric("Survey Type", result.survey_type.replace("_", " ").title())
-        app.metric("Confidence", f"{result.confidence:.0%}")
-    with col2:
-        app.markdown("**Detection Signals:**")
-        for signal in result.signals[:3]:
-            app.caption(f"\u2022 {signal}")
-        if len(result.signals) > 3:
-            with app.expander(f"Show {len(result.signals) - 3} more signals"):
-                for signal in result.signals[3:]:
-                    app.caption(f"\u2022 {signal}")
-
-    app.markdown("---")
     app.markdown("### \U0001F3AF Outcome Variable Selection")
     app.info(
         "Select the primary outcome variable for segmentation analysis. "
@@ -3078,14 +3063,15 @@ def _render_segment_definition_ui() -> None:
         "respondents into two groups for segmentation analysis."
     )
 
+    _SEG_MODE_LABELS = {
+        "categorical": "Categorical (select winner values)",
+        "numeric_threshold": "Numeric threshold (above/below a value)",
+        "quartile": "Quartile (top 25% = Winners vs bottom 25% = Laggards)",
+    }
     seg_mode = app.radio(
         "Segmentation mode",
-        options=["categorical", "numeric_threshold"],
-        format_func=lambda x: (
-            "Categorical (select winner values)"
-            if x == "categorical"
-            else "Numeric threshold (above/below a value)"
-        ),
+        options=["categorical", "numeric_threshold", "quartile"],
+        format_func=lambda x: _SEG_MODE_LABELS[x],
         key="seg_mode_radio",
         horizontal=True,
     )
@@ -3119,18 +3105,18 @@ def _render_segment_definition_ui() -> None:
                     "Winner label", value="Winner", key="winner_label_input"
                 )
                 loser_label = app.text_input(
-                    "Loser label", value="Loser", key="loser_label_input"
+                    "Laggard label", value="Laggard", key="loser_label_input"
                 )
                 segment_definition = SegmentDefinition(
                     outcome_question_id=outcome_id,
                     segment_mode="categorical",
                     winner_values=winner_codes,
                     winner_label=winner_label or "Winner",
-                    loser_label=loser_label or "Loser",
+                    loser_label=loser_label or "Laggard",
                 )
             else:
                 app.warning("Select at least one winner value to continue.")
-    else:
+    elif seg_mode == "numeric_threshold":
         threshold = app.number_input(
             "Threshold value",
             value=50.0,
@@ -3160,6 +3146,21 @@ def _render_segment_definition_ui() -> None:
             threshold_direction=direction,
             winner_label=winner_label or "High",
             loser_label=loser_label or "Low",
+        )
+    else:
+        quartile_winner = app.radio(
+            "Winner quartile",
+            options=["top", "bottom"],
+            format_func=lambda value: (
+                "Top quartile" if value == "top" else "Bottom quartile"
+            ),
+            key=f"quartile_winner_{outcome_id}",
+            horizontal=True,
+        )
+        segment_definition = SegmentDefinition(
+            outcome_question_id=outcome_id,
+            segment_mode="quartile",
+            quartile_winner=quartile_winner,
         )
 
     if segment_definition is None:
@@ -3209,11 +3210,13 @@ def _render_segmentation_results() -> None:
     app.markdown("---")
     app.markdown("### \U0001F4C8 Segmentation Results")
 
+    _winner_lbl = seg.segment_definition.winner_label
+    _loser_lbl = seg.segment_definition.loser_label
     col1, col2, col3 = app.columns(3)
     with col1:
-        app.metric("Winners", seg.winner_n)
+        app.metric(f"{_winner_lbl}s", seg.winner_n)
     with col2:
-        app.metric("Losers", seg.loser_n)
+        app.metric(f"{_loser_lbl}s", seg.loser_n)
     with col3:
         app.metric("Differentiators Found", len(seg.differentiators))
 
@@ -3227,8 +3230,8 @@ def _render_segmentation_results() -> None:
                 "Question": f"{diff.question_id}: {diff.question_text[:60]}",
                 "Top Option": diff.top_option_label,
                 "Cram\u00e9r's V": f"{diff.cramers_v:.3f}",
-                "Winner Rate": f"{diff.top_option_winner_rate:.1%}",
-                "Loser Rate": f"{diff.top_option_loser_rate:.1%}",
+                f"{_winner_lbl} Rate": f"{diff.top_option_winner_rate:.1%}",
+                f"{_loser_lbl} Rate": f"{diff.top_option_loser_rate:.1%}",
                 "Lift": (
                     f"{diff.top_option_lift:.2f}x"
                     if diff.top_option_lift < 900
@@ -3269,9 +3272,9 @@ def _render_segmentation_results() -> None:
                 app.caption(trait.question_text[:80])
             with tcol2:
                 app.metric(
-                    "Winner Rate",
+                    f"{_winner_lbl} Rate",
                     f"{trait.winner_rate:.1%}",
-                    delta=f"+{trait.rate_gap:.1%} vs losers",
+                    delta=f"+{trait.rate_gap:.1%} vs {_loser_lbl.lower()}s",
                 )
             matching_diff = next(
                 (

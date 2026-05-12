@@ -1,0 +1,130 @@
+Prompt 1 changes from Codex — apply 3 changes to Survey Analysis Engine.
+No AI wiring in this batch. Pure logic and UI changes.
+
+FILES TO REPLACE (verbatim from Codex):
+1. src/survey_type_detector.py — full replacement
+2. src/models.py — full replacement
+3. src/outcome_segmentation.py — full replacement
+4. tests/test_survey_type_detector.py — full replacement
+5. tests/test_outcome_segmentation.py — full replacement
+
+FILES TO PATCH (app.py is too large to replace — apply targeted changes):
+
+PATCH A — Import and session state (already present in Codex app.py 
+snippet, verify these exist, add if missing):
+Line ~28: from src.cross_cut_suggestions import score_suggestions_for_outcome
+Line ~29: from src.models import OutcomeSegmentationResult
+SESSION_DEFAULTS must include: "segmentation_result": None
+
+PATCH B — Survey type detection call (lines ~779-784):
+Replace the entire _section_survey_classification() function with the 
+version from Codex. Key changes:
+- detect_survey_type() still called and stored in session_state
+- Survey Classification banner (📊 header, survey type metric, 
+  confidence metric, detection signals list/expander) is DELETED
+- Outcome variable dropdown remains
+- Top N candidates expander remains
+- Segment definition UI remains with NEW quartile radio option
+
+PATCH C — Segment Definition UI (lines ~887-960):
+The segment mode radio must now have THREE options:
+  options=["categorical", "numeric_threshold", "quartile"]
+  format_func: 
+    "categorical" → "Categorical (select winner values)"
+    "numeric_threshold" → "Numeric threshold (above/below a value)"
+    "quartile" → "Quartile (top 25% = Winners vs bottom 25% = Laggards)"
+
+Add quartile branch after the numeric_threshold branch:
+    elif seg_mode == "quartile":
+        quartile_winner = app.radio(
+            "Winner quartile",
+            options=["top", "bottom"],
+            format_func=lambda value: (
+                "Top quartile" if value == "top" else "Bottom quartile"
+            ),
+            key=f"quartile_winner_{outcome_question_id}",
+        )
+        segment_definition = SegmentDefinition(
+            outcome_question_id=outcome_question_id,
+            segment_mode="quartile",
+            quartile_winner=quartile_winner,
+        )
+
+PATCH D — Display label rename in _render_segmentation_results():
+Every place "Loser" or "Losers" appears as a DISPLAYED STRING in 
+_render_segmentation_results() must become "Laggard"/"Laggards".
+Specifically:
+- Column header "Laggard Rate" (not "Loser Rate")
+- col3.metric shows laggard count using seg.segment_definition.loser_label
+- Winner profile section uses profile.loser_label for display
+Data field names (loser_n, loser_rate, top_option_loser_rate) 
+are NOT renamed — these are internal data fields.
+
+STEP 1: RUN TESTS
+
+pytest tests/test_survey_type_detector.py -v
+pytest tests/test_outcome_segmentation.py -v  
+pytest --tb=short -q
+
+Expected:
+- test_survey_type_detector.py: 11 tests pass (was 10, +1 new)
+- test_outcome_segmentation.py: 14 tests pass (was 12, +2 new)
+- Full suite: 288+ tests pass (was 285)
+
+STEP 2: VERIFY CHANGES
+
+Run this quick probe in the shell:
+
+python3 -c "
+from src.models import SegmentDefinition
+# Test 1: Default loser label
+sd = SegmentDefinition('Q1', 'quartile')
+print('loser_label default:', sd.loser_label)  # must print: Laggard
+print('quartile_winner default:', sd.quartile_winner)  # must print: top
+
+# Test 2: Growth agenda short circuit
+import pandas as pd
+from src.survey_type_detector import detect_survey_type
+schema = {
+    'questions': [{
+        'canonical_id': 'Q1',
+        'raw_id': 'Q1',
+        'question_text': 'How much did your organization revenue change in 2023?',
+        'type_hint': 'values_range',
+        'value_range': (1, 5),
+        'options': [(1, 'Low'), (2, 'High')],
+        'sub_columns': [],
+        'parent_canonical_id': None,
+        'source_row': 1,
+        'warnings': [],
+    }],
+    'source_path': 'test.xlsx',
+    'sheet_name': 'Sheet1',
+    'total_rows_in_sheet': 1,
+    'parser_warnings': [],
+}
+result = detect_survey_type(schema, pd.DataFrame({'record': [1]}))
+print('survey_type:', result.survey_type)  # must print: growth_strategy
+print('confidence:', result.confidence)  # must print: 0.95
+"
+
+STEP 3: SMOKE TEST IN UI
+
+1. Upload sample data and run analysis
+2. Verify Survey Classification banner is GONE 
+   (no "📊 Survey Classification" header, no confidence score visible)
+3. Verify Outcome Variable dropdown still appears
+4. In Segment Definition, verify THREE radio options appear:
+   - Categorical (select winner values)
+   - Numeric threshold (above/below a value)  
+   - Quartile (top 25% = Winners vs bottom 25% = Laggards)
+5. Select "Quartile" mode and click "▶ Run Outcome Segmentation"
+6. Verify results show "Winner" and "Laggard" labels (not "Loser")
+
+Report back:
+- Test counts (all 3 test runs)
+- Probe output (loser_label, quartile_winner, survey_type, confidence)
+- Smoke test: confirm banner gone, 3 radio options present, 
+  quartile segmentation runs without error
+- winner_n and loser_n from quartile run
+- Any errors
