@@ -465,6 +465,25 @@ def _compute_outlier_flags(values: list) -> list:
         return ["" for _ in values]
 
 
+_ICONS = {
+    "analysis": '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 12l3-3 3 3 5-5"/></svg>',
+    "insight": '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg>',
+    "outlier": '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+    "winner": '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11"/></svg>',
+}
+
+
+def _icon(name: str, color: str = "currentColor") -> str:
+    """Render an inline SVG icon as an HTML string."""
+    svg = _ICONS.get(name, "")
+    if not svg:
+        return ""
+    return (
+        f'<span style="display:inline-flex;align-items:center;'
+        f'color:{color};margin-right:8px;vertical-align:middle;">{svg}</span>'
+    )
+
+
 def _style_outliers(df: Any) -> Any:
     """Per-column outlier styling for st.dataframe Styler.apply(axis=None)."""
 
@@ -488,6 +507,36 @@ def _style_outliers(df: Any) -> Any:
             except Exception:
                 continue
         return styled
+    except Exception:
+        return pd.DataFrame("", index=df.index, columns=df.columns)
+
+
+def _style_outliers_by_row(df: Any) -> Any:
+    """Per-row outlier styling — applies _style_outliers logic across each row.
+
+    For row-percent cross-tabs, outliers should be detected within each row
+    (since row values sum to 100%). Implemented by transposing, reusing the
+    per-column logic, and transposing the result back. Values are scaled to
+    0-100 first because _compute_outlier_flags ignores series whose max < 10.
+    """
+    try:
+        scaled = df * 100
+        styled_t = _style_outliers(scaled.T)
+        return styled_t.T
+    except Exception:
+        return pd.DataFrame("", index=df.index, columns=df.columns)
+
+
+def _style_outliers_pct(df: Any) -> Any:
+    """Per-column outlier styling for fractional (0-1) percent dataframes.
+
+    Scales values to 0-100 before delegating to _style_outliers so the
+    `max < 10` guard in _compute_outlier_flags doesn't silently disable
+    highlighting on percent tables.
+    """
+    try:
+        scaled = df * 100
+        return _style_outliers(scaled)
     except Exception:
         return pd.DataFrame("", index=df.index, columns=df.columns)
 
@@ -755,7 +804,7 @@ def _render_insight_section(
         )
         if ir.was_template:
             app.caption(
-                f"\U0001F4CB {ir.insight}  *(template \u2014 AI unavailable)*"
+                f"{ir.insight}  *(template \u2014 AI unavailable)*"
             )
             if ir.error_message:
                 with app.expander("Why was AI unavailable?"):
@@ -1008,7 +1057,7 @@ def _render_sc_table_html(
     # helper is itself rendered inside an st.expander in the single-cut card,
     # and Streamlit forbids nested expanders.
     show_table = app.checkbox(
-        "\U0001F4CB Show table view (sortable \u00b7 copyable \u00b7 downloadable)",
+        "Show table view (sortable \u00b7 copyable \u00b7 downloadable)",
         key=f"sc_tableview_{key_suffix}" if key_suffix else None,
         value=False,
     )
@@ -1772,9 +1821,15 @@ def _preview_cross_tab(result: Any) -> None:
     if display_mode == "Counts":
         _styled_dataframe(df, use_container_width=True)
     else:
+        # Row %: outliers per row (rows sum to 100%); Column %: per column.
+        # Both use scaled (0-100) helpers so the outlier detector's
+        # `max < 10` guard doesn't suppress highlights on fractional values.
+        styler_fn = (
+            _style_outliers_by_row if display_mode == "Row %" else _style_outliers_pct
+        )
         try:
             app.dataframe(
-                df.style.apply(_style_outliers, axis=None).format("{:.1%}"),
+                df.style.apply(styler_fn, axis=None).format("{:.1%}"),
                 use_container_width=True,
             )
         except Exception:
@@ -2871,7 +2926,7 @@ def _section_survey_classification() -> None:
                 )
 
     result = app.session_state["survey_type_result"]
-    app.markdown("### \U0001F3AF Outcome Variable Selection")
+    app.markdown("### Outcome Variable Selection")
     app.info(
         "Select the primary outcome variable for segmentation analysis. "
         "Auto-selected based on survey type; you can override."
@@ -2899,7 +2954,7 @@ def _section_survey_classification() -> None:
                 top_val_pct = col.value_counts(normalize=True).iloc[0]
                 if top_val_pct >= 0.90:
                     return (
-                        f"\u26A0\uFE0F {base} ({score} \u2014 "
+                        f"{base} ({score} \u2014 "
                         f"{top_val_pct:.0%} single value, likely too imbalanced)"
                     )
         return f"{base} ({score})"
@@ -2947,7 +3002,7 @@ def _section_survey_classification() -> None:
 
     if len(result.candidate_outcome_questions) > 1:
         with app.expander(
-            f"\U0001F4CB Top {len(result.candidate_outcome_questions)} "
+            f"Top {len(result.candidate_outcome_questions)} "
             "Outcome Candidates (auto-ranked)"
         ):
             for opt in result.candidate_outcome_questions:
@@ -2981,7 +3036,7 @@ def _render_segment_definition_ui() -> None:
     from src.models import SegmentDefinition
 
     app.markdown("---")
-    app.markdown("### \u2699\uFE0F Segment Definition")
+    app.markdown("### Segment Definition")
     app.info(
         "Define what 'winner' means for your outcome variable. This splits "
         "respondents into two groups for segmentation analysis."
@@ -3132,7 +3187,7 @@ def _render_segmentation_results() -> None:
         return
 
     app.markdown("---")
-    app.markdown("### \U0001F4C8 Segmentation Results")
+    app.markdown("### Segmentation Results")
 
     _winner_lbl = seg.segment_definition.winner_label
     _loser_lbl = seg.segment_definition.loser_label
@@ -3177,14 +3232,14 @@ def _render_segmentation_results() -> None:
         ]
         if infinite_lift_diffs:
             app.caption(
-                f"\u26A0\uFE0F {len(infinite_lift_diffs)} question(s) show "
+                f"{len(infinite_lift_diffs)} question(s) show "
                 "infinite lift (\u221E) \u2014 the loser segment had 0 "
                 "respondents select this option. Interpret with caution; "
                 "check sample sizes."
             )
 
     if seg.winner_profile.defining_traits:
-        app.markdown(f"#### \U0001F3C6 {seg.winner_profile.winner_label} Profile")
+        app.markdown(f"#### {seg.winner_profile.winner_label} Profile")
         app.caption(
             "Composite archetype built from top "
             f"{len(seg.winner_profile.defining_traits)} differentiating traits"
@@ -3210,12 +3265,12 @@ def _render_segmentation_results() -> None:
             )
             if matching_diff and matching_diff.warnings:
                 app.caption(
-                    f"\u26A0\uFE0F {' | '.join(matching_diff.warnings)}"
+                    f"{' | '.join(matching_diff.warnings)}"
                 )
 
     if seg.skipped_questions:
         with app.expander(
-            f"\u26A0\uFE0F {len(seg.skipped_questions)} questions skipped"
+            f"{len(seg.skipped_questions)} questions skipped"
         ):
             for qid, reason in seg.skipped_questions:
                 app.caption(f"\u2022 {qid}: {reason}")
@@ -3658,7 +3713,11 @@ def _section_ai_analysis() -> None:
         return
 
     app.markdown("---")
-    app.markdown("## 5\ufe0f\u20e3 AI Analysis")
+    app.markdown(
+        f'<h2 style="display:flex;align-items:center;margin:1rem 0;">'
+        f'{_icon("analysis", "#CC0000")}AI Analysis</h2>',
+        unsafe_allow_html=True,
+    )
 
     seg: OutcomeSegmentationResult | None = app.session_state.get(
         "segmentation_result"
@@ -3787,7 +3846,7 @@ def _render_smart_cross_cut_suggestions_panel(
     seg: OutcomeSegmentationResult,
 ) -> None:
     app = _require_streamlit()
-    app.markdown("### \U0001F517 Smart Cross-cut Suggestions")
+    app.markdown("### Smart Cross-cut Suggestions")
     app.caption("Ranked by relevance to your outcome variable")
 
     if not app.session_state.get("cross_cut_results"):
@@ -3827,7 +3886,11 @@ def _render_smart_cross_cut_suggestions_panel(
 
 def _render_winner_profile_panel(seg: OutcomeSegmentationResult) -> None:
     app = _require_streamlit()
-    app.markdown("### \U0001F3C6 Winner Profile")
+    app.markdown(
+        f'<h3 style="display:flex;align-items:center;margin:1rem 0;">'
+        f'{_icon("winner", "#CC0000")}Winner Profile</h3>',
+        unsafe_allow_html=True,
+    )
 
     profile = seg.winner_profile
     if not profile.defining_traits:

@@ -1,0 +1,233 @@
+Two targeted UI changes to app.py. No logic changes.
+
+══════════════════════════════════════════════════════════════════════
+CHANGE A — OUTLIER HIGHLIGHT FOR % VIEWS (ROW % AND COLUMN %)
+══════════════════════════════════════════════════════════════════════
+
+Context: Cross-tab tables have a count view and two % views: 
+row % and column %. Outlier highlighting (red max-value cells) 
+currently only works in the count view. Apply it to both % views.
+
+Find the cross-tab preview rendering. Search:
+    grep -n "row %\|col %\|column %\|row_pct\|col_pct\|_preview_cross_tab" app.py
+
+In _preview_cross_tab() (around line 585), find the rendering 
+for each view. The count view currently applies an outlier 
+highlight — find that logic (probably a style function or 
+pandas Styler).
+
+If the count view uses pandas Styler with a "highlight_max" or 
+similar function, apply the SAME function to the row% and column% 
+dataframes.
+
+The pattern is typically:
+
+    styled = df.style.background_gradient(...) 
+    # OR
+    styled = df.style.apply(highlight_max_row, axis=1)
+
+Find this in the count rendering branch, then duplicate it for 
+the row % and column % branches.
+
+If the count view uses a custom CSS class injection (e.g. wrapping 
+the max cell in <span class="outlier-cell">), apply the same 
+wrapping to the row% and column% tables.
+
+CRITICAL: The "max" in row % means max per row (since rows sum 
+to 100%). The "max" in column % means max per column (since 
+columns sum to 100%). Make sure axis is correct:
+
+For row %: highlight max per row (axis=1)
+For column %: highlight max per column (axis=0)
+For counts: whatever it currently does (likely axis=1 or global max)
+
+Add this CSS to whichever CSS injection block already defines 
+outlier styling (search for "outlier" or "max-cell" or red 
+background in the CSS):
+
+    .outlier-cell {
+        background: #FCEBEB !important;
+        color: #CC0000 !important;
+        font-weight: 500 !important;
+    }
+
+If no .outlier-cell class exists yet, add it. If a different 
+mechanism is used (e.g. pandas Styler.apply), keep using that — 
+just extend the apply call to the % views.
+
+══════════════════════════════════════════════════════════════════════
+CHANGE B — REMOVE LARGE EMOJIS, ADD PROFESSIONAL ICONS SPARINGLY
+══════════════════════════════════════════════════════════════════════
+
+Context: Current UI has emoji prefixes everywhere (🎯 Outcome 
+Variable Selection, 📊 Segment summary, 🏆 Winner Profile, 
+🔗 Smart Cross-cut Suggestions, etc.). Looks amateur. Remove 
+ALL of them. Add small SVG icons in a few specific places only.
+
+PART 1 — Remove emoji prefixes from section/panel headers.
+
+Run this grep to find all emoji prefixes in markdown headers:
+
+    grep -nE '"###?\s*[🎯📊🏆🔗📤🔍🧠⚙️📈🔀⬇️💡⚠️📋✓○]' app.py
+
+For EVERY match found:
+- If it's a heading like "### 🎯 Outcome Analysis" → replace with 
+  "### Outcome Analysis" (just drop the emoji + space)
+- If it's a panel title HTML like "🏆 Winner Profile" → drop emoji
+- If it's a button label like "▶ Run Segmentation" → drop emoji
+
+DO NOT remove emojis from:
+- The nav bar badges (✓ for completed steps stays)
+- AI insight card labels (the icon class system, not text emojis)
+
+PART 2 — Add SVG icons in 4 specific places only.
+
+Define these 4 inline SVG icons in a Python constant at the top 
+of app.py (after imports):
+
+_ICONS = {
+    "analysis": '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 12l3-3 3 3 5-5"/></svg>',
+    "insight": '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg>',
+    "outlier": '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+    "winner": '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11"/></svg>',
+}
+
+def _icon(name: str, color: str = "currentColor") -> str:
+    """Render an inline SVG icon. Returns HTML string."""
+    svg = _ICONS.get(name, "")
+    if not svg:
+        return ""
+    return f'<span style="display:inline-flex;align-items:center;color:{color};margin-right:6px;vertical-align:middle;">{svg}</span>'
+
+PART 3 — Use icons in exactly these 4 places:
+
+PLACE 1 — Section header for AI Analysis (Section 5):
+Find where "### AI Analysis" or similar is rendered in 
+_section_ai_analysis(). Replace with:
+
+    app.markdown(
+        f'<h3 style="display:flex;align-items:center;margin:1rem 0;">'
+        f'{_icon("analysis", "#CC0000")}AI Analysis</h3>',
+        unsafe_allow_html=True,
+    )
+
+PLACE 2 — Key Insight card label inside _render_insight_card_v2.
+Find where the "Key insight" label is rendered. Add the insight 
+icon before the label text. If it's already using HTML markdown:
+
+Change label rendering to:
+    {_icon("insight", "#CC0000")}Key insight
+
+PLACE 3 — Outlier Insight card label.
+Same pattern — find the "Outlier" label and prepend:
+    {_icon("outlier", "#CC0000")}Outlier
+
+PLACE 4 — Winner Profile header in _render_winner_profile_panel.
+Find "Winner Profile" header. Replace with:
+
+    app.markdown(
+        f'<h3 style="display:flex;align-items:center;margin:1rem 0;">'
+        f'{_icon("winner", "#CC0000")}Winner Profile</h3>',
+        unsafe_allow_html=True,
+    )
+
+DO NOT add icons to:
+- Sub-section headers
+- Metric labels
+- Button labels  
+- Table headers
+- The nav bar (already uses text + badges, no icons needed)
+
+The 4 icons appear ONLY at these 4 places. The rest of the app 
+stays clean text.
+
+══════════════════════════════════════════════════════════════════════
+CHANGE C (ADD AFTER CODEX DELIVERS) — "SHOW MORE" DIFFERENTIATORS
+══════════════════════════════════════════════════════════════════════
+
+This part is BLOCKED until Codex adds the top_differentiators() 
+method. Mark it pending and apply only after Codex's changes are in.
+
+Once Codex's models.py update is merged:
+
+Find _render_outcome_summary_panel() in app.py.
+
+Find the line that slices seg.differentiators[:10] for display.
+
+Replace the static slice with a session-state-driven limit:
+
+    # Initialise display limit
+    limit_key = f"diff_limit_{seg.outcome_question_id}"
+    if limit_key not in app.session_state:
+        app.session_state[limit_key] = 10
+    
+    current_limit = app.session_state[limit_key]
+    total_available = seg.max_available_differentiators
+    displayed_diffs = seg.top_differentiators(current_limit)
+    
+    # ... render the table using displayed_diffs instead of seg.differentiators[:10] ...
+    
+    # After the table, add a "Show more" button if more are available
+    if current_limit < total_available:
+        col1, col2, col3 = app.columns([1, 2, 1])
+        with col2:
+            if app.button(
+                f"Show 10 more differentiators "
+                f"({total_available - current_limit} remaining)",
+                key=f"show_more_{seg.outcome_question_id}",
+                use_container_width=True,
+            ):
+                app.session_state[limit_key] = min(current_limit + 10, total_available)
+                app.rerun()
+    elif total_available > 10:
+        # All shown — give option to collapse back
+        col1, col2, col3 = app.columns([1, 2, 1])
+        with col2:
+            if app.button(
+                f"Showing all {total_available} — click to collapse to top 10",
+                key=f"collapse_{seg.outcome_question_id}",
+                use_container_width=True,
+            ):
+                app.session_state[limit_key] = 10
+                app.rerun()
+
+══════════════════════════════════════════════════════════════════════
+VERIFICATION
+══════════════════════════════════════════════════════════════════════
+
+CHANGE A (outlier highlight on % views):
+1. Run a cross-tab cross cut
+2. Switch view to "Row %" — verify max value in each row has 
+   red/pink highlight
+3. Switch view to "Column %" — verify max value in each column 
+   has red/pink highlight
+4. Switch back to Counts — verify highlight still works there
+
+CHANGE B (emoji removal + 4 icons):
+1. Grep again: grep -nE '"###?\s*[🎯📊🏆🔗📤🔍🧠⚙️📈🔀]' app.py
+   Expected: 0 matches (or only intentional nav-bar emojis)
+2. Visual check:
+   - Section headers no longer have emoji prefixes
+   - "AI Analysis" header shows a chart icon in red on the left
+   - "Key insight" label shows a lightbulb icon
+   - "Outlier" label shows a warning triangle icon
+   - "Winner Profile" header shows a trophy icon
+   - Other sections (Upload, Filter, Single cuts, etc.) have no icons
+
+CHANGE C (deferred — only after Codex merges):
+1. Run segmentation with sample data — should produce 37+ differentiators
+2. Default view shows 10 rows in the table
+3. "Show 10 more differentiators (27 remaining)" button below the table
+4. Click it — table shows 20 rows, button updates to "(17 remaining)"
+5. Click 2 more times — table reaches all 37 rows
+6. Button changes to "Showing all 37 — click to collapse"
+7. Click collapse — back to 10 rows
+
+Report:
+- Test count (pytest --tb=short -q)
+- Outlier highlight on row %: works? (yes/no)
+- Outlier highlight on column %: works? (yes/no)
+- Emoji grep count after fix
+- 4 icons visible in correct places? (yes/no)
+- Any errors
+- Confirm Change C is queued pending Codex delivery
