@@ -87,6 +87,7 @@ SESSION_DEFAULTS = {
     "outcome_variable_id": None,
     "segment_definition": None,
     "segmentation_result": None,
+    "active_section": "1",
 }
 
 
@@ -421,6 +422,50 @@ def _inject_global_css() -> None:
     }
     section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"] {
         gap: 0 !important;
+    }
+
+    /* Sidebar radio -> nav items */
+    section[data-testid="stSidebar"] div[role="radiogroup"] {
+        gap: 2px !important;
+        display: flex !important;
+        flex-direction: column !important;
+    }
+    section[data-testid="stSidebar"] div[role="radiogroup"] > label {
+        display: flex !important;
+        align-items: center !important;
+        padding: 9px 12px !important;
+        font-size: 13px !important;
+        color: #444 !important;
+        border-left: 3px solid transparent !important;
+        border-radius: 4px !important;
+        cursor: pointer !important;
+        background: transparent !important;
+        transition: background 0.1s ease !important;
+        margin: 0 !important;
+    }
+    section[data-testid="stSidebar"] div[role="radiogroup"] > label:hover {
+        background: #F0F0F0 !important;
+    }
+    section[data-testid="stSidebar"] div[role="radiogroup"] > label > div:first-child {
+        display: none !important;
+    }
+    section[data-testid="stSidebar"] div[role="radiogroup"] > label > div:last-child {
+        font-size: 13px !important;
+        font-family: Arial, sans-serif !important;
+        font-weight: 400 !important;
+        color: #444 !important;
+        width: 100% !important;
+    }
+    section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) {
+        background: #FCEBEB !important;
+        border-left-color: #CC0000 !important;
+    }
+    section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) > div:last-child {
+        color: #CC0000 !important;
+        font-weight: 500 !important;
+    }
+    section[data-testid="stSidebar"] .stRadio > label {
+        display: none !important;
     }
     </style>
     """,
@@ -1470,6 +1515,7 @@ def _drain_pending_actions() -> None:
             app.session_state["global_filter_state"] = state
             app.session_state["global_filter_stats"] = stats
             app.session_state["active_df"] = filtered_df
+            app.session_state["active_section"] = "3"
             _invalidate_stage_c_state()
             _rerun_single_cuts_on_active_df()
             _clear_all_cached_insights()
@@ -1632,6 +1678,7 @@ def _run_pipeline(
     app.session_state["filtered_workbook_bytes"] = None
     _clear_all_cached_insights()
     app.session_state["run_complete"] = True
+    app.session_state["active_section"] = "2"
     status.update(label="Analysis complete.", state="complete")
 
 
@@ -1674,6 +1721,7 @@ def _run_cross_cut_specs(specs: list[Any]) -> None:
     app.session_state["cross_cut_results"] = list(existing.values())
     app.session_state["cross_cut_skips"].extend(skips)
     app.session_state["cross_cut_only_bytes"] = None
+    app.session_state["active_section"] = "4"
     _refresh_full_workbook()
 
 
@@ -2536,7 +2584,7 @@ def _render_manual_cross_cut() -> None:
 
 
 def _render_sidebar() -> None:
-    """Workflow navigator + run-log card."""
+    """Clickable workflow navigator + run-log card."""
     app = _require_streamlit()
     has_data = app.session_state.get("schema") is not None
     has_results = bool(app.session_state.get("results"))
@@ -2546,13 +2594,33 @@ def _render_sidebar() -> None:
     n_crosscuts = len(app.session_state.get("cross_cut_results", []))
     seg = app.session_state.get("segmentation_result")
     n_diffs = len(seg.differentiators) if seg else 0
-    gf_state = app.session_state.get("global_filter_state") or {}
-    n_filters = len(gf_state) if isinstance(gf_state, dict) else 0
+    gf_state = app.session_state.get("global_filter_state")
+    n_filters = len(gf_state.filters) if gf_state is not None and hasattr(gf_state, "filters") else 0
+
+    def _step_label(num: str, name: str, count: str, done: bool) -> str:
+        icon = "✓" if done else "○"
+        return f"{icon}  {num}. {name}  ·  {count}"
+
+    section_ids = ["1", "2", "3", "4", "5"]
+    id_to_label = {
+        "1": _step_label("1", "Upload",        "done" if has_data else "—",          has_data),
+        "2": _step_label("2", "Global filter", str(n_filters) if n_filters else "—", n_filters > 0),
+        "3": _step_label("3", "Single cuts",   str(n_singlecuts) if n_singlecuts else "—", n_singlecuts > 0),
+        "4": _step_label("4", "Cross cuts",    str(n_crosscuts) if n_crosscuts else "—",   n_crosscuts > 0),
+        "5": _step_label("5", "AI analysis",   str(n_diffs) if n_diffs else "—",          has_segmentation),
+    }
+
+    current_id = app.session_state.get("active_section", "1")
+    if current_id not in section_ids:
+        current_id = "1"
+    # Sync widget state with active_section so auto-advance is authoritative
+    if app.session_state.get("sidebar_nav_radio") != current_id:
+        app.session_state["sidebar_nav_radio"] = current_id
 
     with app.sidebar:
         app.markdown(
             """
-            <div style="padding: 8px 16px 16px; border-bottom: 1px solid #E5E5E5; margin-bottom: 4px;">
+            <div style="padding: 4px 0 14px; border-bottom: 1px solid #E5E5E5; margin-bottom: 8px;">
                 <div style="font-size: 13px; font-weight: 600; color: #1A1A1A;">Survey Analysis Engine</div>
                 <div style="font-size: 11px; color: #888; margin-top: 2px;">Workflow navigator</div>
             </div>
@@ -2561,77 +2629,46 @@ def _render_sidebar() -> None:
         )
 
         app.markdown(
-            '<div class="sb-section">Workflow</div>',
+            '<div style="font-size: 10px; font-weight: 600; color: #999; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px;">Workflow</div>',
             unsafe_allow_html=True,
         )
 
-        steps = [
-            ("1", "Upload", "done" if has_data else "—"),
-            ("2", "Global filter", str(n_filters) if n_filters else "—"),
-            ("3", "Single cuts", str(n_singlecuts) if n_singlecuts else "—"),
-            ("4", "Cross cuts", str(n_crosscuts) if n_crosscuts else "—"),
-            ("5", "AI analysis", str(n_diffs) if n_diffs else "—"),
-        ]
+        chosen_id = app.radio(
+            label="Workflow steps",
+            options=section_ids,
+            format_func=lambda sid: id_to_label[sid],
+            key="sidebar_nav_radio",
+            label_visibility="collapsed",
+        )
 
-        for num, label, count in steps:
-            is_active = (
-                (num == "5" and has_segmentation)
-                or (num == "4" and has_crosscuts and not has_segmentation)
-                or (num == "3" and has_results and not has_crosscuts)
-                or (num == "2" and has_data and not has_results)
-                or (num == "1" and not has_data)
-            )
-            cls = "sb-item active" if is_active else "sb-item"
-            if num == "1" and has_data:
-                icon = "✓"
-            elif num == "2" and n_filters > 0:
-                icon = "✓"
-            elif num == "3" and n_singlecuts > 0:
-                icon = "✓"
-            elif num == "4" and n_crosscuts > 0:
-                icon = "✓"
-            elif num == "5" and has_segmentation:
-                icon = "✓"
-            else:
-                icon = "○"
-
-            app.markdown(
-                f"""
-                <div class="{cls}">
-                    <span style="display:flex; align-items:center; gap:8px;">
-                        <span style="font-size:11px; color:inherit; opacity:0.7;">{icon}</span>
-                        <span>{num}. {label}</span>
-                    </span>
-                    <span class="sb-count">{count}</span>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+        if chosen_id != current_id:
+            app.session_state["active_section"] = chosen_id
+            app.rerun()
 
         if seg is not None:
             laggard_label = seg.segment_definition.loser_label
             app.markdown(
-                '<div class="sb-section" style="margin-top:8px;">Last run</div>',
+                '<div style="font-size: 10px; font-weight: 600; color: #999; text-transform: uppercase; letter-spacing: 0.1em; margin: 20px 0 6px;">Last run</div>',
                 unsafe_allow_html=True,
             )
             app.markdown(
                 f"""
-                <div class="sb-runlog">
-                    <div class="sb-runlog-row">
-                        <span>Outcome</span>
-                        <strong>{seg.outcome_question_id}</strong>
+                <div style="padding: 10px 12px; background: #FFF; border: 0.5px solid #E5E5E5; border-radius: 6px; font-size: 12px;">
+                    <div style="display: flex; justify-content: space-between; padding: 3px 0;">
+                        <span style="color: #888;">Outcome</span>
+                        <strong style="color: #1A1A1A; font-weight: 500;">{seg.outcome_question_id}</strong>
                     </div>
-                    <div class="sb-runlog-row">
-                        <span>Winners</span>
-                        <strong>{seg.winner_n:,}</strong>
+                    <div style="display: flex; justify-content: space-between; padding: 3px 0;">
+                        <span style="color: #888;">Winners</span>
+                        <strong style="color: #1A1A1A; font-weight: 500;">{seg.winner_n:,}</strong>
                     </div>
-                    <div class="sb-runlog-row">
-                        <span>{laggard_label}s</span>
-                        <strong>{seg.loser_n:,}</strong>
+                    <div style="display: flex; justify-content: space-between; padding: 3px 0;">
+                        <span style="color: #888;">{laggard_label}s</span>
+                        <strong style="color: #1A1A1A; font-weight: 500;">{seg.loser_n:,}</strong>
                     </div>
-                    <div class="sb-runlog-row">
-                        <span>Differentiators</span>
-                        <strong>{n_diffs}</strong>
+                    <div style="display: flex; justify-content: space-between; padding: 3px 0;">
+                        <span style="color: #888;">Differentiators</span>
+                        <strong style="color: #CC0000; font-weight: 500;">{n_diffs}</strong>
                     </div>
                 </div>
                 """,
@@ -2640,9 +2677,9 @@ def _render_sidebar() -> None:
         else:
             app.markdown(
                 """
-                <div style="padding: 12px 16px; margin-top: 16px; font-size: 11px;
-                     color: #999; border-top: 1px solid #E5E5E5;">
-                    Run analysis in Section 5 to see segmentation results here.
+                <div style="padding: 12px 12px; margin-top: 16px; font-size: 11px;
+                     color: #999; border-top: 1px solid #E5E5E5; line-height: 1.5;">
+                    Run segmentation in step 5 to see results here.
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -3287,6 +3324,7 @@ def _render_segment_definition_ui() -> None:
                 for audit in local_audit:
                     calc_log.record(audit)
             app.session_state["segmentation_result"] = seg_result
+            app.session_state["active_section"] = "5"
             app.rerun()
 
 
@@ -4015,7 +4053,7 @@ def main() -> None:
     app = _require_streamlit()
     app.set_page_config(
         page_title=APP_TITLE,
-        page_icon="\U0001F4CA",
+        page_icon="📊",
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -4029,17 +4067,23 @@ def main() -> None:
     if gf_error:
         app.error(f"Global filter failed: {gf_error}")
 
-    _section_upload()
-    app.divider()
-    _section_global_filter()
-    app.divider()
-    _section_survey_classification()
-    _section_single_cuts()
-    app.divider()
-    _section_cross_cuts()
-    app.divider()
-    _section_ai_analysis()
-    _section_downloads()
+    active = app.session_state.get("active_section", "1")
+
+    if active == "1":
+        _section_upload()
+    elif active == "2":
+        _section_global_filter()
+        _section_survey_classification()
+    elif active == "3":
+        _section_single_cuts()
+    elif active == "4":
+        _section_cross_cuts()
+    elif active == "5":
+        _section_ai_analysis()
+        app.divider()
+        _section_downloads()
+    else:
+        _section_upload()
 
 
 if __name__ == "__main__":

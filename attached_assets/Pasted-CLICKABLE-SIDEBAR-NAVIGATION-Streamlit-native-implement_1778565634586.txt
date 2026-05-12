@@ -1,0 +1,321 @@
+CLICKABLE SIDEBAR NAVIGATION — Streamlit-native implementation
+
+Replace the current visual-only sidebar with a real navigation system 
+using st.radio + restyled CSS + section routing.
+
+Steps 1-5 become clickable. Clicking a step shows ONLY that section's 
+content in the main pane. No more infinite-scroll page with everything 
+stacked.
+
+══════════════════════════════════════════════════════════════════════
+PART 1 — ADD ROUTING STATE
+══════════════════════════════════════════════════════════════════════
+
+Add to SESSION_DEFAULTS dict at top of app.py:
+    "active_section": "1",  # current workflow step shown in main pane
+
+══════════════════════════════════════════════════════════════════════
+PART 2 — REPLACE _render_sidebar() ENTIRELY
+══════════════════════════════════════════════════════════════════════
+
+def _render_sidebar() -> None:
+    """Clickable workflow navigator + run-log card."""
+    app = _require_streamlit()
+    has_data = app.session_state.get("schema") is not None
+    has_results = bool(app.session_state.get("results"))
+    has_crosscuts = bool(app.session_state.get("cross_cut_results"))
+    has_segmentation = app.session_state.get("segmentation_result") is not None
+    n_singlecuts = len(app.session_state.get("results", []))
+    n_crosscuts = len(app.session_state.get("cross_cut_results", []))
+    seg = app.session_state.get("segmentation_result")
+    n_diffs = len(seg.differentiators) if seg else 0
+    gf_state = app.session_state.get("global_filter_state") or {}
+    n_filters = len(gf_state) if isinstance(gf_state, dict) else 0
+    
+    # Build the option labels with checkmarks and counts
+    def _step_label(num: str, name: str, count: str, done: bool) -> str:
+        icon = "✓" if done else "○"
+        return f"{icon}  {num}. {name}  ·  {count}"
+    
+    options = [
+        _step_label("1", "Upload",        "done" if has_data else "—",          has_data),
+        _step_label("2", "Global filter", str(n_filters) if n_filters else "—", n_filters > 0),
+        _step_label("3", "Single cuts",   str(n_singlecuts) if n_singlecuts else "—", n_singlecuts > 0),
+        _step_label("4", "Cross cuts",    str(n_crosscuts) if n_crosscuts else "—",   n_crosscuts > 0),
+        _step_label("5", "AI analysis",   str(n_diffs) if n_diffs else "—",          has_segmentation),
+    ]
+    
+    # Map labels back to section ids
+    section_ids = ["1", "2", "3", "4", "5"]
+    label_to_id = dict(zip(options, section_ids))
+    id_to_label = dict(zip(section_ids, options))
+    
+    # Current selection
+    current_id = app.session_state.get("active_section", "1")
+    if current_id not in section_ids:
+        current_id = "1"
+    current_label = id_to_label[current_id]
+    
+    with app.sidebar:
+        # Sidebar header
+        app.markdown(
+            """
+            <div style="padding: 4px 0 14px; border-bottom: 1px solid #E5E5E5; margin-bottom: 8px;">
+                <div style="font-size: 13px; font-weight: 600; color: #1A1A1A;">Survey Analysis Engine</div>
+                <div style="font-size: 11px; color: #888; margin-top: 2px;">Workflow navigator</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        
+        # Workflow radio — CSS makes it look like nav items
+        app.markdown(
+            '<div style="font-size: 10px; font-weight: 600; color: #999; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px;">Workflow</div>',
+            unsafe_allow_html=True,
+        )
+        
+        chosen_label = app.radio(
+            label="Workflow steps",
+            options=options,
+            index=options.index(current_label),
+            key="sidebar_nav_radio",
+            label_visibility="collapsed",
+        )
+        
+        # Update active section if changed
+        chosen_id = label_to_id[chosen_label]
+        if chosen_id != current_id:
+            app.session_state["active_section"] = chosen_id
+            app.rerun()
+        
+        # Run-log card
+        if seg is not None:
+            laggard_label = seg.segment_definition.loser_label
+            app.markdown(
+                '<div style="font-size: 10px; font-weight: 600; color: #999; text-transform: uppercase; letter-spacing: 0.1em; margin: 20px 0 6px;">Last run</div>',
+                unsafe_allow_html=True,
+            )
+            app.markdown(
+                f"""
+                <div style="padding: 10px 12px; background: #FFF; border: 0.5px solid #E5E5E5; border-radius: 6px; font-size: 12px;">
+                    <div style="display: flex; justify-content: space-between; padding: 3px 0;">
+                        <span style="color: #888;">Outcome</span>
+                        <strong style="color: #1A1A1A; font-weight: 500;">{seg.outcome_question_id}</strong>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; padding: 3px 0;">
+                        <span style="color: #888;">Winners</span>
+                        <strong style="color: #1A1A1A; font-weight: 500;">{seg.winner_n:,}</strong>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; padding: 3px 0;">
+                        <span style="color: #888;">{laggard_label}s</span>
+                        <strong style="color: #1A1A1A; font-weight: 500;">{seg.loser_n:,}</strong>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; padding: 3px 0;">
+                        <span style="color: #888;">Differentiators</span>
+                        <strong style="color: #CC0000; font-weight: 500;">{n_diffs}</strong>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        else:
+            app.markdown(
+                """
+                <div style="padding: 12px 12px; margin-top: 16px; font-size: 11px; 
+                     color: #999; border-top: 1px solid #E5E5E5; line-height: 1.5;">
+                    Run segmentation in step 5 to see results here.
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+══════════════════════════════════════════════════════════════════════
+PART 3 — RESTYLE THE RADIO TO LOOK LIKE NAV ITEMS
+══════════════════════════════════════════════════════════════════════
+
+Inside _inject_global_css(), at the END of the <style> block (just 
+before </style>), append these radio-specific overrides:
+
+    /* Sidebar radio → nav items */
+    section[data-testid="stSidebar"] div[role="radiogroup"] {
+        gap: 2px !important;
+        display: flex !important;
+        flex-direction: column !important;
+    }
+    
+    /* Each radio option container */
+    section[data-testid="stSidebar"] div[role="radiogroup"] > label {
+        display: flex !important;
+        align-items: center !important;
+        padding: 9px 12px !important;
+        font-size: 13px !important;
+        color: #444 !important;
+        border-left: 3px solid transparent !important;
+        border-radius: 4px !important;
+        cursor: pointer !important;
+        background: transparent !important;
+        transition: background 0.1s ease !important;
+        margin: 0 !important;
+    }
+    
+    section[data-testid="stSidebar"] div[role="radiogroup"] > label:hover {
+        background: #F0F0F0 !important;
+    }
+    
+    /* Hide the actual radio circle */
+    section[data-testid="stSidebar"] div[role="radiogroup"] > label > div:first-child {
+        display: none !important;
+    }
+    
+    /* The label text container */
+    section[data-testid="stSidebar"] div[role="radiogroup"] > label > div:last-child {
+        font-size: 13px !important;
+        font-family: Arial, sans-serif !important;
+        font-weight: 400 !important;
+        color: #444 !important;
+        width: 100% !important;
+    }
+    
+    /* Active (checked) radio styling */
+    section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) {
+        background: #FCEBEB !important;
+        border-left-color: #CC0000 !important;
+    }
+    section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) > div:last-child {
+        color: #CC0000 !important;
+        font-weight: 500 !important;
+    }
+    
+    /* Hide radio label header that Streamlit auto-renders */
+    section[data-testid="stSidebar"] .stRadio > label {
+        display: none !important;
+    }
+
+══════════════════════════════════════════════════════════════════════
+PART 4 — SECTION ROUTING IN main()
+══════════════════════════════════════════════════════════════════════
+
+REPLACE the main() function with this routed version:
+
+def main() -> None:
+    app = _require_streamlit()
+    app.set_page_config(
+        page_title=APP_TITLE,
+        page_icon="📊",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+    _initialise_session_state()
+    _inject_global_css()
+    _render_brand_header()
+    _drain_pending_actions()
+    _render_sidebar()
+    
+    gf_error = app.session_state.get("global_filter_error")
+    if gf_error:
+        app.error(f"Global filter failed: {gf_error}")
+    
+    # Section routing — render only the active section
+    active = app.session_state.get("active_section", "1")
+    
+    if active == "1":
+        _section_upload()
+    elif active == "2":
+        _section_global_filter()
+        _section_survey_classification()  # outcome variable lives here
+    elif active == "3":
+        _section_single_cuts()
+    elif active == "4":
+        _section_cross_cuts()
+    elif active == "5":
+        _section_ai_analysis()
+        # Downloads tucked into step 5 footer so users find them after analysis
+        app.divider()
+        _section_downloads()
+    else:
+        _section_upload()  # fallback
+
+══════════════════════════════════════════════════════════════════════
+PART 5 — AUTO-ADVANCE ON KEY ACTIONS
+══════════════════════════════════════════════════════════════════════
+
+To make the workflow feel natural, auto-advance the active section 
+when key actions complete. Add these single-line additions:
+
+After successful file upload (in _section_upload or _run_pipeline, 
+right after schema/dataframe are stored in session_state):
+
+    app.session_state["active_section"] = "2"
+
+After global filter applied (in the filter-apply handler):
+
+    app.session_state["active_section"] = "3"
+
+After single cuts complete running (end of the run-analysis handler):
+
+    app.session_state["active_section"] = "3"  # stays on 3 to view
+
+After cross cuts complete:
+
+    app.session_state["active_section"] = "4"
+
+After segmentation runs (end of compute_outcome_segmentation handler 
+in _section_survey_classification):
+
+    app.session_state["active_section"] = "5"
+
+NOTE: Only auto-advance ONCE on completion — don't force-advance on 
+every rerun, or the user can't navigate backward by clicking the 
+sidebar. Use a "just_completed_X" session flag if needed:
+
+    if not app.session_state.get("_advanced_after_upload"):
+        app.session_state["active_section"] = "2"
+        app.session_state["_advanced_after_upload"] = True
+
+══════════════════════════════════════════════════════════════════════
+PART 6 — STREAMLIT VERSION CHECK
+══════════════════════════════════════════════════════════════════════
+
+The CSS uses :has() selector which requires modern browsers AND 
+Streamlit's radio component must render as <label><input><div></div></label>.
+
+Run:
+    pip show streamlit | grep Version
+
+Required: Streamlit >= 1.30 (for stable radio DOM structure).
+If version is older, run:
+    pip install streamlit>=1.30 --break-system-packages
+
+══════════════════════════════════════════════════════════════════════
+VERIFICATION
+══════════════════════════════════════════════════════════════════════
+
+STEP 1: Run tests
+pytest --tb=short -q
+Expected: all tests pass (no test should depend on section routing).
+
+STEP 2: Smoke test
+1. Reload app — verify active section is "1. Upload" 
+2. Verify sidebar shows 5 numbered steps with ○ icons (none completed)
+3. Upload sample data — sidebar should auto-advance to step 2, 
+   "1. Upload" gets ✓ checkmark
+4. Click "3. Single cuts" — main pane shows only Section 3 content
+5. Click "1. Upload" — main pane goes back to upload section
+6. Confirm active step shows pink/red highlight + left border
+7. Run analysis → cross cut → segmentation, verify each step gets ✓ 
+   and sidebar count updates
+8. After segmentation, verify run-log card appears at bottom of 
+   sidebar with Outcome / Winners / Laggards / Differentiators
+
+STEP 3: Report back
+- Test count (pass/fail)
+- Streamlit version
+- Sidebar appearance: do the 5 radio items look like nav items 
+  (no radio dots visible, pink active state, count visible)?
+- Navigation: does clicking a step show only that section?
+- Auto-advance: does step 1 auto-jump to step 2 after upload?
+- Screenshot or description of any visual issues remaining
+- Any errors
+
+Do not proceed to other work until smoke test confirms clickable 
+navigation is working.
