@@ -4122,57 +4122,85 @@ def _render_nav_bar() -> None:
     nav_items = ""
     for anchor_id, label, badge in tabs:
         badge_html = (
-            f'<span style="font-size:10px;color:#CC0000;margin-left:4px;">{badge}</span>'
+            f'<span class="nav-badge">{html.escape(badge)}</span>'
             if badge else ""
         )
         nav_items += (
             f'<a href="#{anchor_id}" class="nav-tab" data-target="{anchor_id}">'
-            f'{label}{badge_html}</a>'
+            f'{html.escape(label)}{badge_html}</a>'
         )
 
     app.markdown(
         f"""
     <style>
     .nav-bar {{
-        display: flex;
-        gap: 4px;
-        padding: 8px 16px;
-        background: #FFF;
-        border-bottom: 1px solid #E5E5E5;
-        position: sticky;
-        top: 64px;
-        z-index: 99998;
-        overflow-x: auto;
+        position: sticky !important;
+        top: 64px !important;
+        z-index: 998 !important;
+        background: #FFFFFF !important;
+        border-bottom: 1px solid #E5E5E5 !important;
+        display: flex !important;
+        gap: 0 !important;
+        padding: 0 8px !important;
+        height: 44px !important;
+        align-items: center !important;
+        overflow-x: auto !important;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06) !important;
+        margin: 0 -8px 12px -8px !important;
     }}
-    [id^="section-"] {{ scroll-margin-top: 130px; }}
     .nav-tab {{
-        display: inline-flex;
-        align-items: center;
-        padding: 6px 14px;
-        font-size: 13px;
-        font-family: Arial, sans-serif;
-        color: #444;
-        text-decoration: none;
-        border-radius: 6px;
-        border: 0.5px solid #E0E0E0;
-        background: #FFF;
-        white-space: nowrap;
-        cursor: pointer;
-        transition: all 0.15s ease;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        padding: 0 16px !important;
+        height: 44px !important;
+        font-size: 13px !important;
+        font-family: Arial, sans-serif !important;
+        font-weight: 400 !important;
+        color: #666 !important;
+        text-decoration: none !important;
+        border: none !important;
+        border-bottom: 2px solid transparent !important;
+        border-radius: 0 !important;
+        background: transparent !important;
+        white-space: nowrap !important;
+        cursor: pointer !important;
+        transition: color 0.15s ease, border-color 0.15s ease !important;
+        box-sizing: border-box !important;
+        outline: none !important;
     }}
     .nav-tab:hover {{
-        background: #F5F5F5;
-        color: #1A1A1A;
-        border-color: #CCC;
+        color: #1A1A1A !important;
+        background: transparent !important;
+        border-bottom: 2px solid #DDD !important;
+        text-decoration: none !important;
     }}
     .nav-tab.active {{
-        background: #CC0000;
-        color: #FFF !important;
-        border-color: #CC0000;
-        font-weight: 500;
+        color: #CC0000 !important;
+        font-weight: 500 !important;
+        border-bottom: 2px solid #CC0000 !important;
+        background: transparent !important;
     }}
-    .nav-tab.active span {{
-        color: rgba(255,255,255,0.85) !important;
+    .nav-badge {{
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        background: #F0F0F0 !important;
+        color: #666 !important;
+        font-size: 10px !important;
+        font-weight: 500 !important;
+        padding: 1px 6px !important;
+        border-radius: 10px !important;
+        min-width: 18px !important;
+        line-height: 1.4 !important;
+    }}
+    .nav-tab.active .nav-badge {{
+        background: #FCEBEB !important;
+        color: #CC0000 !important;
+    }}
+    [id^="section-"] {{
+        scroll-margin-top: 130px !important;
+        display: block !important;
     }}
     </style>
 
@@ -4221,11 +4249,37 @@ def _render_nav_bar() -> None:
             setActive(current);
         }}
 
+        function positionNavBar() {{
+            var header = document.querySelector('.custom-header');
+            if (!header) {{
+                header = document.querySelector('.brand-header');
+            }}
+            var navBar = document.querySelector('.nav-bar');
+            if (header && navBar) {{
+                var headerHeight = header.offsetHeight;
+                navBar.style.top = headerHeight + 'px';
+                var anchors = document.querySelectorAll('[id^="section-"]');
+                anchors.forEach(function(a) {{
+                    a.style.scrollMarginTop = (headerHeight + 44 + 16) + 'px';
+                }});
+                var mainBlock = document.querySelector(
+                    '.main .block-container, [data-testid="block-container"]'
+                );
+                if (mainBlock) {{
+                    mainBlock.style.paddingTop = (headerHeight + 44 + 16) + 'px';
+                }}
+            }}
+        }}
+
         window.addEventListener('scroll', onScroll, {{ passive: true }});
         document.addEventListener('scroll', onScroll, {{ passive: true }});
         try {{ window.parent.addEventListener('scroll', onScroll, {{ passive: true }}); }} catch(e) {{}}
+        window.addEventListener('resize', positionNavBar, {{ passive: true }});
         setInterval(onScroll, 200);
+        setInterval(positionNavBar, 500);
         setTimeout(onScroll, 800);
+        setTimeout(positionNavBar, 100);
+        setTimeout(positionNavBar, 600);
     }})();
     </script>
     """,
