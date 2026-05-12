@@ -1,0 +1,366 @@
+Two targeted fixes. No logic changes. CSS and JS only.
+
+══════════════════════════════════════════════════════════════════════
+FIX 1 — RED HEADER STAYS FIXED AFTER UPLOAD/RERUN
+══════════════════════════════════════════════════════════════════════
+
+The red header disappears after Streamlit reruns because it gets 
+re-injected only once (session flag _global_css_injected prevents 
+re-injection) but the DOM is rebuilt on rerun and the header HTML 
+is gone.
+
+TWO PARTS to fix this:
+
+PART A — Remove the session flag guard on CSS injection.
+The CSS only needs to be injected once per page load, but Streamlit
+reruns clear the DOM. Remove the guard so it re-injects on every 
+Python rerun:
+
+Find _inject_global_css() (or _inject_theme_css()):
+
+REMOVE these lines:
+    if app.session_state.get("_global_css_injected"):
+        return
+    ...
+    app.session_state["_global_css_injected"] = True
+
+The CSS injection is idempotent in the browser — injecting the same 
+<style> block multiple times has no visible effect. Remove the guard 
+entirely so it always runs.
+
+PART B — Make the red header position: fixed in CSS.
+
+Find the .brand-header CSS rule (or whatever CSS defines the red 
+header — search for background: #CC0000 in the style block).
+
+Add position fixed and z-index:
+
+    .brand-header {
+        background: #CC0000 !important;
+        color: #FFF !important;
+        padding: 12px 24px !important;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        z-index: 999999 !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 14px !important;
+        border-bottom: 1px solid #A30000 !important;
+        font-family: Arial, sans-serif !important;
+    }
+
+Then add top padding to the main content so it doesn't hide behind 
+the fixed header:
+
+    .main .block-container {
+        padding-top: 70px !important;
+    }
+
+Also make the nav bar sticky just below the header:
+
+Find the nav bar container in _render_nav_bar(). The button row 
+needs a wrapper div with sticky positioning. Inject this CSS:
+
+    .nav-bar-wrapper {
+        position: sticky !important;
+        top: 50px !important;
+        z-index: 99998 !important;
+        background: #FFF !important;
+        padding: 8px 0 !important;
+        border-bottom: 1px solid #E5E5E5 !important;
+        margin-bottom: 12px !important;
+    }
+
+In _render_nav_bar(), wrap the columns in this div:
+
+    app.markdown('<div class="nav-bar-wrapper">', unsafe_allow_html=True)
+    
+    cols = app.columns(len(tabs))
+    for i, (section_id, label) in enumerate(tabs):
+        ... existing button code ...
+    
+    app.markdown('</div>', unsafe_allow_html=True)
+
+NOTE: Streamlit may render content between the opening and closing 
+markdown divs outside the div due to how it handles components. 
+If that happens, instead inject the sticky CSS only (no wrapper div) 
+and target the existing Streamlit column container:
+
+    div[data-testid="stHorizontalBlock"]:first-of-type {
+        position: sticky !important;
+        top: 50px !important;
+        z-index: 99998 !important;
+        background: #FFF !important;
+        padding: 8px 0 4px !important;
+        border-bottom: 1px solid #E5E5E5 !important;
+    }
+
+Try the wrapper div approach first. If the nav bar disappears, 
+fall back to the CSS selector approach.
+
+══════════════════════════════════════════════════════════════════════
+FIX 2 — SCROLLSPY: NAV TAB UPDATES AS USER SCROLLS
+══════════════════════════════════════════════════════════════════════
+
+Currently the nav only changes when you click a tab. We want it to 
+also update as the user scrolls — whichever section is most visible 
+in the viewport highlights its tab automatically.
+
+Since Streamlit renders all sections sequentially when in scroll mode
+(currently we route by section — scroll mode requires showing all 
+sections at once), we need to decide between two modes:
+
+MODE A (current): Click to navigate — only one section visible at a time.
+Tab acts as a router. Scrollspy doesn't apply.
+
+MODE B (scrollspy): ALL sections rendered, stacked vertically. 
+User scrolls. As they pass section headings, the nav tab updates.
+This requires showing ALL sections at once (back to infinite scroll) 
+but with the nav bar telling them where they are.
+
+These are mutually exclusive. The user wants MODE B (scrollspy).
+
+IMPLEMENT MODE B:
+
+PART A — Change main() to render ALL sections always:
+
+def main() -> None:
+    app = _require_streamlit()
+    app.set_page_config(
+        page_title=APP_TITLE,
+        page_icon="📊",
+        layout="wide",
+        initial_sidebar_state="collapsed",
+    )
+    _initialise_session_state()
+    _inject_global_css()
+    _drain_pending_actions()
+    
+    # Always render nav bar at top
+    _render_nav_bar()
+    
+    gf_error = app.session_state.get("global_filter_error")
+    if gf_error:
+        app.error(f"Global filter failed: {gf_error}")
+    
+    # Render ALL sections — nav bar handles scrollspy + jump links
+    _section_upload()
+    app.divider()
+    _section_global_filter()
+    _section_survey_classification()
+    app.divider()
+    _section_single_cuts()
+    app.divider()
+    _section_cross_cuts()
+    app.divider()
+    _section_ai_analysis()
+    app.divider()
+    _section_downloads()
+
+PART B — Add anchor IDs to each section heading.
+
+In each _section_X() function, find the first st.markdown() or 
+st.header() call that renders the section title.
+
+Add an invisible anchor before each section:
+
+In _section_upload():
+    app.markdown('<div id="section-upload"></div>', unsafe_allow_html=True)
+
+In _section_global_filter():
+    app.markdown('<div id="section-filter"></div>', unsafe_allow_html=True)
+
+In _section_single_cuts():
+    app.markdown('<div id="section-singlecuts"></div>', unsafe_allow_html=True)
+
+In _section_cross_cuts():
+    app.markdown('<div id="section-crosscuts"></div>', unsafe_allow_html=True)
+
+In _section_ai_analysis():
+    app.markdown('<div id="section-ai"></div>', unsafe_allow_html=True)
+
+In _section_downloads():
+    app.markdown('<div id="section-downloads"></div>', unsafe_allow_html=True)
+
+PART C — Nav bar buttons scroll to anchor instead of routing.
+
+Replace the button click handler in _render_nav_bar().
+Instead of session_state routing + rerun, inject JS that:
+1. Scrolls to the anchor when clicked
+2. Highlights the correct tab
+
+Replace _render_nav_bar() with:
+
+def _render_nav_bar() -> None:
+    app = _require_streamlit()
+
+    n_singlecuts = len(app.session_state.get("results", []))
+    n_crosscuts = len(app.session_state.get("cross_cut_results", []))
+    seg = app.session_state.get("segmentation_result")
+    n_diffs = len(seg.differentiators) if seg else 0
+    gf_state = app.session_state.get("global_filter_state") or {}
+    n_filters = len(gf_state) if isinstance(gf_state, dict) else 0
+    has_data = app.session_state.get("schema") is not None
+
+    tabs = [
+        ("section-upload",     "Upload",      "✓" if has_data else ""),
+        ("section-filter",     "Filter",      f"({n_filters})" if n_filters else ""),
+        ("section-singlecuts", "Single cuts", f"({n_singlecuts})" if n_singlecuts else ""),
+        ("section-crosscuts",  "Cross cuts",  f"({n_crosscuts})" if n_crosscuts else ""),
+        ("section-ai",         "AI analysis", f"({n_diffs})" if n_diffs else ""),
+        ("section-downloads",  "Downloads",   ""),
+    ]
+
+    # Build nav HTML with JS scroll + scrollspy
+    nav_items = ""
+    for anchor_id, label, badge in tabs:
+        badge_html = f'<span style="font-size:10px; color:#CC0000; margin-left:4px;">{badge}</span>' if badge else ""
+        nav_items += f"""
+        <a href="#{anchor_id}" class="nav-tab" onclick="setActive(this)" 
+           data-target="{anchor_id}">
+            {label}{badge_html}
+        </a>"""
+
+    app.markdown(f"""
+    <style>
+    .nav-bar {{
+        display: flex;
+        gap: 4px;
+        padding: 8px 16px;
+        background: #FFF;
+        border-bottom: 1px solid #E5E5E5;
+        position: sticky;
+        top: 50px;
+        z-index: 99998;
+        overflow-x: auto;
+    }}
+    .nav-tab {{
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 14px;
+        font-size: 13px;
+        font-family: Arial, sans-serif;
+        color: #444;
+        text-decoration: none;
+        border-radius: 6px;
+        border: 0.5px solid #E0E0E0;
+        background: #FFF;
+        white-space: nowrap;
+        cursor: pointer;
+        transition: all 0.15s ease;
+    }}
+    .nav-tab:hover {{
+        background: #F5F5F5;
+        color: #1A1A1A;
+        border-color: #CCC;
+    }}
+    .nav-tab.active {{
+        background: #CC0000;
+        color: #FFF !important;
+        border-color: #CC0000;
+        font-weight: 500;
+    }}
+    .nav-tab.active span {{
+        color: rgba(255,255,255,0.85) !important;
+    }}
+    </style>
+
+    <div class="nav-bar" id="main-nav-bar">
+        {nav_items}
+    </div>
+
+    <script>
+    (function() {{
+        // Set active tab
+        function setActive(el) {{
+            document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+            if (el) el.classList.add('active');
+        }}
+
+        // Scroll to anchor smoothly
+        document.querySelectorAll('.nav-tab').forEach(function(tab) {{
+            tab.addEventListener('click', function(e) {{
+                e.preventDefault();
+                var target = document.getElementById(tab.dataset.target);
+                if (target) {{
+                    target.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+                }}
+                setActive(tab);
+            }});
+        }});
+
+        // Scrollspy — update active tab as user scrolls
+        var sections = [
+            'section-upload',
+            'section-filter', 
+            'section-singlecuts',
+            'section-crosscuts',
+            'section-ai',
+            'section-downloads'
+        ];
+
+        function onScroll() {{
+            var scrollPos = window.scrollY + 120;
+            var current = sections[0];
+            sections.forEach(function(id) {{
+                var el = document.getElementById(id);
+                if (el && el.offsetTop <= scrollPos) {{
+                    current = id;
+                }}
+            }});
+            document.querySelectorAll('.nav-tab').forEach(function(tab) {{
+                tab.classList.remove('active');
+                if (tab.dataset.target === current) {{
+                    tab.classList.add('active');
+                }}
+            }});
+        }}
+
+        // Use Streamlit's iframe scroll
+        window.addEventListener('scroll', onScroll, {{ passive: true }});
+        
+        // Also listen on parent if in iframe
+        try {{
+            window.parent.addEventListener('scroll', onScroll, {{ passive: true }});
+        }} catch(e) {{}}
+
+        // Initial state
+        setTimeout(function() {{
+            onScroll();
+        }}, 800);
+    }})();
+    </script>
+    """, unsafe_allow_html=True)
+
+══════════════════════════════════════════════════════════════════════
+VERIFICATION
+══════════════════════════════════════════════════════════════════════
+
+1. pytest --tb=short -q → all tests pass
+2. Load app:
+   - Red header visible at top
+   - Nav bar with 6 tabs below header
+   - ALL sections visible (scroll page — Upload, Filter, 
+     Single cuts, Cross cuts, AI analysis, Downloads all present)
+3. Scroll slowly down the page:
+   - As you pass each section, its tab in nav bar turns RED
+   - Other tabs go back to gray
+4. Click "Single cuts" tab:
+   - Page smoothly scrolls to single cuts section
+   - Single cuts tab turns red
+5. Red header stays visible while scrolling (fixed position)
+6. After upload + run analysis:
+   - Header still shows (does not disappear)
+   - Upload tab shows ✓
+   - Single cuts tab shows count
+
+Report:
+- Test count
+- Red header fixed: stays visible while scrolling? (yes/no)
+- Scrollspy works: tab updates as you scroll? (yes/no)
+- Click to jump: clicking tab scrolls to section? (yes/no)
+- Any visual issues

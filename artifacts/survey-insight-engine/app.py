@@ -335,8 +335,6 @@ _CUSTOM_HEADER_HTML = """
 
 def _inject_global_css() -> None:
     app = _require_streamlit()
-    if app.session_state.get("_global_css_injected"):
-        return
 
     app.markdown(
         """
@@ -383,7 +381,6 @@ def _inject_global_css() -> None:
     app.markdown(_THEME_CSS, unsafe_allow_html=True)
     app.markdown(_THEME_CSS_DAY18, unsafe_allow_html=True)
     app.markdown(_CUSTOM_HEADER_HTML, unsafe_allow_html=True)
-    app.session_state["_global_css_injected"] = True
 
 def _inject_theme_css() -> None:
     """Backwards-compatible alias retained for any internal callers."""
@@ -2472,6 +2469,7 @@ def _render_manual_cross_cut() -> None:
 
 def _section_upload() -> None:
     app = _require_streamlit()
+    app.markdown('<div id="section-upload"></div>', unsafe_allow_html=True)
     _section_header("1", SECTION_UPLOAD, anchor="section-1", meta="CSV \u00b7 XLSX \u00b7 DOCX")
     app.markdown(
         "Drop **any combination** of files \u2014 the tool detects what "
@@ -2623,6 +2621,7 @@ def _clear_global_filter_action() -> None:
 
 def _section_global_filter() -> None:
     app = _require_streamlit()
+    app.markdown('<div id="section-filter"></div>', unsafe_allow_html=True)
     _section_header("2", SECTION_GLOBAL_FILTER, anchor="section-2", meta="Subset every analysis")
 
     if not app.session_state["run_complete"]:
@@ -3218,6 +3217,7 @@ def _section_single_cuts() -> None:
     import html as _html
 
     app = _require_streamlit()
+    app.markdown('<div id="section-singlecuts"></div>', unsafe_allow_html=True)
     _section_header("3", SECTION_RESULTS, anchor="section-3", meta="Single cuts")
 
     if not app.session_state["run_complete"]:
@@ -3275,6 +3275,7 @@ def _section_single_cuts() -> None:
 
 def _section_cross_cuts() -> None:
     app = _require_streamlit()
+    app.markdown('<div id="section-crosscuts"></div>', unsafe_allow_html=True)
     _section_header("4", SECTION_CROSS_CUTS, anchor="section-4", meta="Two-question analyses")
 
     if not app.session_state["run_complete"]:
@@ -3392,6 +3393,7 @@ def _section_cross_cuts() -> None:
 
 def _section_downloads() -> None:
     app = _require_streamlit()
+    app.markdown('<div id="section-downloads"></div>', unsafe_allow_html=True)
     _section_header("5", SECTION_DOWNLOADS, anchor="section-5", meta="Workbooks")
 
     if not app.session_state["run_complete"]:
@@ -3599,6 +3601,7 @@ def _normalise_insight_payload(
 
 def _section_ai_analysis() -> None:
     app = _require_streamlit()
+    app.markdown('<div id="section-ai"></div>', unsafe_allow_html=True)
     if not app.session_state.get("run_complete"):
         return
 
@@ -4043,7 +4046,7 @@ def _render_sidebar() -> None:
 
 
 def _render_nav_bar() -> None:
-    """Horizontal navigation bar with section tabs."""
+    """Sticky scrollspy navigation bar (anchor-based jump links)."""
     app = _require_streamlit()
 
     n_singlecuts = len(app.session_state.get("results", []))
@@ -4054,31 +4057,119 @@ def _render_nav_bar() -> None:
     n_filters = len(gf_state.filters) if gf_state is not None and hasattr(gf_state, "filters") else 0
     has_data = app.session_state.get("schema") is not None
 
-    valid_ids = {"upload", "filter", "singlecuts", "crosscuts", "ai", "downloads"}
-    if app.session_state.get("active_section") not in valid_ids:
-        app.session_state["active_section"] = "upload"
-
     tabs = [
-        ("upload",     "📤 Upload"        + ("  ✓" if has_data else "")),
-        ("filter",     "🔍 Filter"        + (f"  ({n_filters})" if n_filters else "")),
-        ("singlecuts", "📊 Single cuts"   + (f"  ({n_singlecuts})" if n_singlecuts else "")),
-        ("crosscuts",  "🔀 Cross cuts"    + (f"  ({n_crosscuts})" if n_crosscuts else "")),
-        ("ai",         "🧠 AI analysis"   + (f"  ({n_diffs})" if n_diffs else "")),
-        ("downloads",  "⬇️ Downloads"),
+        ("section-upload",     "Upload",      "\u2713" if has_data else ""),
+        ("section-filter",     "Filter",      f"({n_filters})" if n_filters else ""),
+        ("section-singlecuts", "Single cuts", f"({n_singlecuts})" if n_singlecuts else ""),
+        ("section-crosscuts",  "Cross cuts",  f"({n_crosscuts})" if n_crosscuts else ""),
+        ("section-ai",         "AI analysis", f"({n_diffs})" if n_diffs else ""),
+        ("section-downloads",  "Downloads",   ""),
     ]
 
-    cols = app.columns(len(tabs))
-    for i, (section_id, label) in enumerate(tabs):
-        is_active = app.session_state["active_section"] == section_id
-        button_type = "primary" if is_active else "secondary"
-        if cols[i].button(
-            label,
-            key=f"navbtn_{section_id}",
-            type=button_type,
-            use_container_width=True,
-        ):
-            app.session_state["active_section"] = section_id
-            app.rerun()
+    nav_items = ""
+    for anchor_id, label, badge in tabs:
+        badge_html = (
+            f'<span style="font-size:10px;color:#CC0000;margin-left:4px;">{badge}</span>'
+            if badge else ""
+        )
+        nav_items += (
+            f'<a href="#{anchor_id}" class="nav-tab" data-target="{anchor_id}">'
+            f'{label}{badge_html}</a>'
+        )
+
+    app.markdown(
+        f"""
+    <style>
+    .nav-bar {{
+        display: flex;
+        gap: 4px;
+        padding: 8px 16px;
+        background: #FFF;
+        border-bottom: 1px solid #E5E5E5;
+        position: sticky;
+        top: 64px;
+        z-index: 99998;
+        overflow-x: auto;
+    }}
+    [id^="section-"] {{ scroll-margin-top: 130px; }}
+    .nav-tab {{
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 14px;
+        font-size: 13px;
+        font-family: Arial, sans-serif;
+        color: #444;
+        text-decoration: none;
+        border-radius: 6px;
+        border: 0.5px solid #E0E0E0;
+        background: #FFF;
+        white-space: nowrap;
+        cursor: pointer;
+        transition: all 0.15s ease;
+    }}
+    .nav-tab:hover {{
+        background: #F5F5F5;
+        color: #1A1A1A;
+        border-color: #CCC;
+    }}
+    .nav-tab.active {{
+        background: #CC0000;
+        color: #FFF !important;
+        border-color: #CC0000;
+        font-weight: 500;
+    }}
+    .nav-tab.active span {{
+        color: rgba(255,255,255,0.85) !important;
+    }}
+    </style>
+
+    <div class="nav-bar" id="main-nav-bar">{nav_items}</div>
+
+    <script>
+    (function() {{
+        var sections = [
+            'section-upload',
+            'section-filter',
+            'section-singlecuts',
+            'section-crosscuts',
+            'section-ai',
+            'section-downloads'
+        ];
+
+        function setActive(id) {{
+            document.querySelectorAll('.nav-tab').forEach(function(tab) {{
+                tab.classList.remove('active');
+                if (tab.dataset.target === id) tab.classList.add('active');
+            }});
+        }}
+
+        document.querySelectorAll('.nav-tab').forEach(function(tab) {{
+            tab.addEventListener('click', function(e) {{
+                e.preventDefault();
+                var target = document.getElementById(tab.dataset.target);
+                if (target) target.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+                setActive(tab.dataset.target);
+            }});
+        }});
+
+        function onScroll() {{
+            var scrollPos = window.scrollY + 120;
+            var current = sections[0];
+            sections.forEach(function(id) {{
+                var el = document.getElementById(id);
+                if (el && el.offsetTop <= scrollPos) current = id;
+            }});
+            setActive(current);
+        }}
+
+        window.addEventListener('scroll', onScroll, {{ passive: true }});
+        try {{ window.parent.addEventListener('scroll', onScroll, {{ passive: true }}); }} catch(e) {{}}
+        setTimeout(onScroll, 800);
+    }})();
+    </script>
+    """,
+        unsafe_allow_html=True,
+    )
 
 
 def main() -> None:
@@ -4087,7 +4178,7 @@ def main() -> None:
         page_title=APP_TITLE,
         page_icon="📊",
         layout="wide",
-        initial_sidebar_state="expanded",
+        initial_sidebar_state="collapsed",
     )
     _initialise_session_state()
     _inject_global_css()
@@ -4095,30 +4186,23 @@ def main() -> None:
     _render_sidebar()
 
     _render_nav_bar()
-    app.divider()
 
     gf_error = app.session_state.get("global_filter_error")
     if gf_error:
         app.error(f"Global filter failed: {gf_error}")
 
-    active = app.session_state.get("active_section", "upload")
-
-    if active == "upload":
-        _section_upload()
-    elif active == "filter":
-        _section_global_filter()
-        app.divider()
-        _section_survey_classification()
-    elif active == "singlecuts":
-        _section_single_cuts()
-    elif active == "crosscuts":
-        _section_cross_cuts()
-    elif active == "ai":
-        _section_ai_analysis()
-    elif active == "downloads":
-        _section_downloads()
-    else:
-        _section_upload()
+    _section_upload()
+    app.divider()
+    _section_global_filter()
+    _section_survey_classification()
+    app.divider()
+    _section_single_cuts()
+    app.divider()
+    _section_cross_cuts()
+    app.divider()
+    _section_ai_analysis()
+    app.divider()
+    _section_downloads()
 
 
 if __name__ == "__main__":
