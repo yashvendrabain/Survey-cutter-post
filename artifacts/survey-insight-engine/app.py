@@ -42,7 +42,12 @@ from src.ui_constants import (
     TOOLTIP_THREE_DOWNLOADS,
 )
 
-from src.ai_insights import generate_insight
+import re as _re
+from src.ai_insights import (
+    generate_insight,
+    generate_outlier_insight,
+    generate_table_insight,
+)
 from src.cross_cut_suggestions import score_suggestions_for_outcome
 from src.models import InsightResult, OutcomeSegmentationResult
 
@@ -328,11 +333,108 @@ _CUSTOM_HEADER_HTML = """
 """
 
 
-def _inject_theme_css() -> None:
+def _inject_global_css() -> None:
     app = _require_streamlit()
-    app.markdown(_THEME_CSS, unsafe_allow_html=True)
-    app.markdown(_THEME_CSS_DAY18, unsafe_allow_html=True)
-    app.markdown(_CUSTOM_HEADER_HTML, unsafe_allow_html=True)
+    if app.session_state.get("_global_css_injected"):
+        return
+
+    app.markdown(
+        '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/3.5.0/tabler-icons.min.css">',
+        unsafe_allow_html=True,
+    )
+
+    app.markdown(
+        """
+    <style>
+    #MainMenu { visibility: hidden; }
+    footer { visibility: hidden; }
+    header[data-testid="stHeader"] { display: none; }
+
+    .main .block-container {
+        padding-top: 0 !important;
+        padding-bottom: 1rem !important;
+        max-width: 100% !important;
+    }
+
+    .brand-header {
+        background: #CC0000;
+        color: #FFF;
+        padding: 12px 24px;
+        margin: 0 -1rem 16px -1rem;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        border-bottom: 1px solid #A30000;
+        font-family: Arial, sans-serif;
+    }
+    .brand-title { font-size: 15px; font-weight: 500; letter-spacing: 0.01em; }
+    .brand-sep { color: rgba(255,255,255,0.4); font-size: 14px; }
+    .brand-context { font-size: 12px; color: rgba(255,255,255,0.82); }
+    .brand-context strong { color: #FFF; font-weight: 500; }
+
+    section[data-testid="stSidebar"] { background: #FAFAFA; border-right: 0.5px solid #E5E5E5; }
+    section[data-testid="stSidebar"] .block-container { padding-top: 1rem; }
+
+    .sb-section { padding: 12px 0 4px; font-size: 10px; font-weight: 500; color: #888; text-transform: uppercase; letter-spacing: 0.08em; }
+    .sb-item { display: flex; align-items: center; gap: 8px; padding: 7px 12px; font-size: 13px; color: #444; border-left: 2px solid transparent; margin: 0 -1rem; padding-left: calc(1rem + 12px); }
+    .sb-item.active { background: #FCEBEB; color: #CC0000; border-left-color: #CC0000; font-weight: 500; }
+    .sb-count { margin-left: auto; font-size: 11px; color: #888; }
+    .sb-item.active .sb-count { color: #CC0000; }
+    .sb-runlog { margin: 16px -1rem 0 -1rem; padding: 12px 16px; border-top: 0.5px solid #E5E5E5; font-size: 11px; color: #666; }
+    .sb-runlog-row { display: flex; justify-content: space-between; padding: 3px 0; }
+    .sb-runlog-row strong { color: #1A1A1A; font-weight: 500; }
+
+    .insight-card { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; background: #FFF; border: 0.5px solid #E5E5E5; border-left: 3px solid #CC0000; border-radius: 6px; margin-bottom: 8px; font-family: Arial, sans-serif; }
+    .insight-icon { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; background: #FCEBEB; color: #CC0000; border-radius: 4px; font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+    .insight-body { flex: 1; min-width: 0; }
+    .insight-label { font-size: 10px; font-weight: 500; color: #888; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 3px; }
+    .insight-text { font-size: 14px; font-weight: 500; line-height: 1.45; color: #1A1A1A; }
+    .insight-text .num { color: #CC0000; font-weight: 500; }
+    .insight-footer { font-size: 10px; color: #999; margin-top: 4px; }
+    .insight-template { background: #F5F5F5; border-left-color: #888; }
+    .insight-template .insight-icon { background: #E5E5E5; color: #888; }
+
+    .ui-panel { background: #FFF; border: 0.5px solid #E5E5E5; border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
+    .ui-panel-head { display: flex; align-items: center; padding: 9px 14px; border-bottom: 0.5px solid #EEE; font-size: 12px; background: #FAFAFA; }
+    .ui-panel-title { font-weight: 500; color: #1A1A1A; }
+    .ui-panel-meta { margin-left: auto; color: #888; font-size: 11px; }
+
+    div[data-testid="stDataFrame"] { font-size: 12px; }
+
+    div[data-testid="stButton"] button { font-size: 12px; padding: 5px 12px; border-radius: 6px; }
+    div[data-testid="stButton"] button[kind="primary"] { background: #CC0000; border-color: #CC0000; }
+    div[data-testid="stButton"] button[kind="primary"]:hover { background: #B30000; border-color: #B30000; }
+    </style>
+    """,
+        unsafe_allow_html=True,
+    )
+    app.session_state["_global_css_injected"] = True
+
+
+def _inject_theme_css() -> None:
+    """Backwards-compatible alias retained for any internal callers."""
+    _inject_global_css()
+
+
+def _render_brand_header() -> None:
+    app = _require_streamlit()
+    schema = app.session_state.get("schema")
+    if schema is not None and hasattr(schema, "total_respondents"):
+        n = schema.total_respondents
+        context = f"<strong>Dataset loaded</strong> · {n:,} respondents"
+    else:
+        context = "<strong>No dataset loaded</strong> · upload to begin"
+
+    app.markdown(
+        f"""
+    <div class="brand-header">
+        <div class="brand-title">Survey Analysis Engine</div>
+        <div class="brand-sep">/</div>
+        <div class="brand-context">{context}</div>
+    </div>
+    """,
+        unsafe_allow_html=True,
+    )
 
 
 def _section_header(
@@ -705,89 +807,50 @@ def _render_insight_section(
             )
 
 
-def _render_insight_card(insight: InsightResult) -> None:
+def _render_insight_card(
+    insight: InsightResult,
+    label: str = "Key insight",
+    icon: str = "ti-bulb",
+) -> None:
     app = _require_streamlit()
     if not insight or not insight.insight:
         return
 
-    if not app.session_state.get("_insight_css_injected"):
-        app.markdown(
-            """
-        <style>
-        .insight-card {
-            background: linear-gradient(135deg, #CC0000 0%, #8B0000 100%);
-            border-radius: 8px;
-            padding: 20px 24px;
-            margin: 12px 0 8px 0;
-            box-shadow: 0 4px 12px rgba(204, 0, 0, 0.25);
-            position: relative;
-            overflow: hidden;
-        }
-        .insight-card::before {
-            content: '"';
-            position: absolute;
-            top: -10px;
-            left: 16px;
-            font-size: 80px;
-            color: rgba(255,255,255,0.15);
-            font-family: Georgia, serif;
-            line-height: 1;
-        }
-        .insight-headline {
-            color: #FFFFFF;
-            font-size: 15px;
-            font-weight: 600;
-            line-height: 1.5;
-            margin: 0;
-            padding-left: 8px;
-            letter-spacing: 0.01em;
-        }
-        .insight-footer {
-            color: rgba(255,255,255,0.6);
-            font-size: 11px;
-            margin-top: 10px;
-            padding-left: 8px;
-        }
-        .insight-template {
-            background: linear-gradient(135deg, #666666 0%, #444444 100%);
-            border-radius: 8px;
-            padding: 12px 16px;
-            margin: 8px 0;
-        }
-        .insight-template p {
-            color: rgba(255,255,255,0.7);
-            font-size: 13px;
-            margin: 0;
-            font-style: italic;
-        }
-        </style>
-        """,
-            unsafe_allow_html=True,
-        )
-        app.session_state["_insight_css_injected"] = True
+    headline_raw = insight.insight
+    number_pattern = _re.compile(r"(\d+(?:\.\d+)?\s*(?:%|x|X|×)?)")
+    escaped = html.escape(headline_raw)
+    headline_highlighted = number_pattern.sub(
+        r'<span class="num">\1</span>', escaped
+    )
+    label_html = html.escape(label)
 
-    headline = html.escape(insight.insight)
     if insight.was_template:
         app.markdown(
             f"""
-        <div class="insight-template">
-            <p>\U0001F4A1 {headline}</p>
+        <div class="insight-card insight-template">
+            <div class="insight-icon"><i class="ti ti-info-circle"></i></div>
+            <div class="insight-body">
+                <div class="insight-label">{label_html}</div>
+                <div class="insight-text">{html.escape(headline_raw)}</div>
+                <div class="insight-footer">Template fallback · AI unavailable</div>
+            </div>
         </div>
         """,
             unsafe_allow_html=True,
         )
         return
 
-    footer = (
-        f"AI insight \u00b7 {html.escape(insight.model_used)}"
-        if insight.model_used
-        else "AI insight"
-    )
+    model = html.escape(insight.model_used or "")
+    footer = f"AI insight · {model}" if model else "AI insight"
     app.markdown(
         f"""
     <div class="insight-card">
-        <p class="insight-headline">{headline}</p>
-        <p class="insight-footer">{footer}</p>
+        <div class="insight-icon"><i class="ti {icon}"></i></div>
+        <div class="insight-body">
+            <div class="insight-label">{label_html}</div>
+            <div class="insight-text">{headline_highlighted}</div>
+            <div class="insight-footer">{footer}</div>
+        </div>
     </div>
     """,
         unsafe_allow_html=True,
@@ -2455,218 +2518,61 @@ def _render_manual_cross_cut() -> None:
 
 
 def _render_sidebar() -> None:
-    """Branded, structured sidebar showing only what is useful mid-session."""
-    import html as _html
-
+    """Workflow navigator + run-log card."""
     app = _require_streamlit()
+    has_data = app.session_state.get("schema") is not None
+    has_results = bool(app.session_state.get("results"))
+    has_crosscuts = bool(app.session_state.get("cross_cut_results"))
+    has_segmentation = app.session_state.get("segmentation_result") is not None
+
+    n_singlecuts = len(app.session_state.get("results", []))
+    n_crosscuts = len(app.session_state.get("cross_cut_results", []))
+    seg = app.session_state.get("segmentation_result")
+    n_diffs = len(seg.differentiators) if seg else 0
+    gf_state = app.session_state.get("global_filter_state") or {}
+    n_filters = len(gf_state) if isinstance(gf_state, dict) else 0
+
     with app.sidebar:
-        # ---- LOGO / TITLE ---------------------------------------------------
         app.markdown(
-            """
-            <div style="padding:16px 0 8px 0;border-bottom:3px solid #CC0000;
-              margin-bottom:16px;">
-              <div style="font-size:16px;font-weight:700;color:#0A0A0A;
-                font-family:Arial;letter-spacing:0.03em;">
-                Survey Analysis Engine
-              </div>
-              <div style="font-size:10px;color:#888;font-family:Arial;
-                margin-top:2px;">Bain &amp; Company</div>
-            </div>
-            """,
+            '<div class="sb-section">Workflow</div>',
             unsafe_allow_html=True,
         )
 
-        if app.session_state.get("run_complete"):
-            lr = app.session_state.get("load_report")
-            gf_stats = app.session_state.get("global_filter_stats")
-            results = app.session_state.get("results", [])
+        steps = [
+            ("1", "Upload", "done" if has_data else "—"),
+            ("2", "Global filter", str(n_filters) if n_filters else "—"),
+            ("3", "Single cuts", str(n_singlecuts) if n_singlecuts else "—"),
+            ("4", "Cross cuts", str(n_crosscuts) if n_crosscuts else "—"),
+            ("5", "AI analysis", str(n_diffs) if n_diffs else "—"),
+        ]
 
-            app.markdown("**Session**")
+        for num, label, count in steps:
+            is_active = (
+                (num == "5" and has_segmentation)
+                or (num == "4" and has_crosscuts and not has_segmentation)
+                or (num == "3" and has_results and not has_crosscuts)
+                or (num == "2" and has_data and not has_results)
+                or (num == "1" and not has_data)
+            )
+            cls = "sb-item active" if is_active else "sb-item"
+            app.markdown(
+                f'<div class="{cls}"><span>{num}. {label}</span>'
+                f'<span class="sb-count">{count}</span></div>',
+                unsafe_allow_html=True,
+            )
 
-            if lr is not None:
-                app.markdown(
-                    f"""
-                    <div style="font-size:10px;color:#666;font-family:Arial;
-                      line-height:1.9;background:#F8F8F8;padding:10px;
-                      border-left:3px solid #E0E0E0;margin-bottom:12px;">
-                      <b>File</b><br>{_html.escape(str(lr.raw_data_source))}<br>
-                      <b>Input type</b><br>
-                      {_html.escape(lr.scenario.replace('_', ' '))}<br>
-                      <b>Respondents</b><br>{lr.raw_rows:,}<br>
-                      <b>Questions</b><br>{lr.questions_parsed}
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-            gf_state = app.session_state.get("global_filter_state")
-            if (
-                gf_state is not None
-                and gf_state.is_active()
-                and gf_stats
-            ):
-                app.markdown(
-                    f"""
-                    <div style="background:#FFF5F5;border-left:3px solid #CC0000;
-                      padding:10px;font-size:10px;font-family:Arial;
-                      line-height:1.9;margin-bottom:12px;">
-                      <b style="color:#CC0000;">● Global Filter Active</b><br>
-                      {_html.escape(gf_state.description())}<br>
-                      <b>{gf_stats.get('rows_after', 0):,}</b>&nbsp;of&nbsp;
-                      {gf_stats.get('rows_before', 0):,}&nbsp;respondents
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-            else:
-                app.markdown(
-                    """
-                    <div style="font-size:10px;color:#888;font-family:Arial;
-                      padding:8px 0;margin-bottom:8px;">
-                      ○ No global filter · full dataset
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-            skips = app.session_state.get("skips", [])
-            errors = [s for s in skips if s.skip_reason == "calculation_error"]
-            log = app.session_state.get("log")
-            log_len = len(log) if log else 0
-            cc_results = app.session_state.get("cross_cut_results", [])
-            err_color = "#CC0000" if errors else "#2E7D32"
+        if seg is not None:
+            laggard_label = seg.segment_definition.loser_label
             app.markdown(
                 f"""
-                <div style="font-size:10px;color:#666;font-family:Arial;
-                  line-height:2.0;border-top:1px solid #E0E0E0;
-                  padding-top:10px;margin-bottom:12px;">
-                  <b>Single cuts</b>&nbsp;{len(results)}<br>
-                  <b>Skipped</b>&nbsp;{len(skips)}<br>
-                  <b>Errors</b>&nbsp;
-                  <span style="color:{err_color};">{len(errors)}</span><br>
-                  <b>Audit records</b>&nbsp;{log_len}<br>
-                  <b>Cross cuts</b>&nbsp;{len(cc_results)}
-                </div>
-                """,
+            <div class="sb-runlog">
+                <div class="sb-runlog-row"><span>Outcome</span><strong>{seg.outcome_question_id}</strong></div>
+                <div class="sb-runlog-row"><span>Winners</span><strong>{seg.winner_n}</strong></div>
+                <div class="sb-runlog-row"><span>{laggard_label}s</span><strong>{seg.loser_n}</strong></div>
+            </div>
+            """,
                 unsafe_allow_html=True,
             )
-
-            # ---- QUESTIONS (master-detail nav) ----------------------------
-            app.markdown("**Questions**")
-            selected_qid = app.session_state.get("selected_question_id")
-            if selected_qid is None and results:
-                selected_qid = results[0].question_id
-                app.session_state["selected_question_id"] = selected_qid
-
-            app.text_input(
-                "Search",
-                placeholder="Filter by ID or text",
-                key="sidebar_q_search",
-                label_visibility="collapsed",
-            )
-            needle = (
-                app.session_state.get("sidebar_q_search") or ""
-            ).strip().lower()
-
-            schema_obj = app.session_state.get("schema")
-            shown = 0
-            for result in results:
-                if schema_obj is None:
-                    continue
-                spec = schema_obj.get_question(result.question_id)
-                if spec is None:
-                    continue
-                if needle:
-                    hay = f"{spec.canonical_id} {spec.question_text or ''}".lower()
-                    if needle not in hay:
-                        continue
-                shown += 1
-                label = (
-                    f"{spec.canonical_id} \u2014 "
-                    f"{spec.question_text or ''}".strip()
-                )
-                btn_type = (
-                    "primary"
-                    if result.question_id == selected_qid
-                    else "secondary"
-                )
-                if app.button(
-                    label,
-                    key=f"sidebar_qbtn_{result.question_id}",
-                    type=btn_type,
-                    use_container_width=True,
-                ):
-                    app.session_state["selected_question_id"] = (
-                        result.question_id
-                    )
-                    app.rerun()
-            if needle and shown == 0:
-                app.caption(f"No questions match '{needle}'.")
-            else:
-                app.caption(f"{shown} of {len(results)} shown")
-
-            app.markdown("**Navigate**")
-            app.markdown(
-                """
-                <div style="font-size:11px;font-family:Arial;line-height:2.2;
-                  color:#333;">
-                  <a href="#section-1" style="color:#CC0000;
-                    text-decoration:none;">↑ 1. Upload</a><br>
-                  <a href="#section-2" style="color:#CC0000;
-                    text-decoration:none;">⊕ 2. Global Filter</a><br>
-                  <a href="#section-3" style="color:#CC0000;
-                    text-decoration:none;">— 3. Single Cuts</a><br>
-                  <a href="#section-4" style="color:#CC0000;
-                    text-decoration:none;">╫ 4. Cross Cuts</a><br>
-                  <a href="#section-5" style="color:#CC0000;
-                    text-decoration:none;">↓ 5. Downloads</a>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-        else:
-            app.markdown(
-                """
-                <div style="font-size:11px;color:#666;font-family:Arial;
-                  line-height:1.9;padding:8px 0;">
-                  <b>Getting started:</b><br>
-                  1. Upload your survey files<br>
-                  2. Click Run Analysis<br>
-                  3. Apply filters if needed<br>
-                  4. Explore and download
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-        app.markdown("---")
-        with app.expander("Help", expanded=False):
-            app.markdown(
-                """
-                <div style="font-size:10px;font-family:Arial;color:#444;
-                  line-height:1.9;">
-                  <b>Supported file types</b><br>CSV, XLSX, DOCX<br><br>
-                  <b>Three input scenarios</b><br>
-                  A: Raw data + data map<br>
-                  B: Combined XLSX (2 sheets)<br>
-                  C: Raw data + Word survey doc<br><br>
-                  <b>Filters</b><br>
-                  Global filter restricts everything.<br>
-                  Per-question filter applies only<br>
-                  to that single question.<br><br>
-                  <b>Outlier flags</b><br>
-                  ⬆ Red = high outlier (&gt;2σ above mean)<br>
-                  ↓ Amber = low outlier (&gt;1.5σ below)
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-
-# ---------------------------------------------------------------------------
-# Section 1 — Upload
-# ---------------------------------------------------------------------------
 
 
 def _section_upload() -> None:
@@ -3752,6 +3658,14 @@ def _truncate(text: str, max_chars: int) -> str:
     return text[: max_chars - 3] + "..."
 
 
+def _bar_colors(values: list[float]) -> list[str]:
+    """Return color list with max-value bar in red, others black."""
+    if not values:
+        return []
+    max_val = max(values)
+    return ["#CC0000" if v == max_val else "#1A1A1A" for v in values]
+
+
 def _insight_rows_from_payload(
     payload: dict[str, Any],
     table_kind: str,
@@ -3813,61 +3727,110 @@ def _section_ai_analysis() -> None:
 
 def _render_outcome_summary_panel(seg: OutcomeSegmentationResult) -> None:
     app = _require_streamlit()
-    app.markdown("### \U0001F3AF Outcome Analysis")
+
+    if not seg.differentiators:
+        app.info("No differentiators found. Try a different segment definition.")
+        return
 
     laggard_label = seg.segment_definition.loser_label
-    col1, col2, col3, col4 = app.columns(4)
-    col1.metric("Outcome Variable", seg.outcome_question_id)
-    col2.metric("Winners", seg.winner_n)
-    col3.metric(laggard_label + "s", seg.loser_n)
-    col4.metric("Differentiators", len(seg.differentiators))
+    winner_label = seg.segment_definition.winner_label
 
-    for rank, diff in enumerate(seg.differentiators[:10], start=1):
-        with app.container():
-            app.markdown(f"**{rank}.** {_truncate(diff.question_text, 70)}")
-
-            diff_payload = {
-                "question_id": diff.question_id,
-                "question_text": diff.question_text,
-                "top_option": diff.top_option_label,
-                "winner_rate": diff.top_option_winner_rate,
-                "loser_rate": diff.top_option_loser_rate,
-                "lift": diff.top_option_lift,
-                "cramers_v": diff.cramers_v,
-                "winner_n": diff.winner_n,
-                "loser_n": diff.loser_n,
+    table_payload = {
+        "outcome_question_id": seg.outcome_question_id,
+        "winner_label": winner_label,
+        "loser_label": laggard_label,
+        "winner_n": seg.winner_n,
+        "loser_n": seg.loser_n,
+        "differentiators": [
+            {
+                "question_text": d.question_text,
+                "top_option_label": d.top_option_label,
+                "winner_rate": d.top_option_winner_rate,
+                "loser_rate": d.top_option_loser_rate,
+                "lift": d.top_option_lift,
+                "cramers_v": d.cramers_v,
             }
-            with app.spinner(
-                f"Generating insight for {_truncate(diff.question_text, 40)}..."
-            ):
-                insight = generate_insight(
-                    table_payload=diff_payload,
-                    table_kind="differentiator",
-                    title_hint=diff.question_text[:50],
-                    cache=_INSIGHT_CACHE,
-                )
-            _render_insight_card(insight)
+            for d in seg.differentiators
+        ],
+    }
 
-            c1, c2, c3, c4 = app.columns(4)
-            c1.metric("Cram\u00e9r's V", f"{diff.cramers_v:.3f}")
-            c2.metric(
-                f"{seg.segment_definition.winner_label} Rate",
-                f"{diff.top_option_winner_rate:.1%}",
+    with app.spinner("Generating key insight..."):
+        try:
+            table_insight = generate_table_insight(
+                table_payload=table_payload,
+                table_kind="differentiator_table",
+                cache=_INSIGHT_CACHE,
             )
-            c3.metric(
-                f"{seg.segment_definition.loser_label} Rate",
-                f"{diff.top_option_loser_rate:.1%}",
-            )
-            c4.metric(
-                "Lift",
-                "\u221E" if diff.top_option_lift >= 900 else f"{diff.top_option_lift:.2f}x",
-            )
-            app.caption(f"Top differentiating option: **{diff.top_option_label}**")
+            _render_insight_card(table_insight, label="Key insight", icon="ti-bulb")
+        except Exception as exc:  # noqa: BLE001
+            app.error(f"Key insight failed: {exc}")
 
-            if diff.warnings:
-                app.caption(f"\u26A0\uFE0F {' | '.join(diff.warnings)}")
+    with app.spinner("Identifying outlier..."):
+        try:
+            outlier_insight = generate_outlier_insight(
+                table_payload=table_payload,
+                table_kind="outlier",
+                cache=_INSIGHT_CACHE,
+            )
+            _render_insight_card(
+                outlier_insight, label="Outlier", icon="ti-alert-triangle"
+            )
+        except Exception as exc:  # noqa: BLE001
+            app.error(f"Outlier insight failed: {exc}")
 
-            app.divider()
+    avg_lift_values = [
+        d.top_option_lift for d in seg.differentiators[:5] if d.top_option_lift < 900
+    ]
+    avg_lift = (
+        sum(avg_lift_values) / len(avg_lift_values) if avg_lift_values else 0.0
+    )
+
+    segment_mode = str(getattr(seg.segment_definition, "segment_mode", "")).replace(
+        "_", " "
+    ).title()
+    app.markdown(
+        f"""
+    <div class="ui-panel">
+        <div class="ui-panel-head">
+            <span class="ui-panel-title">Segment summary</span>
+            <span class="ui-panel-meta">Outcome: {seg.outcome_question_id} · {segment_mode}</span>
+        </div>
+    </div>
+    """,
+        unsafe_allow_html=True,
+    )
+
+    col1, col2, col3, col4 = app.columns(4)
+    col1.metric("Winners", f"{seg.winner_n:,}")
+    col2.metric(f"{laggard_label}s", f"{seg.loser_n:,}")
+    col3.metric("Differentiators", len(seg.differentiators))
+    col4.metric("Avg lift (top 5)", f"{avg_lift:.1f}x")
+
+    app.markdown(
+        """
+    <div class="ui-panel">
+        <div class="ui-panel-head">
+            <span class="ui-panel-title">Top differentiators</span>
+            <span class="ui-panel-meta">Ranked by association strength</span>
+        </div>
+    </div>
+    """,
+        unsafe_allow_html=True,
+    )
+
+    table_rows = [
+        {
+            "#": rank,
+            "Question": _truncate(d.question_text, 50),
+            "Top option": d.top_option_label,
+            f"{winner_label}": f"{d.top_option_winner_rate:.1%}",
+            f"{laggard_label}": f"{d.top_option_loser_rate:.1%}",
+            "Lift": "∞" if d.top_option_lift >= 900 else f"{d.top_option_lift:.2f}x",
+            "Cramér's V": f"{d.cramers_v:.3f}",
+        }
+        for rank, d in enumerate(seg.differentiators[:15], start=1)
+    ]
+    app.dataframe(table_rows, use_container_width=True, hide_index=True)
 
 
 def _render_smart_cross_cut_suggestions_panel(
@@ -3983,12 +3946,10 @@ def main() -> None:
         initial_sidebar_state="expanded",
     )
     _initialise_session_state()
-    _inject_theme_css()
+    _inject_global_css()
+    _render_brand_header()
     _drain_pending_actions()
     _render_sidebar()
-
-    # Inline title/caption/divider removed in Day 18 — the fixed red header
-    # banner injected by _inject_theme_css now serves as the page header.
 
     gf_error = app.session_state.get("global_filter_error")
     if gf_error:

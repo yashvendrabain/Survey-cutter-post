@@ -1,0 +1,432 @@
+CONSOLIDATED PROMPT — Accuracy hardening + Full UI revamp
+
+Apply TWO major changes in one pass:
+CHANGE 1: Accuracy-hardened AI insights with table-level + outlier
+CHANGE 2: Complete UI redesign (dense dashboard, sidebar nav, red header)
+
+Apply in this order to avoid merge conflicts.
+
+══════════════════════════════════════════════════════════════════════
+CHANGE 1 — FILES TO REPLACE VERBATIM
+══════════════════════════════════════════════════════════════════════
+
+1. src/ai_insights.py — full replacement (user will paste)
+   - New: generate_table_insight(), generate_outlier_insight()
+   - New: allowed-numbers validation pipeline
+   - New: TABLE_INSIGHT_PROMPT, OUTLIER_INSIGHT_PROMPT
+   - Temperature 0.0
+
+2. src/models.py — PARTIAL update: InsightResult only
+   Replace lines 590-608 with this (relaxes title validation):
+
+@dataclass(frozen=True, slots=True)
+class InsightResult:
+    """AI-generated insight headline, or template fallback.
+    
+    title is now always "" (empty) — the new insight system produces
+    a single headline sentence only, stored in insight field.
+    """
+    title: str
+    insight: str
+    was_template: bool = False
+    model_used: str = ""
+    tokens_used: int = 0
+    error_message: str = ""
+    
+    def __post_init__(self) -> None:
+        if not isinstance(self.title, str):
+            raise ValueError("title must be a string")
+        if not isinstance(self.insight, str):
+            raise ValueError("insight must be a string")
+
+3. tests/test_ai_insights.py — full replacement (user will paste)
+   - 22 tests covering new validation + table/outlier functions
+
+══════════════════════════════════════════════════════════════════════
+CHANGE 2 — UI REVAMP (app.py modifications)
+══════════════════════════════════════════════════════════════════════
+
+SCOPE: 
+- Add red brand header at top of page
+- Redesign sidebar as workflow navigator + run-log card
+- Update insight cards to highlight numbers in red
+- Densify differentiator panel (table-level + outlier insights, 
+  table instead of per-row cards)
+- Color bar charts: max bar = #CC0000, others = #1A1A1A
+
+MODIFY 1 — Add imports at top of app.py (after existing imports):
+
+import html
+import re as _re
+from src.ai_insights import generate_insight, generate_table_insight, generate_outlier_insight
+
+MODIFY 2 — Replace _inject_theme_css() body entirely
+
+The existing function _inject_theme_css() should be renamed to 
+_inject_global_css() and its body replaced with:
+
+def _inject_global_css() -> None:
+    app = _require_streamlit()
+    if app.session_state.get("_global_css_injected"):
+        return
+    
+    # Tabler icons CDN
+    app.markdown(
+        '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/3.5.0/tabler-icons.min.css">',
+        unsafe_allow_html=True,
+    )
+    
+    app.markdown("""
+    <style>
+    /* Hide Streamlit chrome */
+    #MainMenu { visibility: hidden; }
+    footer { visibility: hidden; }
+    header[data-testid="stHeader"] { display: none; }
+    
+    .main .block-container {
+        padding-top: 0 !important;
+        padding-bottom: 1rem !important;
+        max-width: 100% !important;
+    }
+    
+    /* Brand header */
+    .brand-header {
+        background: #CC0000;
+        color: #FFF;
+        padding: 12px 24px;
+        margin: 0 -1rem 16px -1rem;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        border-bottom: 1px solid #A30000;
+        font-family: Arial, sans-serif;
+    }
+    .brand-title { font-size: 15px; font-weight: 500; letter-spacing: 0.01em; }
+    .brand-sep { color: rgba(255,255,255,0.4); font-size: 14px; }
+    .brand-context { font-size: 12px; color: rgba(255,255,255,0.82); }
+    .brand-context strong { color: #FFF; font-weight: 500; }
+    
+    /* Sidebar */
+    section[data-testid="stSidebar"] { background: #FAFAFA; border-right: 0.5px solid #E5E5E5; }
+    section[data-testid="stSidebar"] .block-container { padding-top: 1rem; }
+    
+    .sb-section { padding: 12px 0 4px; font-size: 10px; font-weight: 500; color: #888; text-transform: uppercase; letter-spacing: 0.08em; }
+    .sb-item { display: flex; align-items: center; gap: 8px; padding: 7px 12px; font-size: 13px; color: #444; border-left: 2px solid transparent; margin: 0 -1rem; padding-left: calc(1rem + 12px); }
+    .sb-item.active { background: #FCEBEB; color: #CC0000; border-left-color: #CC0000; font-weight: 500; }
+    .sb-count { margin-left: auto; font-size: 11px; color: #888; }
+    .sb-item.active .sb-count { color: #CC0000; }
+    .sb-runlog { margin: 16px -1rem 0 -1rem; padding: 12px 16px; border-top: 0.5px solid #E5E5E5; font-size: 11px; color: #666; }
+    .sb-runlog-row { display: flex; justify-content: space-between; padding: 3px 0; }
+    .sb-runlog-row strong { color: #1A1A1A; font-weight: 500; }
+    
+    /* Insight cards */
+    .insight-card { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; background: #FFF; border: 0.5px solid #E5E5E5; border-left: 3px solid #CC0000; border-radius: 6px; margin-bottom: 8px; font-family: Arial, sans-serif; }
+    .insight-icon { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; background: #FCEBEB; color: #CC0000; border-radius: 4px; font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+    .insight-body { flex: 1; min-width: 0; }
+    .insight-label { font-size: 10px; font-weight: 500; color: #888; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 3px; }
+    .insight-text { font-size: 14px; font-weight: 500; line-height: 1.45; color: #1A1A1A; }
+    .insight-text .num { color: #CC0000; font-weight: 500; }
+    .insight-footer { font-size: 10px; color: #999; margin-top: 4px; }
+    .insight-template { background: #F5F5F5; border-left-color: #888; }
+    .insight-template .insight-icon { background: #E5E5E5; color: #888; }
+    
+    /* Panel containers */
+    .ui-panel { background: #FFF; border: 0.5px solid #E5E5E5; border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
+    .ui-panel-head { display: flex; align-items: center; padding: 9px 14px; border-bottom: 0.5px solid #EEE; font-size: 12px; background: #FAFAFA; }
+    .ui-panel-title { font-weight: 500; color: #1A1A1A; }
+    .ui-panel-meta { margin-left: auto; color: #888; font-size: 11px; }
+    
+    /* Dataframe density */
+    div[data-testid="stDataFrame"] { font-size: 12px; }
+    
+    /* Button styling */
+    div[data-testid="stButton"] button { font-size: 12px; padding: 5px 12px; border-radius: 6px; }
+    div[data-testid="stButton"] button[kind="primary"] { background: #CC0000; border-color: #CC0000; }
+    div[data-testid="stButton"] button[kind="primary"]:hover { background: #B30000; border-color: #B30000; }
+    </style>
+    """, unsafe_allow_html=True)
+    app.session_state["_global_css_injected"] = True
+
+MODIFY 3 — Add _render_brand_header() (new function, paste after _inject_global_css):
+
+def _render_brand_header() -> None:
+    app = _require_streamlit()
+    schema = app.session_state.get("schema")
+    if schema is not None and hasattr(schema, "total_respondents"):
+        n_respondents = schema.total_respondents
+        context = f"<strong>Dataset loaded</strong> · {n_respondents:,} respondents"
+    else:
+        context = "<strong>No dataset loaded</strong> · upload to begin"
+    
+    app.markdown(f"""
+    <div class="brand-header">
+        <div class="brand-title">Survey Analysis Engine</div>
+        <div class="brand-sep">/</div>
+        <div class="brand-context">{context}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+MODIFY 4 — Replace _render_sidebar() body entirely
+
+Find the existing _render_sidebar() function and replace its body with:
+
+def _render_sidebar() -> None:
+    app = _require_streamlit()
+    has_data = app.session_state.get("schema") is not None
+    has_results = bool(app.session_state.get("results"))
+    has_crosscuts = bool(app.session_state.get("cross_cut_results"))
+    has_segmentation = app.session_state.get("segmentation_result") is not None
+    
+    n_singlecuts = len(app.session_state.get("results", []))
+    n_crosscuts = len(app.session_state.get("cross_cut_results", []))
+    seg = app.session_state.get("segmentation_result")
+    n_diffs = len(seg.differentiators) if seg else 0
+    n_filters = len(app.session_state.get("global_filter_state", {}) or {})
+    
+    with app.sidebar:
+        app.markdown('<div class="sb-section">Workflow</div>', unsafe_allow_html=True)
+        
+        steps = [
+            ("1", "Upload", "done" if has_data else "—"),
+            ("2", "Global filter", str(n_filters) if n_filters else "—"),
+            ("3", "Single cuts", str(n_singlecuts) if n_singlecuts else "—"),
+            ("4", "Cross cuts", str(n_crosscuts) if n_crosscuts else "—"),
+            ("5", "AI analysis", str(n_diffs) if n_diffs else "—"),
+        ]
+        
+        for num, label, count in steps:
+            is_active = (num == "5" and has_segmentation) or \
+                       (num == "4" and has_crosscuts and not has_segmentation) or \
+                       (num == "3" and has_results and not has_crosscuts) or \
+                       (num == "2" and has_data and not has_results) or \
+                       (num == "1" and not has_data)
+            cls = "sb-item active" if is_active else "sb-item"
+            app.markdown(f'<div class="{cls}"><span>{num}. {label}</span><span class="sb-count">{count}</span></div>', unsafe_allow_html=True)
+        
+        if seg is not None:
+            laggard_label = seg.segment_definition.loser_label
+            app.markdown(f"""
+            <div class="sb-runlog">
+                <div class="sb-runlog-row"><span>Outcome</span><strong>{seg.outcome_question_id}</strong></div>
+                <div class="sb-runlog-row"><span>Winners</span><strong>{seg.winner_n}</strong></div>
+                <div class="sb-runlog-row"><span>{laggard_label}s</span><strong>{seg.loser_n}</strong></div>
+            </div>
+            """, unsafe_allow_html=True)
+
+MODIFY 5 — Replace _render_insight_card() entirely
+
+Find the existing _render_insight_card() function and replace with:
+
+def _render_insight_card(insight, label: str = "Key insight", icon: str = "ti-bulb") -> None:
+    app = _require_streamlit()
+    if not insight or not insight.insight:
+        return
+    
+    headline_raw = insight.insight
+    number_pattern = _re.compile(r"(\d+(?:\.\d+)?\s*(?:%|x|X|×)?)")
+    escaped = html.escape(headline_raw)
+    headline_highlighted = number_pattern.sub(r'<span class="num">\1</span>', escaped)
+    label_html = html.escape(label)
+    
+    if insight.was_template:
+        app.markdown(f"""
+        <div class="insight-card insight-template">
+            <div class="insight-icon"><i class="ti ti-info-circle"></i></div>
+            <div class="insight-body">
+                <div class="insight-label">{label_html}</div>
+                <div class="insight-text">{html.escape(headline_raw)}</div>
+                <div class="insight-footer">Template fallback · AI unavailable</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+    
+    model = html.escape(insight.model_used or "")
+    footer = f"AI insight · {model}" if model else "AI insight"
+    app.markdown(f"""
+    <div class="insight-card">
+        <div class="insight-icon"><i class="ti {icon}"></i></div>
+        <div class="insight-body">
+            <div class="insight-label">{label_html}</div>
+            <div class="insight-text">{headline_highlighted}</div>
+            <div class="insight-footer">{footer}</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+MODIFY 6 — Replace _render_outcome_summary_panel() entirely
+
+def _render_outcome_summary_panel(seg) -> None:
+    app = _require_streamlit()
+    if not seg.differentiators:
+        app.info("No differentiators found. Try different segment definition.")
+        return
+    
+    laggard_label = seg.segment_definition.loser_label
+    table_payload = {
+        "outcome_question_id": seg.outcome_question_id,
+        "winner_label": seg.segment_definition.winner_label,
+        "loser_label": laggard_label,
+        "winner_n": seg.winner_n,
+        "loser_n": seg.loser_n,
+        "differentiators": [
+            {
+                "question_text": d.question_text,
+                "top_option_label": d.top_option_label,
+                "winner_rate": d.top_option_winner_rate,
+                "loser_rate": d.top_option_loser_rate,
+                "lift": d.top_option_lift,
+                "cramers_v": d.cramers_v,
+            }
+            for d in seg.differentiators
+        ],
+    }
+    
+    with app.spinner("Generating key insight..."):
+        table_insight = generate_table_insight(
+            table_payload=table_payload,
+            table_kind="differentiator_table",
+            cache=_INSIGHT_CACHE,
+        )
+        _render_insight_card(table_insight, label="Key insight", icon="ti-bulb")
+    
+    with app.spinner("Identifying outlier..."):
+        outlier_insight = generate_outlier_insight(
+            table_payload=table_payload,
+            table_kind="outlier",
+            cache=_INSIGHT_CACHE,
+        )
+        _render_insight_card(outlier_insight, label="Outlier", icon="ti-alert-triangle")
+    
+    # Segment summary metrics
+    avg_lift_values = [d.top_option_lift for d in seg.differentiators[:5] if d.top_option_lift < 900]
+    avg_lift = sum(avg_lift_values) / len(avg_lift_values) if avg_lift_values else 0
+    
+    app.markdown(f"""
+    <div class="ui-panel">
+        <div class="ui-panel-head">
+            <span class="ui-panel-title">Segment summary</span>
+            <span class="ui-panel-meta">Outcome: {seg.outcome_question_id} · {seg.segment_definition.segment_mode.replace('_', ' ').title()}</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    col1, col2, col3, col4 = app.columns(4)
+    col1.metric("Winners", f"{seg.winner_n:,}")
+    col2.metric(f"{laggard_label}s", f"{seg.loser_n:,}")
+    col3.metric("Differentiators", len(seg.differentiators))
+    col4.metric("Avg lift (top 5)", f"{avg_lift:.1f}x")
+    
+    app.markdown("""
+    <div class="ui-panel">
+        <div class="ui-panel-head">
+            <span class="ui-panel-title">Top differentiators</span>
+            <span class="ui-panel-meta">Ranked by association strength</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    winner_label = seg.segment_definition.winner_label
+    table_rows = [
+        {
+            "#": rank,
+            "Question": _truncate(d.question_text, 50),
+            "Top option": d.top_option_label,
+            f"{winner_label}": f"{d.top_option_winner_rate:.1%}",
+            f"{laggard_label}": f"{d.top_option_loser_rate:.1%}",
+            "Lift": "∞" if d.top_option_lift >= 900 else f"{d.top_option_lift:.2f}x",
+            "Cramér's V": f"{d.cramers_v:.3f}",
+        }
+        for rank, d in enumerate(seg.differentiators[:15], start=1)
+    ]
+    app.dataframe(table_rows, use_container_width=True, hide_index=True)
+
+MODIFY 7 — Chart color rule (apply to ALL Plotly charts)
+
+Add this helper function after _truncate():
+
+def _bar_colors(values: list[float]) -> list[str]:
+    """Max-value bar RED, others BLACK."""
+    if not values:
+        return []
+    max_val = max(values)
+    return ["#CC0000" if v == max_val else "#1A1A1A" for v in values]
+
+Find EVERY Plotly chart in app.py. Search for "go.Bar" and "px.bar".
+For SINGLE-SERIES bar charts, add marker_color:
+    fig.add_trace(go.Bar(
+        ...,
+        marker_color=_bar_colors(values_list),
+    ))
+
+For GROUPED bar charts (winner vs laggard comparisons), use:
+    winner_trace = go.Bar(..., marker_color="#CC0000", name="Winners")
+    laggard_trace = go.Bar(..., marker_color="#1A1A1A", name=laggard_label)
+
+Report which chart sites you updated (line numbers).
+
+MODIFY 8 — Update main() call order
+
+Find main() function. Update the call sequence to:
+
+def main() -> None:
+    app = _require_streamlit()
+    app.set_page_config(page_title="Survey Analysis Engine", layout="wide", initial_sidebar_state="expanded")
+    _initialise_session_state()
+    _inject_global_css()           # renamed from _inject_theme_css
+    _render_brand_header()         # new
+    _render_sidebar()              # body replaced
+    
+    _section_upload()
+    _section_global_filter()
+    _section_survey_classification()   # KEEP THIS (was missing from spec)
+    _section_single_cuts()
+    _section_cross_cuts()
+    _section_ai_analysis()
+    _section_downloads()
+
+MODIFY 9 — Cache invalidation
+
+Find where global filter is applied or cleared. Add _INSIGHT_CACHE.clear()
+in both places. Report line numbers where added.
+
+MODIFY 10 — Remove UI repetition (targeted only)
+
+1. Remove any st.title() calls — brand header replaces them
+2. If "Total respondents" appears in multiple section bodies, keep 
+   only in brand header
+3. Remove redundant st.markdown("---") dividers WITHIN subsections 
+   (keep major section dividers between Section 1, 2, 3, 4, 5)
+
+══════════════════════════════════════════════════════════════════════
+VERIFICATION
+══════════════════════════════════════════════════════════════════════
+
+STEP 1: Run tests
+pytest --tb=short -q
+
+Expected: ~310 tests pass (was 288, +22 new ai_insights tests).
+If any fail, paste full error.
+
+STEP 2: Smoke test
+1. Upload sample data
+2. Verify red header at top with "1,100 respondents"
+3. Verify sidebar shows steps 1-5 with counts
+4. Run quartile segmentation on Q24
+5. In Section 5, verify:
+   - Key Insight card (red left border, numbers in headline are red)
+   - Outlier Insight card (same style)
+   - Segment summary as 4-metric row
+   - Top differentiators as table (not big cards)
+6. Find any bar chart — max bar should be RED
+7. Report:
+   - Test count
+   - Key Insight headline text (paste exactly)
+   - Outlier Insight headline text (paste exactly)
+   - Confirm both headlines contain only valid numbers (no hallucinations)
+   - Chart color verification (max bar red confirmed)
+   - Line numbers where _INSIGHT_CACHE.clear() was added
+   - Any errors
+
+Return full smoke test results before I proceed to Prompt B (cross-cut 
+AI suggestions).
