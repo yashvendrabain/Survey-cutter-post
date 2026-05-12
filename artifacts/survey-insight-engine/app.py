@@ -322,17 +322,6 @@ header[data-testid="stHeader"] [data-testid="stToolbar"] {
 </style>
 """
 
-_CUSTOM_HEADER_HTML = """
-<div class="custom-header">
-  <div class="custom-header-title">Survey Analysis Engine</div>
-  <div class="custom-header-tagline">
-    Upload survey data, explore single &amp; cross cuts,
-    export consultant-ready workbooks
-  </div>
-</div>
-"""
-
-
 def _custom_header_html() -> str:
     app = _require_streamlit()
     schema = app.session_state.get("schema")
@@ -344,8 +333,10 @@ def _custom_header_html() -> str:
         context = "No dataset loaded \u2014 upload to begin"
     return (
         '<div class="custom-header">'
-        '<div class="custom-header-title">Survey Analysis Engine</div>'
-        f'<div class="custom-header-tagline">{html.escape(context)}</div>'
+        '<span class="custom-header-title">'
+        f'<strong>Survey Analysis Engine</strong> &middot; {html.escape(context)}'
+        '</span>'
+        '<div class="custom-header-nav" id="custom-header-nav"></div>'
         '</div>'
     )
 
@@ -391,6 +382,100 @@ def _inject_global_css() -> None:
         background: #B30000 !important;
         border-color: #B30000 !important;
     }
+
+    /* CHANGE B — merged red header with embedded nav tabs */
+    .custom-header {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        z-index: 999999 !important;
+        background: #CC0000 !important;
+        color: #FFFFFF !important;
+        padding: 0 24px !important;
+        height: 56px !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 24px !important;
+        border-bottom: 1px solid #A30000 !important;
+        font-family: Arial, sans-serif !important;
+        box-sizing: border-box !important;
+    }
+    .custom-header-title {
+        font-size: 14px !important;
+        font-weight: 500 !important;
+        color: #FFF !important;
+        flex-shrink: 0 !important;
+        white-space: nowrap !important;
+    }
+    .custom-header-title strong { font-weight: 600 !important; }
+    .custom-header-nav {
+        display: flex !important;
+        align-items: center !important;
+        gap: 0 !important;
+        margin-left: auto !important;
+        height: 100% !important;
+    }
+    .nav-bar { display: none !important; }
+    .nav-tab {
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        padding: 0 14px !important;
+        height: 56px !important;
+        font-size: 13px !important;
+        font-family: Arial, sans-serif !important;
+        font-weight: 400 !important;
+        color: rgba(255,255,255,0.75) !important;
+        text-decoration: none !important;
+        border: none !important;
+        border-bottom: 3px solid transparent !important;
+        border-radius: 0 !important;
+        background: transparent !important;
+        white-space: nowrap !important;
+        cursor: pointer !important;
+        transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease !important;
+        box-sizing: border-box !important;
+        outline: none !important;
+    }
+    .nav-tab:hover {
+        color: #FFFFFF !important;
+        background: rgba(255,255,255,0.08) !important;
+        border-bottom: 3px solid rgba(255,255,255,0.4) !important;
+        text-decoration: none !important;
+    }
+    .nav-tab.active {
+        color: #FFFFFF !important;
+        font-weight: 500 !important;
+        border-bottom: 3px solid #FFFFFF !important;
+        background: rgba(255,255,255,0.08) !important;
+    }
+    .nav-badge {
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        background: rgba(255,255,255,0.2) !important;
+        color: #FFFFFF !important;
+        font-size: 10px !important;
+        font-weight: 500 !important;
+        padding: 1px 6px !important;
+        border-radius: 10px !important;
+        min-width: 18px !important;
+        line-height: 1.4 !important;
+    }
+    .nav-tab.active .nav-badge {
+        background: #FFFFFF !important;
+        color: #CC0000 !important;
+    }
+    .main .block-container {
+        padding-top: 80px !important;
+        max-width: 100% !important;
+    }
+    [id^="section-"] {
+        scroll-margin-top: 72px !important;
+        display: block !important;
+    }
+    header[data-testid="stHeader"] { display: none !important; }
     </style>
     """,
         unsafe_allow_html=True,
@@ -3906,44 +3991,72 @@ def _render_winner_profile_panel(seg: OutcomeSegmentationResult) -> None:
     )
 
     for trait in profile.defining_traits:
-        with app.container():
-            c1, c2, c3 = app.columns([4, 1, 1])
-            c1.markdown(f"**{trait.question_id}:** {trait.option_label}")
-            c1.caption(_truncate(trait.question_text, 80))
-            c2.metric(profile.winner_label, f"{trait.winner_rate:.1%}")
-            c3.metric(
-                "vs " + profile.loser_label,
-                f"{trait.loser_rate:.1%}",
-                delta=f"{trait.rate_gap:+.1%}",
-            )
-            app.divider()
+        app.markdown(f"#### {trait.question_id}")
+        app.caption(trait.question_text)
 
-    wp_payload = {
-        "winner_label": profile.winner_label,
-        "loser_label": profile.loser_label,
-        "winner_n": profile.winner_n,
-        "loser_n": profile.loser_n,
-        "traits": [
-            {
-                "question_id": trait.question_id,
-                "option_label": trait.option_label,
-                "winner_rate": trait.winner_rate,
-                "loser_rate": trait.loser_rate,
-                "lift": trait.lift,
-                "rate_gap": trait.rate_gap,
-            }
-            for trait in profile.defining_traits
-        ],
-    }
-    wp_title_hint = f"{profile.winner_label} archetype summary"
-    _render_insight_section(
-        insight_key="insight_winner_profile",
-        payload_factory=lambda p=wp_payload, t=wp_title_hint: (
-            _normalise_insight_payload(p, "winner_profile", t)
-        ),
-        table_kind="winner_profile",
-        title_hint=wp_title_hint,
-    )
+        trait_payload = {
+            "question_text": trait.question_text,
+            "option_label": trait.option_label,
+            "winner_rate": trait.winner_rate,
+            "loser_rate": trait.loser_rate,
+            "lift": trait.lift,
+            "rate_gap": trait.rate_gap,
+            "winner_label": profile.winner_label,
+            "laggard_label": profile.loser_label,
+            "laggard_top_option_label": trait.laggard_top_option_label,
+            "laggard_top_option_winner_rate": trait.laggard_top_option_winner_rate,
+            "laggard_top_option_loser_rate": trait.laggard_top_option_loser_rate,
+        }
+
+        try:
+            trait_insight = generate_insight(
+                table_payload=trait_payload,
+                table_kind="winner_profile_trait",
+                title_hint=trait.question_id,
+                cache=_INSIGHT_CACHE,
+            )
+            _render_insight_card(trait_insight, label="")
+        except Exception:
+            pass
+
+        app.markdown(
+            f'<div style="font-size:11px; color:#888; text-transform:uppercase; '
+            f'letter-spacing:0.05em; margin-top:8px; margin-bottom:4px;">'
+            f'{html.escape(profile.winner_label)}s chose: '
+            f'<strong style="color:#1A1A1A;">'
+            f'{html.escape(trait.option_label)}</strong></div>',
+            unsafe_allow_html=True,
+        )
+        col_a1, col_a2, col_a3 = app.columns(3)
+        col_a1.metric(profile.winner_label, f"{trait.winner_rate:.1%}")
+        col_a2.metric(profile.loser_label, f"{trait.loser_rate:.1%}")
+        col_a3.metric("Gap", f"{trait.rate_gap:+.1%}")
+
+        if trait.laggard_top_option_label:
+            laggard_gap = (
+                trait.laggard_top_option_loser_rate
+                - trait.laggard_top_option_winner_rate
+            )
+            app.markdown(
+                f'<div style="font-size:11px; color:#888; text-transform:uppercase; '
+                f'letter-spacing:0.05em; margin-top:8px; margin-bottom:4px;">'
+                f'{html.escape(profile.loser_label)}s chose: '
+                f'<strong style="color:#1A1A1A;">'
+                f'{html.escape(trait.laggard_top_option_label)}</strong></div>',
+                unsafe_allow_html=True,
+            )
+            col_b1, col_b2, col_b3 = app.columns(3)
+            col_b1.metric(
+                profile.winner_label,
+                f"{trait.laggard_top_option_winner_rate:.1%}",
+            )
+            col_b2.metric(
+                profile.loser_label,
+                f"{trait.laggard_top_option_loser_rate:.1%}",
+            )
+            col_b3.metric("Gap", f"{laggard_gap:+.1%}")
+
+        app.divider()
 
 
 # ---------------------------------------------------------------------------
@@ -4162,7 +4275,7 @@ def _render_sidebar() -> None:
 
 
 def _render_nav_bar() -> None:
-    """Sticky scrollspy navigation bar (anchor-based jump links)."""
+    """Inject scrollspy nav tabs into the merged red header (#custom-header-nav)."""
     app = _require_streamlit()
 
     n_singlecuts = len(app.session_state.get("results", []))
@@ -4171,184 +4284,128 @@ def _render_nav_bar() -> None:
     n_diffs = len(seg.differentiators) if seg else 0
     gf_state = app.session_state.get("global_filter_state")
     n_filters = len(gf_state.filters) if gf_state is not None and hasattr(gf_state, "filters") else 0
-    has_data = app.session_state.get("schema") is not None
+    has_data = bool(app.session_state.get("run_complete")) or app.session_state.get("schema") is not None
 
-    tabs = [
-        ("section-upload",     "Upload",      "\u2713" if has_data else ""),
-        ("section-filter",     "Filter",      f"({n_filters})" if n_filters else ""),
-        ("section-singlecuts", "Single cuts", f"({n_singlecuts})" if n_singlecuts else ""),
-        ("section-crosscuts",  "Cross cuts",  f"({n_crosscuts})" if n_crosscuts else ""),
-        ("section-ai",         "AI analysis", f"({n_diffs})" if n_diffs else ""),
-        ("section-downloads",  "Downloads",   ""),
+    tabs_meta = [
+        ("section-upload",     "Upload",      "\u2713" if has_data else None, "check"),
+        ("section-filter",     "Filter",      str(n_filters) if n_filters else None, None),
+        ("section-singlecuts", "Single cuts", str(n_singlecuts) if n_singlecuts else None, None),
+        ("section-crosscuts",  "Cross cuts",  str(n_crosscuts) if n_crosscuts else None, None),
+        ("section-ai",         "AI analysis", str(n_diffs) if n_diffs else None, None),
+        ("section-downloads",  "Downloads",   None, None),
     ]
 
     nav_items = ""
-    for anchor_id, label, badge in tabs:
-        badge_html = (
-            f'<span class="nav-badge">{html.escape(badge)}</span>'
-            if badge else ""
-        )
+    for anchor_id, label, badge, badge_type in tabs_meta:
+        if badge:
+            if badge_type == "check":
+                badge_html = (
+                    '<span class=\\"nav-badge\\" '
+                    'style=\\"background:rgba(76,175,80,0.9);color:#FFF;\\">\u2713</span>'
+                )
+            else:
+                badge_html = f'<span class=\\"nav-badge\\">{html.escape(badge)}</span>'
+        else:
+            badge_html = ""
         nav_items += (
-            f'<a href="#{anchor_id}" class="nav-tab" data-target="{anchor_id}">'
+            f'<a href=\\"#{html.escape(anchor_id)}\\" class=\\"nav-tab\\" '
+            f'data-target=\\"{html.escape(anchor_id)}\\">'
             f'{html.escape(label)}{badge_html}</a>'
         )
 
-    app.markdown(
-        f"""
-    <style>
-    .nav-bar {{
-        position: sticky !important;
-        top: 64px !important;
-        z-index: 998 !important;
-        background: #FFFFFF !important;
-        border-bottom: 1px solid #E5E5E5 !important;
-        display: flex !important;
-        gap: 0 !important;
-        padding: 0 8px !important;
-        height: 44px !important;
-        align-items: center !important;
-        overflow-x: auto !important;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.06) !important;
-        margin: 0 -8px 12px -8px !important;
-    }}
-    .nav-tab {{
-        display: inline-flex !important;
-        align-items: center !important;
-        gap: 6px !important;
-        padding: 0 16px !important;
-        height: 44px !important;
-        font-size: 13px !important;
-        font-family: Arial, sans-serif !important;
-        font-weight: 400 !important;
-        color: #666 !important;
-        text-decoration: none !important;
-        border: none !important;
-        border-bottom: 2px solid transparent !important;
-        border-radius: 0 !important;
-        background: transparent !important;
-        white-space: nowrap !important;
-        cursor: pointer !important;
-        transition: color 0.15s ease, border-color 0.15s ease !important;
-        box-sizing: border-box !important;
-        outline: none !important;
-    }}
-    .nav-tab:hover {{
-        color: #1A1A1A !important;
-        background: transparent !important;
-        border-bottom: 2px solid #DDD !important;
-        text-decoration: none !important;
-    }}
-    .nav-tab.active {{
-        color: #CC0000 !important;
-        font-weight: 500 !important;
-        border-bottom: 2px solid #CC0000 !important;
-        background: transparent !important;
-    }}
-    .nav-badge {{
-        display: inline-flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-        background: #F0F0F0 !important;
-        color: #666 !important;
-        font-size: 10px !important;
-        font-weight: 500 !important;
-        padding: 1px 6px !important;
-        border-radius: 10px !important;
-        min-width: 18px !important;
-        line-height: 1.4 !important;
-    }}
-    .nav-tab.active .nav-badge {{
-        background: #FCEBEB !important;
-        color: #CC0000 !important;
-    }}
-    [id^="section-"] {{
-        scroll-margin-top: 130px !important;
-        display: block !important;
-    }}
-    </style>
+    try:
+        from streamlit.components.v1 import html as components_html
+    except Exception:
+        components_html = None
 
-    <div class="nav-bar" id="main-nav-bar">{nav_items}</div>
+    script = f"""
+<script>
+(function() {{
+    var navHTML = "{nav_items}";
+    var doc = window.parent.document;
 
-    <script>
-    (function() {{
-        var sections = [
-            'section-upload',
-            'section-filter',
-            'section-singlecuts',
-            'section-crosscuts',
-            'section-ai',
-            'section-downloads'
-        ];
-
-        function setActive(id) {{
-            document.querySelectorAll('.nav-tab').forEach(function(tab) {{
-                tab.classList.remove('active');
-                if (tab.dataset.target === id) tab.classList.add('active');
-            }});
+    function injectNavTabs() {{
+        var navContainer = doc.getElementById('custom-header-nav');
+        if (!navContainer) return false;
+        if (navContainer.dataset.signature !== navHTML) {{
+            navContainer.innerHTML = navHTML;
+            navContainer.dataset.signature = navHTML;
+            attachScrollspy();
         }}
+        return true;
+    }}
 
-        document.querySelectorAll('.nav-tab').forEach(function(tab) {{
+    function attachScrollspy() {{
+        var tabs = Array.prototype.slice.call(
+            doc.querySelectorAll('#custom-header-nav .nav-tab')
+        );
+        if (!tabs.length) return;
+        var parentWin = window.parent;
+
+        tabs.forEach(function(tab) {{
             tab.addEventListener('click', function(e) {{
                 e.preventDefault();
-                var target = document.getElementById(tab.dataset.target);
+                var targetId = tab.getAttribute('data-target');
+                var target = doc.getElementById(targetId);
                 if (target) target.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
-                setActive(tab.dataset.target);
+                setActive(targetId);
             }});
         }});
 
-        function onScroll() {{
-            var scrollTop = window.scrollY || document.documentElement.scrollTop || 0;
-            var current = sections[0];
-            var bestOffset = -Infinity;
-            sections.forEach(function(id) {{
-                var el = document.getElementById(id);
-                if (!el) return;
-                var sectionTop = el.getBoundingClientRect().top + scrollTop - 120;
-                if (sectionTop <= scrollTop && sectionTop > bestOffset) {{
-                    bestOffset = sectionTop;
-                    current = id;
+        function setActive(activeId) {{
+            tabs.forEach(function(tab) {{
+                if (tab.getAttribute('data-target') === activeId) {{
+                    tab.classList.add('active');
+                }} else {{
+                    tab.classList.remove('active');
                 }}
             }});
-            setActive(current);
         }}
 
-        function positionNavBar() {{
-            var header = document.querySelector('.custom-header');
-            if (!header) {{
-                header = document.querySelector('.brand-header');
-            }}
-            var navBar = document.querySelector('.nav-bar');
-            if (header && navBar) {{
-                var headerHeight = header.offsetHeight;
-                navBar.style.top = headerHeight + 'px';
-                var anchors = document.querySelectorAll('[id^="section-"]');
-                anchors.forEach(function(a) {{
-                    a.style.scrollMarginTop = (headerHeight + 44 + 16) + 'px';
-                }});
-                var mainBlock = document.querySelector(
-                    '.main .block-container, [data-testid="block-container"]'
-                );
-                if (mainBlock) {{
-                    mainBlock.style.paddingTop = (headerHeight + 44 + 16) + 'px';
+        function updateActiveTab() {{
+            var scrollTop = parentWin.scrollY || parentWin.document.documentElement.scrollTop || 0;
+            var activeId = tabs[0].getAttribute('data-target');
+            var bestOffset = -Infinity;
+            tabs.forEach(function(tab) {{
+                var section = doc.getElementById(tab.getAttribute('data-target'));
+                if (!section) return;
+                var sectionTop = section.getBoundingClientRect().top + scrollTop - 80;
+                if (sectionTop <= scrollTop && sectionTop > bestOffset) {{
+                    bestOffset = sectionTop;
+                    activeId = tab.getAttribute('data-target');
                 }}
-            }}
+            }});
+            setActive(activeId);
         }}
 
-        window.addEventListener('scroll', onScroll, {{ passive: true }});
-        document.addEventListener('scroll', onScroll, {{ passive: true }});
-        try {{ window.parent.addEventListener('scroll', onScroll, {{ passive: true }}); }} catch(e) {{}}
-        window.addEventListener('resize', positionNavBar, {{ passive: true }});
-        setInterval(onScroll, 200);
-        setInterval(positionNavBar, 500);
-        setTimeout(onScroll, 800);
-        setTimeout(positionNavBar, 100);
-        setTimeout(positionNavBar, 600);
-    }})();
-    </script>
-    """,
-        unsafe_allow_html=True,
-    )
+        // Tear down prior listeners/interval to prevent buildup on re-runs
+        if (parentWin.__siNavCleanup) {{
+            try {{ parentWin.__siNavCleanup(); }} catch (e) {{}}
+        }}
+        parentWin.addEventListener('scroll', updateActiveTab, {{ passive: true }});
+        parentWin.document.addEventListener('scroll', updateActiveTab, {{ passive: true }});
+        var intervalId = parentWin.setInterval(updateActiveTab, 200);
+        parentWin.__siNavCleanup = function() {{
+            parentWin.removeEventListener('scroll', updateActiveTab);
+            parentWin.document.removeEventListener('scroll', updateActiveTab);
+            parentWin.clearInterval(intervalId);
+        }};
+        updateActiveTab();
+    }}
 
+    injectNavTabs();
+    setTimeout(injectNavTabs, 100);
+    setTimeout(injectNavTabs, 500);
+    setTimeout(injectNavTabs, 1500);
+    setInterval(injectNavTabs, 1000);
+}})();
+</script>
+"""
+    if components_html is not None:
+        components_html(script, height=0)
+    else:
+        app.markdown(script, unsafe_allow_html=True)
+    return
 
 def main() -> None:
     app = _require_streamlit()

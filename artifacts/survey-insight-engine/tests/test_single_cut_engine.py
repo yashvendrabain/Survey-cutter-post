@@ -252,11 +252,15 @@ class TestSingleCutEngine(unittest.TestCase):
 
         compute_single_cuts(make_schema(), dataframe, log)
 
-        self.assertEqual(len(log), 14)
+        self.assertEqual(len(log), 18)
         metric_names = [record.metric_name for record in log.all_records()]
         self.assertEqual(metric_names.count("rate_per_value"), 4)
         self.assertEqual(metric_names.count("selection_rate"), 1)
         self.assertEqual(metric_names.count("numeric_summary"), 1)
+        self.assertEqual(metric_names.count("numeric_std"), 1)
+        self.assertEqual(metric_names.count("numeric_p25"), 1)
+        self.assertEqual(metric_names.count("numeric_p50"), 1)
+        self.assertEqual(metric_names.count("numeric_p75"), 1)
         self.assertEqual(metric_names.count("allocation_summary"), 1)
         self.assertEqual(metric_names.count("numeric_allocation_mean"), 3)
         self.assertEqual(metric_names.count("numeric_allocation_median"), 3)

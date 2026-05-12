@@ -371,6 +371,18 @@ class NumericResult(SingleCutResult):
                     )
                     _require_numeric(metric_value, "per_option_stats metric value")
 
+    @property
+    def p25(self) -> float:
+        return float(self.percentiles[25])
+
+    @property
+    def p50(self) -> float:
+        return float(self.percentiles[50])
+
+    @property
+    def p75(self) -> float:
+        return float(self.percentiles[75])
+
 
 @dataclass(frozen=True, slots=True)
 class GridSingleSelectResult(SingleCutResult):
@@ -742,6 +754,10 @@ class ProfileTrait:
     loser_rate: float
     lift: float
     rate_gap: float
+    laggard_top_option_label: str = ""
+    laggard_top_option_winner_rate: float = 0.0
+    laggard_top_option_loser_rate: float = 0.0
+    laggard_top_option_gap: float = 0.0
 
     def __post_init__(self) -> None:
         _require_non_empty_string(self.question_id, "question_id")
@@ -751,6 +767,16 @@ class ProfileTrait:
         _require_rate(self.loser_rate, "loser_rate")
         _require_numeric(self.lift, "lift")
         _require_numeric(self.rate_gap, "rate_gap")
+        _require_numeric(self.laggard_top_option_gap, "laggard_top_option_gap")
+        if self.laggard_top_option_label:
+            _require_rate(
+                self.laggard_top_option_winner_rate,
+                "laggard_top_option_winner_rate",
+            )
+            _require_rate(
+                self.laggard_top_option_loser_rate,
+                "laggard_top_option_loser_rate",
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -792,6 +818,20 @@ class OutcomeSegmentationResult:
         _require_non_negative_int(self.loser_n, "loser_n")
         _require_non_negative_int(self.total_n, "total_n")
 
+    def top_differentiators(
+        self,
+        limit: int = 10,
+    ) -> tuple[DifferentiatorResult, ...]:
+        """Return top N differentiators by Cramer's V."""
+        if limit <= 0:
+            return ()
+        return tuple(self.differentiators[:limit])
+
+    @property
+    def max_available_differentiators(self) -> int:
+        """Total differentiators available for display."""
+        return len(self.differentiators)
+
 
 @dataclass(frozen=True, slots=True)
 class GlobalFilterState:
@@ -823,16 +863,15 @@ class GlobalFilterState:
             return "(no global filter)"
         parts: list[str] = []
         for filter_spec in self.filters:
-            values = filter_spec.get_effective_values() or []
-            if len(values) == 1:
+            values = filter_spec.get_effective_values()
+            if values is None:
                 parts.append(
-                    f"{filter_spec.filter_question_id} == {values[0]!r}"
+                    f"{filter_spec.filter_question_id} == {filter_spec.filter_value!r}"
                 )
+            elif len(values) == 1:
+                parts.append(f"{filter_spec.filter_question_id} == {values[0]!r}")
             else:
-                parts.append(
-                    f"{filter_spec.filter_question_id} in "
-                    f"{[v for v in values]!r}"
-                )
+                parts.append(f"{filter_spec.filter_question_id} in {list(values)!r}")
         return " AND ".join(parts)
 
 
