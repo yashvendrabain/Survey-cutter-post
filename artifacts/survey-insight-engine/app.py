@@ -4178,7 +4178,7 @@ def main() -> None:
         page_title=APP_TITLE,
         page_icon="📊",
         layout="wide",
-        initial_sidebar_state="collapsed",
+        initial_sidebar_state="expanded",
     )
     _initialise_session_state()
     _inject_global_css()
