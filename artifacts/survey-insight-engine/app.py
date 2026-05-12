@@ -375,13 +375,14 @@ def _inject_global_css() -> None:
     section[data-testid="stSidebar"] { background: #FAFAFA; border-right: 0.5px solid #E5E5E5; }
     section[data-testid="stSidebar"] .block-container { padding-top: 1rem; }
 
-    .sb-section { padding: 12px 0 4px; font-size: 10px; font-weight: 500; color: #888; text-transform: uppercase; letter-spacing: 0.08em; }
-    .sb-item { display: flex; align-items: center; gap: 8px; padding: 7px 12px; font-size: 13px; color: #444; border-left: 2px solid transparent; margin: 0 -1rem; padding-left: calc(1rem + 12px); }
-    .sb-item.active { background: #FCEBEB; color: #CC0000; border-left-color: #CC0000; font-weight: 500; }
-    .sb-count { margin-left: auto; font-size: 11px; color: #888; }
-    .sb-item.active .sb-count { color: #CC0000; }
-    .sb-runlog { margin: 16px -1rem 0 -1rem; padding: 12px 16px; border-top: 0.5px solid #E5E5E5; font-size: 11px; color: #666; }
-    .sb-runlog-row { display: flex; justify-content: space-between; padding: 3px 0; }
+    .sb-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; font-size: 13px; color: #444; border-left: 3px solid transparent; margin-bottom: 1px; cursor: default; }
+    .sb-item:hover { background: #F0F0F0; }
+    .sb-item.active { background: #FCEBEB !important; color: #CC0000 !important; border-left-color: #CC0000 !important; font-weight: 500; }
+    .sb-count { font-size: 11px; color: #999; background: #EFEFEF; padding: 1px 7px; border-radius: 10px; }
+    .sb-item.active .sb-count { color: #CC0000; background: #FADADA; }
+    .sb-section { padding: 16px 16px 6px; font-size: 10px; font-weight: 600; color: #999; text-transform: uppercase; letter-spacing: 0.1em; }
+    .sb-runlog { margin-top: 16px; padding: 12px 16px; border-top: 1px solid #E5E5E5; font-size: 12px; color: #666; }
+    .sb-runlog-row { display: flex; justify-content: space-between; padding: 4px 0; }
     .sb-runlog-row strong { color: #1A1A1A; font-weight: 500; }
 
     .insight-card { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; background: #FFF; border: 0.5px solid #E5E5E5; border-left: 3px solid #CC0000; border-radius: 6px; margin-bottom: 8px; font-family: Arial, sans-serif; }
@@ -404,6 +405,23 @@ def _inject_global_css() -> None:
     div[data-testid="stButton"] button { font-size: 12px; padding: 5px 12px; border-radius: 6px; }
     div[data-testid="stButton"] button[kind="primary"] { background: #CC0000; border-color: #CC0000; }
     div[data-testid="stButton"] button[kind="primary"]:hover { background: #B30000; border-color: #B30000; }
+
+    /* Streamlit sidebar padding override */
+    section[data-testid="stSidebar"] > div:first-child {
+        padding-top: 0 !important;
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+    }
+    section[data-testid="stSidebar"] .stMarkdown {
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+    }
+    section[data-testid="stSidebar"] .element-container {
+        margin-bottom: 0 !important;
+    }
+    section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"] {
+        gap: 0 !important;
+    }
     </style>
     """,
         unsafe_allow_html=True,
@@ -2524,7 +2542,6 @@ def _render_sidebar() -> None:
     has_results = bool(app.session_state.get("results"))
     has_crosscuts = bool(app.session_state.get("cross_cut_results"))
     has_segmentation = app.session_state.get("segmentation_result") is not None
-
     n_singlecuts = len(app.session_state.get("results", []))
     n_crosscuts = len(app.session_state.get("cross_cut_results", []))
     seg = app.session_state.get("segmentation_result")
@@ -2533,6 +2550,16 @@ def _render_sidebar() -> None:
     n_filters = len(gf_state) if isinstance(gf_state, dict) else 0
 
     with app.sidebar:
+        app.markdown(
+            """
+            <div style="padding: 8px 16px 16px; border-bottom: 1px solid #E5E5E5; margin-bottom: 4px;">
+                <div style="font-size: 13px; font-weight: 600; color: #1A1A1A;">Survey Analysis Engine</div>
+                <div style="font-size: 11px; color: #888; margin-top: 2px;">Workflow navigator</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
         app.markdown(
             '<div class="sb-section">Workflow</div>',
             unsafe_allow_html=True,
@@ -2555,22 +2582,69 @@ def _render_sidebar() -> None:
                 or (num == "1" and not has_data)
             )
             cls = "sb-item active" if is_active else "sb-item"
+            if num == "1" and has_data:
+                icon = "✓"
+            elif num == "2" and n_filters > 0:
+                icon = "✓"
+            elif num == "3" and n_singlecuts > 0:
+                icon = "✓"
+            elif num == "4" and n_crosscuts > 0:
+                icon = "✓"
+            elif num == "5" and has_segmentation:
+                icon = "✓"
+            else:
+                icon = "○"
+
             app.markdown(
-                f'<div class="{cls}"><span>{num}. {label}</span>'
-                f'<span class="sb-count">{count}</span></div>',
+                f"""
+                <div class="{cls}">
+                    <span style="display:flex; align-items:center; gap:8px;">
+                        <span style="font-size:11px; color:inherit; opacity:0.7;">{icon}</span>
+                        <span>{num}. {label}</span>
+                    </span>
+                    <span class="sb-count">{count}</span>
+                </div>
+                """,
                 unsafe_allow_html=True,
             )
 
         if seg is not None:
             laggard_label = seg.segment_definition.loser_label
             app.markdown(
+                '<div class="sb-section" style="margin-top:8px;">Last run</div>',
+                unsafe_allow_html=True,
+            )
+            app.markdown(
                 f"""
-            <div class="sb-runlog">
-                <div class="sb-runlog-row"><span>Outcome</span><strong>{seg.outcome_question_id}</strong></div>
-                <div class="sb-runlog-row"><span>Winners</span><strong>{seg.winner_n}</strong></div>
-                <div class="sb-runlog-row"><span>{laggard_label}s</span><strong>{seg.loser_n}</strong></div>
-            </div>
-            """,
+                <div class="sb-runlog">
+                    <div class="sb-runlog-row">
+                        <span>Outcome</span>
+                        <strong>{seg.outcome_question_id}</strong>
+                    </div>
+                    <div class="sb-runlog-row">
+                        <span>Winners</span>
+                        <strong>{seg.winner_n:,}</strong>
+                    </div>
+                    <div class="sb-runlog-row">
+                        <span>{laggard_label}s</span>
+                        <strong>{seg.loser_n:,}</strong>
+                    </div>
+                    <div class="sb-runlog-row">
+                        <span>Differentiators</span>
+                        <strong>{n_diffs}</strong>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        else:
+            app.markdown(
+                """
+                <div style="padding: 12px 16px; margin-top: 16px; font-size: 11px;
+                     color: #999; border-top: 1px solid #E5E5E5;">
+                    Run analysis in Section 5 to see segmentation results here.
+                </div>
+                """,
                 unsafe_allow_html=True,
             )
 
@@ -3964,8 +4038,8 @@ def main() -> None:
     app.divider()
     _section_cross_cuts()
     app.divider()
-    _section_downloads()
     _section_ai_analysis()
+    _section_downloads()
 
 
 if __name__ == "__main__":
