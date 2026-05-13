@@ -690,8 +690,8 @@ class TestExcelExporter(unittest.TestCase):
         self.addCleanup(workbook.close)
 
         self.assertEqual(
-            workbook.sheetnames[:5],
-            ["_RawData", "_Options", "Run_Summary", "Question_Metadata", "Single_Cut_Index"],
+            workbook.sheetnames[:6],
+            ["_RawData", "_Options", "Filters", "Run_Summary", "Question_Metadata", "Single_Cut_Index"],
         )
         self.assertEqual(
             workbook.sheetnames[-3:],
@@ -822,8 +822,16 @@ class TestExcelExporter(unittest.TestCase):
         ws = workbook["All Questions"]
 
         self.assertEqual(ws["A1"].value, "THEME: All Questions")
-        self.assertEqual(ws["A3"].value, "DEMOGRAPHIC FILTERS")
-        self.assertEqual(ws["A7"].value, "OPTIONAL CUSTOM FILTERS")
+        self.assertNotEqual(ws["A3"].value, "DEMOGRAPHIC FILTERS")
+        self.assertEqual(ws["A4"].value, "Q_SS_EXPORT - Single select export question")
+
+    def test_filter_sheet_exists_visible(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        self.addCleanup(workbook.close)
+
+        self.assertIn("Filters", workbook.sheetnames)
+        self.assertEqual(workbook["Filters"].sheet_state, "visible")
 
     def test_raw_data_sheet_is_hidden(self) -> None:
         output_path = self.export_workbook()
@@ -886,7 +894,41 @@ class TestExcelExporter(unittest.TestCase):
 
         self.assertTrue(formula.startswith("=COUNTIFS"))
         self.assertIn("Q_SS_EXPORT_data", formula)
-        self.assertIn("F_Custom1_Q", formula)
+        self.assertIn("F_Custom1_crit", formula)
+        self.assertNotIn('IF(F_Custom1_Q="(None)"', formula)
+
+    def test_named_cells_are_workbook_scoped(self) -> None:
+        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = (
+            FIXTURE_DIR
+            / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
+        )
+        results, skips, schema, quality_report, log = make_export_fixture()
+        schema = replace(
+            schema,
+            questions=tuple(
+                replace(question, is_demographic=question.canonical_id == "Q_SS_EXPORT")
+                for question in schema.questions
+            ),
+        )
+        export_single_cuts(
+            results,
+            skips,
+            schema,
+            quality_report,
+            log,
+            str(output_path),
+            demo_priority={
+                "priority_ordered": ["Q_SS_EXPORT"],
+                "categories": {"Q_SS_EXPORT": "country"},
+            },
+        )
+        workbook = load_workbook(output_path, read_only=False, data_only=True)
+        self.addCleanup(workbook.close)
+
+        self.assertIsNone(workbook.defined_names["F_Country"].localSheetId)
+        self.assertIsNone(workbook.defined_names["F_Country_crit"].localSheetId)
+        self.assertEqual(workbook.defined_names["F_Country"].attr_text, "'Filters'!$B$3")
 
     def test_per_question_filter_named_cells_exist(self) -> None:
         output_path = self.export_workbook()
@@ -934,10 +976,10 @@ class TestExcelExporter(unittest.TestCase):
         )
         workbook = load_workbook(output_path, read_only=True, data_only=True)
         self.addCleanup(workbook.close)
-        ws = workbook["Demographics"]
+        ws = workbook["Filters"]
 
-        self.assertEqual(ws["A4"].value, "Q_SS_EXPORT - Single select export question")
-        self.assertEqual(ws["B4"].value, "Q_MS_EXPORT - Multi select export question")
+        self.assertEqual(ws["A3"].value, "Q_SS_EXPORT - Single select export question")
+        self.assertEqual(ws["A4"].value, "Q_MS_EXPORT - Multi select export question")
 
     def test_workbook_has_one_sheet_per_theme(self) -> None:
         FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1008,7 +1050,7 @@ class TestExcelExporter(unittest.TestCase):
 
         workbook = load_workbook(output_path, read_only=False, data_only=True)
         self.addCleanup(workbook.close)
-        ws = workbook["Demographics"]
+        ws = workbook["Filters"]
 
         self.assertGreater(len(ws.data_validations.dataValidation), 0)
 
@@ -1245,10 +1287,10 @@ class TestExcelExporter(unittest.TestCase):
         workbook = load_workbook(output_path, read_only=True, data_only=False)
         self.addCleanup(workbook.close)
         ws = workbook["All Questions"]
-        q_row = question_header_row(ws, "Q_SS_EXPORT")
+        header_row = table_header_row(ws, "Q_SS_EXPORT")
 
-        self.assertEqual(ws.cell(q_row + 1, 1).value, "Per-question filter")
-        self.assertEqual(ws.cell(q_row + 1, 6).value, "Cross-tab by")
+        self.assertEqual(ws.cell(header_row, 6).value, "Option \\ Cross-tab")
+        self.assertIn("Q_SS_EXPORT_CT", ws.cell(header_row, 7).value)
 
     def test_segment_profile_sheet_includes_filter_and_target_labels(self) -> None:
         output_path = self.export_workbook_with_cross_cuts()

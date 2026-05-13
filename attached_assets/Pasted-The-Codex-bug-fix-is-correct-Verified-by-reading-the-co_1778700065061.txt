@@ -1,0 +1,88 @@
+The Codex bug fix is correct. Verified by reading the code:
+- Filters sheet created visible at workbook level
+- _add_named_cell uses workbook scope (no localSheetId)
+- F_*_crit helper cells generate the resolved criterion
+- COUNTIFS formulas now use crit names, no nested IFs
+
+Files are already applied (341 tests pass per your earlier report).
+
+NEXT STEP — Generate a fresh workbook for user verification:
+
+cd artifacts/survey-insight-engine && python3 << 'PYEOF'
+import sys; sys.path.insert(0, ".")
+from src.io import load_raw_data, load_datamap
+from src.datamap_parser import parse_datamap
+from src.question_classifier import classify_questions
+from src.raw_decoder import decode_raw_data
+from src.single_cut_engine import run_single_cuts
+from src.excel_exporter import export_single_cuts
+from src.ai_insights import categorize_questions_into_themes, categorize_demographic_questions
+
+datamap = load_datamap("sample_data/Datamap_sample.xlsx")
+schema = classify_questions(parse_datamap(datamap))
+decoded_df = decode_raw_data(load_raw_data("sample_data/Rawdata_sample.xlsx"), schema)
+results, skips, log, quality_report = run_single_cuts(decoded_df, schema)
+
+qfs = [{"question_id": q.canonical_id, "question_text": q.question_text,
+        "question_type": q.question_type.value, "is_demographic": q.is_demographic}
+       for q in schema.questions]
+themes = categorize_questions_into_themes(qfs, cache={})
+
+dqs = [{"question_id": q.canonical_id, "question_text": q.question_text,
+        "question_type": q.question_type.value}
+       for q in schema.demographic_questions()]
+demo_priority = categorize_demographic_questions(dqs, cache={})
+
+out = "outputs/survey_analysis_fixed.xlsx"
+import os; os.makedirs("outputs", exist_ok=True)
+export_single_cuts(
+    results=results, skips=skips, schema=schema,
+    quality_report=quality_report, log=log, output_path=out,
+    themes=themes, decoded_df=decoded_df, demo_priority=demo_priority,
+)
+print(f"FRESH WORKBOOK READY: {out}")
+PYEOF
+
+Then verify the structure:
+
+python3 << 'PYEOF'
+import openpyxl
+wb = openpyxl.load_workbook("outputs/survey_analysis_fixed.xlsx", data_only=False)
+print("=== SHEETS ===")
+for s in wb.worksheets:
+    print(f"  {s.title!r} state={s.sheet_state}")
+print()
+print("Filters sheet exists:", "Filters" in wb.sheetnames)
+
+# Find a COUNTIFS formula
+sheet = next((s for s in wb.worksheets if s.title not in 
+              ('_RawData','_Options','Run_Summary','Question_Metadata',
+               'Single_Cut_Index','Calculation_Log','Filter_Log',
+               'Warnings','Filters','Survey Metadata')), None)
+if sheet:
+    print(f"\nFirst COUNTIFS on '{sheet.title}':")
+    for row in sheet.iter_rows():
+        for cell in row:
+            if isinstance(cell.value, str) and 'COUNTIFS' in cell.value.upper():
+                print(f"  {cell.coordinate}: {cell.value[:300]}")
+                break
+        else: continue
+        break
+PYEOF
+
+Confirm:
+1. Filters sheet exists and is visible
+2. COUNTIFS formula uses *_crit names (no nested IF)
+
+Then present the workbook to the user via the standard download 
+mechanism (UI download button, or copy to outputs/ which the app 
+already serves). Confirm path so user can grab it.
+
+After user opens it in Excel, they should:
+- Find the "Filters" sheet (now visible — it's the control panel)
+- Pick a value from any dropdown (e.g. Industry = Software)
+- Navigate to a theme sheet (e.g. "Revenue & Growth")
+- All Count and % values should update to reflect the filter
+- NO #REF! errors anywhere
+
+Report the verification script output + the download path.
