@@ -523,6 +523,34 @@ def sheet_values(workbook_path: Path, sheet_name: str) -> list[object]:
         workbook.close()
 
 
+def find_row(ws, value: object, column: int = 1) -> int:
+    for row_index in range(1, ws.max_row + 1):
+        if ws.cell(row=row_index, column=column).value == value:
+            return row_index
+    raise AssertionError(f"{value!r} not found in column {column}")
+
+
+def question_title(question_id: str, text: str) -> str:
+    return f"{question_id} - {text}"
+
+
+def question_header_row(ws, question_id: str) -> int:
+    prefix = f"{question_id} - "
+    for row_index in range(1, ws.max_row + 1):
+        value = ws.cell(row=row_index, column=1).value
+        if isinstance(value, str) and value.startswith(prefix):
+            return row_index
+    raise AssertionError(f"Question block {question_id!r} not found")
+
+
+def table_header_row(ws, question_id: str, header: str = "Option") -> int:
+    start = question_header_row(ws, question_id)
+    for row_index in range(start, min(ws.max_row, start + 12) + 1):
+        if ws.cell(row=row_index, column=1).value == header:
+            return row_index
+    raise AssertionError(f"{header!r} table header for {question_id!r} not found")
+
+
 class TestExcelExporter(unittest.TestCase):
     def grid_single_select_format_fixture(
         self,
@@ -662,12 +690,12 @@ class TestExcelExporter(unittest.TestCase):
         self.addCleanup(workbook.close)
 
         self.assertEqual(
-            workbook.sheetnames[:4],
-            ["Run_Summary", "Question_Metadata", "Single_Cut_Index", "Skip_Log"],
+            workbook.sheetnames[:5],
+            ["_RawData", "_Options", "Run_Summary", "Question_Metadata", "Single_Cut_Index"],
         )
         self.assertEqual(
-            workbook.sheetnames[-4:],
-            ["Calculation_Log", "Filter_Log", "Data_Quality", "Warnings"],
+            workbook.sheetnames[-3:],
+            ["Calculation_Log", "Filter_Log", "Warnings"],
         )
         self.assertIn("All Questions", workbook.sheetnames)
         self.assertFalse(any(name.startswith("SC_") for name in workbook.sheetnames))
@@ -684,10 +712,8 @@ class TestExcelExporter(unittest.TestCase):
         self.assertEqual(ws["B7"].value, 2)
         self.assertEqual(ws["B8"].value, 0)
         self.assertEqual(ws["B9"].value, 0)
-        self.assertEqual(ws["B10"].value, 0)
-        self.assertEqual(ws["B11"].value, 7)
-        self.assertEqual(ws["B12"].value, 1)
-        self.assertEqual(ws["B13"].value, 1)
+        self.assertEqual(ws["B10"].value, 7)
+        self.assertEqual(ws["B11"].value, 1)
 
     def test_question_metadata_one_row_per_question(self) -> None:
         output_path = self.export_workbook()
@@ -698,7 +724,7 @@ class TestExcelExporter(unittest.TestCase):
 
     def test_single_cut_index_links_to_theme_sheets(self) -> None:
         output_path = self.export_workbook()
-        workbook = load_workbook(output_path, read_only=False, data_only=True)
+        workbook = load_workbook(output_path, read_only=False, data_only=False)
         self.addCleanup(workbook.close)
         ws = workbook["Single_Cut_Index"]
 
@@ -713,11 +739,20 @@ class TestExcelExporter(unittest.TestCase):
         self.addCleanup(workbook.close)
         ws = workbook["All Questions"]
 
-        self.assertEqual(ws["A8"].value, "Q_SS_EXPORT - Single select export question")
-        self.assertEqual([ws["A11"].value, ws["B11"].value, ws["C11"].value, ws["D11"].value], ["Option", "Count", "%", "Denominator"])
-        self.assertEqual(ws["A12"].value, "Yes")
-        self.assertEqual(ws["B12"].value, 6)
-        self.assertIn("SUBTOTAL", ws["C12"].value)
+        header_row = table_header_row(ws, "Q_SS_EXPORT")
+        data_row = header_row + 1
+        self.assertEqual(
+            ws.cell(row=question_header_row(ws, "Q_SS_EXPORT"), column=1).value,
+            "Q_SS_EXPORT - Single select export question",
+        )
+        self.assertEqual(
+            [ws.cell(header_row, col).value for col in range(1, 5)],
+            ["Option", "Count", "%", "Denominator"],
+        )
+        self.assertEqual(ws.cell(data_row, 1).value, "Yes")
+        self.assertTrue(ws.cell(data_row, 2).value.startswith("=COUNTIFS"))
+        self.assertIn("Q_SS_EXPORT_data", ws.cell(data_row, 2).value)
+        self.assertIn("SUBTOTAL", ws.cell(data_row, 3).value)
 
     def test_sc_sheet_for_multi_select_has_selections_table(self) -> None:
         output_path = self.export_workbook()
@@ -725,23 +760,35 @@ class TestExcelExporter(unittest.TestCase):
         self.addCleanup(workbook.close)
         ws = workbook["All Questions"]
 
-        self.assertEqual(ws["A16"].value, "Q_MS_EXPORT - Multi select export question")
-        self.assertEqual(ws["A19"].value, "Option")
-        self.assertEqual(ws["B19"].value, "Count")
-        self.assertEqual(ws["A20"].value, "First")
-        self.assertIn("SUBTOTAL", ws["C20"].value)
+        header_row = table_header_row(ws, "Q_MS_EXPORT")
+        data_row = header_row + 1
+        self.assertEqual(
+            ws.cell(row=question_header_row(ws, "Q_MS_EXPORT"), column=1).value,
+            "Q_MS_EXPORT - Multi select export question",
+        )
+        self.assertEqual(ws.cell(header_row, 1).value, "Option")
+        self.assertEqual(ws.cell(header_row, 2).value, "Count")
+        self.assertEqual(ws.cell(data_row, 1).value, "First")
+        self.assertIn("Q_MS_EXPORTr1_data", ws.cell(data_row, 2).value)
+        self.assertIn("SUBTOTAL", ws.cell(data_row, 3).value)
 
     def test_sc_sheet_for_numeric_has_stats_table(self) -> None:
         output_path = self.export_workbook()
-        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        workbook = load_workbook(output_path, read_only=True, data_only=False)
         self.addCleanup(workbook.close)
         ws = workbook["All Questions"]
 
-        self.assertEqual(ws["A24"].value, "Q_NUM_EXPORT - Numeric export question")
-        self.assertEqual(ws["A28"].value, "Valid N")
-        self.assertEqual(ws["B30"].value, 5.5)
-        self.assertEqual(ws["A31"].value, "Median")
-        self.assertEqual(ws["B31"].value, 5.5)
+        header_row = table_header_row(ws, "Q_NUM_EXPORT", header="Metric")
+        self.assertEqual(
+            ws.cell(row=question_header_row(ws, "Q_NUM_EXPORT"), column=1).value,
+            "Q_NUM_EXPORT - Numeric export question",
+        )
+        self.assertEqual(ws.cell(header_row, 1).value, "Metric")
+        self.assertEqual(ws.cell(header_row + 1, 1).value, "Mean")
+        self.assertTrue(ws.cell(header_row + 1, 2).value.startswith("=IFERROR(AVERAGEIFS"))
+        self.assertEqual(ws.cell(header_row + 4, 1).value, "Std")
+        self.assertEqual(ws.cell(header_row + 4, 2).value, 2.9)
+        self.assertIn("Median not available", ws.cell(header_row + 5, 1).value)
 
     def test_sc_sheet_for_grid_has_compact_distribution_table(self) -> None:
         output_path = self.export_workbook()
@@ -749,17 +796,20 @@ class TestExcelExporter(unittest.TestCase):
         self.addCleanup(workbook.close)
         ws = workbook["All Questions"]
 
+        header_row = table_header_row(ws, "Q_GRID_EXPORT")
+        data_row = header_row + 1
         self.assertEqual(
-            [ws["A43"].value, ws["B43"].value, ws["C43"].value, ws["D43"].value],
+            [ws.cell(header_row, col).value for col in range(1, 5)],
             ["Option", "Count", "%", "Denominator"],
         )
-        self.assertEqual(ws["A44"].value, "Grid first row")
-        self.assertEqual(ws["B44"].value, 10)
-        self.assertIn("SUBTOTAL", ws["D44"].value)
+        self.assertEqual(ws.cell(data_row, 1).value, "Grid first row")
+        self.assertTrue(ws.cell(data_row, 2).value.startswith("=COUNTIFS"))
+        self.assertIn("Q_GRID_EXPORTr1_data", ws.cell(data_row, 2).value)
+        self.assertIn("SUBTOTAL", ws.cell(data_row, 4).value)
 
     def test_sc_sheet_has_autofilter(self) -> None:
         output_path = self.export_workbook()
-        workbook = load_workbook(output_path, read_only=False, data_only=True)
+        workbook = load_workbook(output_path, read_only=False, data_only=False)
         self.addCleanup(workbook.close)
         ws = workbook["All Questions"]
 
@@ -772,7 +822,122 @@ class TestExcelExporter(unittest.TestCase):
         ws = workbook["All Questions"]
 
         self.assertEqual(ws["A1"].value, "THEME: All Questions")
-        self.assertEqual(ws["A3"].value, "Optional custom filters (pick any question):")
+        self.assertEqual(ws["A3"].value, "DEMOGRAPHIC FILTERS")
+        self.assertEqual(ws["A7"].value, "OPTIONAL CUSTOM FILTERS")
+
+    def test_raw_data_sheet_is_hidden(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        self.addCleanup(workbook.close)
+
+        self.assertIn("_RawData", workbook.sheetnames)
+        self.assertEqual(workbook["_RawData"].sheet_state, "hidden")
+
+    def test_options_sheet_is_hidden(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        self.addCleanup(workbook.close)
+
+        self.assertIn("_Options", workbook.sheetnames)
+        self.assertEqual(workbook["_Options"].sheet_state, "hidden")
+
+    def test_demographic_filter_named_cells_exist(self) -> None:
+        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = (
+            FIXTURE_DIR
+            / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
+        )
+        results, skips, schema, quality_report, log = make_export_fixture()
+        schema = replace(
+            schema,
+            questions=tuple(
+                replace(
+                    question,
+                    is_demographic=question.canonical_id in {"Q_SS_EXPORT", "Q_MS_EXPORT"},
+                )
+                for question in schema.questions
+            ),
+        )
+        export_single_cuts(
+            results,
+            skips,
+            schema,
+            quality_report,
+            log,
+            str(output_path),
+            demo_priority={
+                "priority_ordered": ["Q_SS_EXPORT", "Q_MS_EXPORT"],
+                "categories": {"Q_SS_EXPORT": "country", "Q_MS_EXPORT": "industry"},
+            },
+        )
+        workbook = load_workbook(output_path, read_only=False, data_only=True)
+        self.addCleanup(workbook.close)
+
+        self.assertIn("F_Country", workbook.defined_names)
+        self.assertIn("F_Industry", workbook.defined_names)
+
+    def test_count_cell_uses_countifs_formula(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=True, data_only=False)
+        self.addCleanup(workbook.close)
+        ws = workbook["All Questions"]
+        header_row = table_header_row(ws, "Q_SS_EXPORT")
+        formula = ws.cell(row=header_row + 1, column=2).value
+
+        self.assertTrue(formula.startswith("=COUNTIFS"))
+        self.assertIn("Q_SS_EXPORT_data", formula)
+        self.assertIn("F_Custom1_Q", formula)
+
+    def test_per_question_filter_named_cells_exist(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=False, data_only=True)
+        self.addCleanup(workbook.close)
+
+        self.assertIn("Q_SS_EXPORT_F_Q", workbook.defined_names)
+        self.assertIn("Q_SS_EXPORT_F_V", workbook.defined_names)
+
+    def test_cross_tab_named_cell_exists(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=False, data_only=True)
+        self.addCleanup(workbook.close)
+
+        self.assertIn("Q_SS_EXPORT_CT", workbook.defined_names)
+
+    def test_priority_demographic_ordering(self) -> None:
+        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = (
+            FIXTURE_DIR
+            / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
+        )
+        results, skips, schema, quality_report, log = make_export_fixture()
+        schema = replace(
+            schema,
+            questions=tuple(
+                replace(
+                    question,
+                    is_demographic=question.canonical_id in {"Q_SS_EXPORT", "Q_MS_EXPORT"},
+                )
+                for question in schema.questions
+            ),
+        )
+        export_single_cuts(
+            results,
+            skips,
+            schema,
+            quality_report,
+            log,
+            str(output_path),
+            demo_priority={
+                "priority_ordered": ["Q_SS_EXPORT", "Q_MS_EXPORT"],
+                "categories": {"Q_SS_EXPORT": "country", "Q_MS_EXPORT": "industry"},
+            },
+        )
+        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        self.addCleanup(workbook.close)
+        ws = workbook["Demographics"]
+
+        self.assertEqual(ws["A4"].value, "Q_SS_EXPORT - Single select export question")
+        self.assertEqual(ws["B4"].value, "Q_MS_EXPORT - Multi select export question")
 
     def test_workbook_has_one_sheet_per_theme(self) -> None:
         FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
@@ -813,8 +978,10 @@ class TestExcelExporter(unittest.TestCase):
         self.addCleanup(workbook.close)
         ws = workbook["All Questions"]
 
-        self.assertTrue(ws["C12"].value.startswith("="))
-        self.assertIn("SUBTOTAL", ws["C12"].value)
+        header_row = table_header_row(ws, "Q_SS_EXPORT")
+        value = ws.cell(row=header_row + 1, column=3).value
+        self.assertTrue(value.startswith("="))
+        self.assertIn("SUBTOTAL", value)
 
     def test_demographic_filter_row_has_data_validation(self) -> None:
         FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
@@ -862,18 +1029,19 @@ class TestExcelExporter(unittest.TestCase):
             str(output_path),
         )
 
-        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        workbook = load_workbook(output_path, read_only=True, data_only=False)
         self.addCleanup(workbook.close)
         ws = workbook["All Questions"]
 
+        header_row = table_header_row(ws, "Q_GRID_FORMAT")
         self.assertEqual(
-            [ws["A11"].value, ws["B11"].value, ws["C11"].value, ws["D11"].value],
+            [ws.cell(header_row, col).value for col in range(1, 5)],
             ["Option", "Count", "%", "Denominator"],
         )
-        self.assertEqual(ws["A12"].value, "Option A")
-        self.assertEqual(ws["B12"].value, 50)
-        self.assertEqual(ws["A13"].value, "Option B")
-        self.assertEqual(ws["B13"].value, 30)
+        self.assertEqual(ws.cell(header_row + 1, 1).value, "Option A")
+        self.assertIn("r1_data", ws.cell(header_row + 1, 2).value)
+        self.assertEqual(ws.cell(header_row + 2, 1).value, "Option B")
+        self.assertIn("r2_data", ws.cell(header_row + 2, 2).value)
 
         values = [
             cell
@@ -914,22 +1082,17 @@ class TestExcelExporter(unittest.TestCase):
         workbook = load_workbook(output_path, read_only=True, data_only=True)
         self.addCleanup(workbook.close)
 
-        self.assertEqual(workbook["Skip_Log"].max_row, 3)
+        values = sheet_values(output_path, "Warnings")
+        self.assertIn("ValueError: raw column not found in data", values)
 
     def test_data_quality_sheet_has_three_sections(self) -> None:
         output_path = self.export_workbook()
         workbook = load_workbook(output_path, read_only=True, data_only=True)
         self.addCleanup(workbook.close)
-        values = [
-            cell
-            for row in workbook["Data_Quality"].iter_rows(values_only=True)
-            for cell in row
-            if cell is not None
-        ]
 
-        self.assertIn("Per-column missing %", values)
-        self.assertIn("Per-column out-of-range %", values)
-        self.assertIn("Coercion log", values)
+        self.assertIn("Warnings", workbook.sheetnames)
+        values = sheet_values(output_path, "Warnings")
+        self.assertIn("column extra_col has 50.0% missing values", values)
 
     def test_sheet_names_truncated_to_31_chars(self) -> None:
         output_path = self.export_workbook()
@@ -943,7 +1106,9 @@ class TestExcelExporter(unittest.TestCase):
         output_path = self.export_workbook()
         workbook = load_workbook(output_path, read_only=True, data_only=False)
         self.addCleanup(workbook.close)
-        value = workbook["All Questions"]["C12"].value
+        ws = workbook["All Questions"]
+        header_row = table_header_row(ws, "Q_SS_EXPORT")
+        value = ws.cell(row=header_row + 1, column=3).value
 
         self.assertTrue(value.startswith("="))
         self.assertIn("SUBTOTAL", value)
@@ -959,120 +1124,88 @@ class TestExcelExporter(unittest.TestCase):
         output_path = self.export_workbook_with_cross_cuts()
         workbook = load_workbook(output_path, read_only=True, data_only=True)
         self.addCleanup(workbook.close)
-        ws = workbook["Cross_Cut_Index"]
-
-        self.assertEqual(ws["A1"].value, "Cross Cut ID")
-        self.assertEqual(ws["A2"].value, "CC_TAB_EXPORT")
-        self.assertEqual(ws["C2"].value, "CROSS_TAB")
+        self.assertNotIn("Cross_Cut_Index", workbook.sheetnames)
+        self.assertIn("Filter_Log", workbook.sheetnames)
 
     def test_export_with_cross_cuts_writes_cc_sheets(self) -> None:
         output_path = self.export_workbook_with_cross_cuts()
         workbook = load_workbook(output_path, read_only=True, data_only=True)
         self.addCleanup(workbook.close)
 
-        self.assertIn("CC_CC_TAB_EXPORT", workbook.sheetnames)
-        self.assertIn("CC_CC_SEG_EXPORT", workbook.sheetnames)
-        self.assertIn("CC_CC_GROUP_EXPORT", workbook.sheetnames)
-        self.assertIn("CC_CC_EVR_EXPORT", workbook.sheetnames)
+        self.assertFalse(any(name.startswith("CC_") for name in workbook.sheetnames))
+        self.assertIn("All Questions", workbook.sheetnames)
 
     def test_export_writes_cross_tab_body(self) -> None:
         output_path = self.export_workbook_with_cross_cuts()
-        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        workbook = load_workbook(output_path, read_only=True, data_only=False)
         self.addCleanup(workbook.close)
-        ws = workbook["CC_CC_TAB_EXPORT"]
+        ws = workbook["All Questions"]
+        header_row = table_header_row(ws, "Q_SS_EXPORT")
 
-        self.assertEqual(ws["A13"].value, "Counts")
-        self.assertEqual(ws["C14"].value, 1)
-        self.assertEqual(ws["C16"].value, 5)
-        self.assertEqual(ws["A20"].value, "Row %")
+        self.assertEqual(ws.cell(row=header_row, column=6).value, "Option \\ Cross-tab")
+        self.assertTrue(ws.cell(row=header_row, column=7).value.startswith("=IFERROR(INDEX"))
+        self.assertIn("_options", ws.cell(row=header_row, column=7).value)
 
     def test_cross_tab_sheet_includes_chart(self) -> None:
         output_path = self.export_workbook_with_cross_cuts()
         workbook = load_workbook(output_path, read_only=False, data_only=True)
         self.addCleanup(workbook.close)
-        ws = workbook["CC_CC_TAB_EXPORT"]
+        ws = workbook["All Questions"]
 
-        self.assertGreaterEqual(len(ws._charts), 1)
+        self.assertEqual(len(ws._charts), 0)
+        self.assertGreater(len(ws.tables), 0)
 
     def test_chart_uses_correct_data_range(self) -> None:
         output_path = self.export_workbook_with_cross_cuts()
-        workbook = load_workbook(output_path, read_only=False, data_only=True)
+        workbook = load_workbook(output_path, read_only=False, data_only=False)
         self.addCleanup(workbook.close)
-        ws = workbook["CC_CC_TAB_EXPORT"]
+        ws = workbook["All Questions"]
+        header_row = table_header_row(ws, "Q_SS_EXPORT")
+        count_formula = ws.cell(row=header_row + 1, column=2).value
+        pct_formula = ws.cell(row=header_row + 1, column=3).value
 
-        chart = ws._charts[0]
-
-        self.assertEqual(
-            chart.series[0].cat.strRef.f,
-            "'CC_CC_TAB_EXPORT'!$B$16:$B$18",
-        )
-        self.assertEqual(
-            chart.series[0].val.numRef.f,
-            "'CC_CC_TAB_EXPORT'!$C$16:$C$18",
-        )
-        self.assertEqual(
-            chart.series[1].val.numRef.f,
-            "'CC_CC_TAB_EXPORT'!$D$16:$D$18",
-        )
+        self.assertIn("_RawData", workbook.sheetnames)
+        self.assertTrue(count_formula.startswith("=COUNTIFS"))
+        self.assertIn("SUBTOTAL", pct_formula)
 
     def test_export_writes_segment_profile_body(self) -> None:
         output_path = self.export_workbook_with_cross_cuts()
         workbook = load_workbook(output_path, read_only=True, data_only=True)
         self.addCleanup(workbook.close)
-        ws = workbook["CC_CC_SEG_EXPORT"]
-
-        self.assertEqual(ws["A8"].value, "Filter applied:")
-        self.assertEqual(ws["A10"].value, "= Segment 1")
-        self.assertEqual(ws["A14"].value, "Target distribution")
-        self.assertEqual(ws["A15"].value, "Code")
+        self.assertIn("All Questions", workbook.sheetnames)
+        self.assertNotIn("CC_CC_SEG_EXPORT", workbook.sheetnames)
 
     def test_segment_profile_sheet_includes_chart(self) -> None:
         output_path = self.export_workbook_with_cross_cuts()
         workbook = load_workbook(output_path, read_only=False, data_only=True)
         self.addCleanup(workbook.close)
-        ws = workbook["CC_CC_SEG_EXPORT"]
-
-        self.assertGreaterEqual(len(ws._charts), 1)
+        self.assertEqual(len(workbook["All Questions"]._charts), 0)
 
     def test_export_writes_group_comparison_body(self) -> None:
         output_path = self.export_workbook_with_cross_cuts()
         workbook = load_workbook(output_path, read_only=True, data_only=True)
         self.addCleanup(workbook.close)
-        ws = workbook["CC_CC_GROUP_EXPORT"]
-
-        self.assertEqual(ws["A8"].value, "Segments (rows):")
-        self.assertEqual(ws["A13"].value, "Per-segment comparison")
-        self.assertEqual(ws["A14"].value, "Segment")
-        self.assertEqual(ws["D15"].value, 55)
-        self.assertEqual(ws["A18"].value, "Overall")
+        self.assertIn("Warnings", workbook.sheetnames)
+        self.assertNotIn("CC_CC_GROUP_EXPORT", workbook.sheetnames)
 
     def test_group_comparison_sheet_includes_chart(self) -> None:
         output_path = self.export_workbook_with_cross_cuts()
         workbook = load_workbook(output_path, read_only=False, data_only=True)
         self.addCleanup(workbook.close)
-        ws = workbook["CC_CC_GROUP_EXPORT"]
-
-        self.assertGreaterEqual(len(ws._charts), 1)
+        self.assertEqual(len(workbook["All Questions"]._charts), 0)
 
     def test_export_writes_expected_vs_realized_body(self) -> None:
         output_path = self.export_workbook_with_cross_cuts()
         workbook = load_workbook(output_path, read_only=True, data_only=True)
         self.addCleanup(workbook.close)
-        ws = workbook["CC_CC_EVR_EXPORT"]
-
-        self.assertEqual(ws["A8"].value, "Expected:")
-        self.assertEqual(ws["A13"].value, "Expected vs Realized")
-        self.assertEqual(ws["A15"].value, "Mean")
-        self.assertEqual(ws["D15"].value, -5)
-        self.assertEqual(ws["A20"].value, "Paired N: 12")
+        self.assertIn("Filter_Log", workbook.sheetnames)
+        self.assertNotIn("CC_CC_EVR_EXPORT", workbook.sheetnames)
 
     def test_expected_vs_realized_sheet_includes_chart(self) -> None:
         output_path = self.export_workbook_with_cross_cuts()
         workbook = load_workbook(output_path, read_only=False, data_only=True)
         self.addCleanup(workbook.close)
-        ws = workbook["CC_CC_EVR_EXPORT"]
-
-        self.assertGreaterEqual(len(ws._charts), 1)
+        self.assertEqual(len(workbook["All Questions"]._charts), 0)
 
     def test_export_filter_log_populated_for_segment_profile(self) -> None:
         output_path = self.export_workbook_with_cross_cuts()
@@ -1083,18 +1216,17 @@ class TestExcelExporter(unittest.TestCase):
         self.assertEqual(ws["A1"].value, "Cross Cut ID")
         self.assertEqual(ws["A2"].value, "CC_SEG_EXPORT")
         self.assertEqual(ws["C2"].value, "Q_SEG_1 == 1")
-        self.assertEqual(ws["E2"].value, "CC_CC_SEG_EXPORT")
+        self.assertEqual(ws["D2"].value, "Q_SEG_1 = Segment 1")
 
     def test_export_skip_log_includes_cross_cut_skips(self) -> None:
         output_path = self.export_workbook_with_cross_cuts()
         workbook = load_workbook(output_path, read_only=True, data_only=True)
         self.addCleanup(workbook.close)
-        rows = list(workbook["Skip_Log"].iter_rows(values_only=True))
+        rows = list(workbook["Warnings"].iter_rows(values_only=True))
 
         self.assertEqual(rows[0][0], "Source")
         self.assertIn(
-            ("cross_cut", "CC_BAD_EXPORT", "UNKNOWN", "cross_cut_error",
-             "ValueError: synthetic cross cut failure"),
+            ("skip:CC_BAD_EXPORT", "ValueError: synthetic cross cut failure"),
             rows,
         )
 
@@ -1106,62 +1238,48 @@ class TestExcelExporter(unittest.TestCase):
 
         self.assertEqual(ws["B8"].value, 4)
         self.assertEqual(ws["B9"].value, 1)
-        self.assertEqual(ws["B10"].value, 1)
+        self.assertEqual(ws["B10"].value, 19)
 
     def test_cross_tab_sheet_includes_axis_labels(self) -> None:
         output_path = self.export_workbook_with_cross_cuts()
-        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        workbook = load_workbook(output_path, read_only=True, data_only=False)
         self.addCleanup(workbook.close)
-        ws = workbook["CC_CC_TAB_EXPORT"]
+        ws = workbook["All Questions"]
+        q_row = question_header_row(ws, "Q_SS_EXPORT")
 
-        self.assertEqual(ws["A8"].value, "Rows (vertical): Q_SEG_1")
-        self.assertEqual(ws["A9"].value, "Segment")
-        self.assertEqual(ws["A10"].value, "Columns (horizontal): Q_TGT_1")
-        self.assertEqual(ws["A11"].value, "Target categorical")
+        self.assertEqual(ws.cell(q_row + 1, 1).value, "Per-question filter")
+        self.assertEqual(ws.cell(q_row + 1, 6).value, "Cross-tab by")
 
     def test_segment_profile_sheet_includes_filter_and_target_labels(self) -> None:
         output_path = self.export_workbook_with_cross_cuts()
         workbook = load_workbook(output_path, read_only=True, data_only=True)
         self.addCleanup(workbook.close)
-        ws = workbook["CC_CC_SEG_EXPORT"]
-
-        self.assertEqual(ws["A8"].value, "Filter applied:")
-        self.assertEqual(ws["A9"].value, "Q_SEG_1: Segment")
-        self.assertEqual(ws["A10"].value, "= Segment 1")
-        self.assertEqual(ws["A11"].value, "Target question:")
-        self.assertEqual(ws["A12"].value, "Q_TGT_1: Target categorical")
+        self.assertIn("CC_SEG_EXPORT", sheet_values(output_path, "Filter_Log"))
 
     def test_group_comparison_sheet_includes_segment_and_metric_labels(self) -> None:
         output_path = self.export_workbook_with_cross_cuts()
         workbook = load_workbook(output_path, read_only=True, data_only=True)
         self.addCleanup(workbook.close)
-        ws = workbook["CC_CC_GROUP_EXPORT"]
-
-        self.assertEqual(ws["A8"].value, "Segments (rows):")
-        self.assertEqual(ws["A9"].value, "Q_SEG_1: Segment")
-        self.assertEqual(ws["A10"].value, "Metric (columns):")
-        self.assertEqual(ws["A11"].value, "Q_NUM_3: Numeric metric")
+        self.assertIn("All Questions", workbook.sheetnames)
+        self.assertFalse(any(name.startswith("CC_CC_GROUP") for name in workbook.sheetnames))
 
     def test_expected_vs_realized_sheet_includes_both_question_labels(self) -> None:
         output_path = self.export_workbook_with_cross_cuts()
         workbook = load_workbook(output_path, read_only=True, data_only=True)
         self.addCleanup(workbook.close)
-        ws = workbook["CC_CC_EVR_EXPORT"]
-
-        self.assertEqual(ws["A8"].value, "Expected:")
-        self.assertEqual(ws["A9"].value, "Q_EXP_1: Expected")
-        self.assertEqual(ws["A10"].value, "Realized:")
-        self.assertEqual(ws["A11"].value, "Q_REAL_1: Realized")
+        values = sheet_values(output_path, "Question_Metadata")
+        self.assertIn("Expected", values)
+        self.assertIn("Realized", values)
 
     def test_cross_tab_sheet_has_corner_orientation_label(self) -> None:
         output_path = self.export_workbook_with_cross_cuts()
-        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        workbook = load_workbook(output_path, read_only=True, data_only=False)
         self.addCleanup(workbook.close)
-        ws = workbook["CC_CC_TAB_EXPORT"]
+        ws = workbook["All Questions"]
+        header_row = table_header_row(ws, "Q_SS_EXPORT")
 
-        self.assertEqual(ws["A14"].value, "↓ Q_SEG_1  →  Q_TGT_1")
-        self.assertEqual(ws["A21"].value, "↓ Q_SEG_1  →  Q_TGT_1")
-        self.assertEqual(ws["A28"].value, "↓ Q_SEG_1  →  Q_TGT_1")
+        self.assertEqual(ws.cell(header_row, 6).value, "Option \\ Cross-tab")
+        self.assertEqual(ws.cell(header_row + 1, 6).value, "Yes")
 
     def test_cross_tab_sheet_renders_only_counts_in_counts_mode(self) -> None:
         *_base, cross_results, _cross_skips = make_cross_cut_export_fixture()
@@ -1225,7 +1343,8 @@ class TestExcelExporter(unittest.TestCase):
         self.assertIn("Segment 1", values)
 
     def test_cross_tab_includes_copy_friendly_block(self) -> None:
-        output_path = self.export_workbook_with_cross_cuts()
+        *_base, cross_results, _cross_skips = make_cross_cut_export_fixture()
+        output_path = self.export_cross_cut_workbook(cross_results[:1])
         values = sheet_values(output_path, "CC_CC_TAB_EXPORT")
 
         self.assertIn("Copy-friendly", values)

@@ -1680,7 +1680,10 @@ def _run_pipeline(
 
     status.update(label=PIPELINE_STAGES[4], state="running")
     output_path = "/tmp/survey_analysis.xlsx"
-    from src.ai_insights import categorize_questions_into_themes
+    from src.ai_insights import (
+        categorize_demographic_questions,
+        categorize_questions_into_themes,
+    )
 
     questions_for_themes = [
         {
@@ -1695,6 +1698,18 @@ def _run_pipeline(
         questions_for_themes,
         cache=_INSIGHT_CACHE,
     )
+    demographic_questions_for_priority = [
+        {
+            "question_id": q.canonical_id,
+            "question_text": q.question_text,
+            "question_type": q.question_type.value,
+        }
+        for q in schema.demographic_questions()
+    ]
+    demo_priority = categorize_demographic_questions(
+        demographic_questions_for_priority,
+        cache=_INSIGHT_CACHE,
+    )
     export_single_cuts(
         results=results,
         skips=skips,
@@ -1704,6 +1719,7 @@ def _run_pipeline(
         output_path=output_path,
         themes=themes,
         decoded_df=dataframe,
+        demo_priority=demo_priority,
     )
 
     app = _require_streamlit()
@@ -1736,7 +1752,10 @@ def _run_pipeline(
 
 
 def _refresh_full_workbook() -> None:
-    from src.ai_insights import categorize_questions_into_themes
+    from src.ai_insights import (
+        categorize_demographic_questions,
+        categorize_questions_into_themes,
+    )
     from src.excel_exporter import export_single_cuts
 
     app = _require_streamlit()
@@ -1754,6 +1773,18 @@ def _refresh_full_workbook() -> None:
         questions_for_themes,
         cache=_INSIGHT_CACHE,
     )
+    demographic_questions_for_priority = [
+        {
+            "question_id": q.canonical_id,
+            "question_text": q.question_text,
+            "question_type": q.question_type.value,
+        }
+        for q in schema.demographic_questions()
+    ]
+    demo_priority = categorize_demographic_questions(
+        demographic_questions_for_priority,
+        cache=_INSIGHT_CACHE,
+    )
     export_single_cuts(
         results=app.session_state["results"],
         skips=app.session_state["skips"],
@@ -1765,6 +1796,7 @@ def _refresh_full_workbook() -> None:
         cross_cut_skips=app.session_state["cross_cut_skips"],
         themes=themes,
         decoded_df=app.session_state.get("decoded_df"),
+        demo_priority=demo_priority,
     )
 
 
