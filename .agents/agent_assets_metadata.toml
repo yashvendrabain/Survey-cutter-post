@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "u9kknYgKzkzXTZ9aaq2fA"
+uri = "file://artifacts/survey-insight-engine/outputs/survey_v3.xlsx"
+type = "table"
+title = "Survey Insight Engine — v3 workbook (live filters + theme-local overrides)"
