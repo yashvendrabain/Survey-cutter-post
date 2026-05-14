@@ -1,0 +1,152 @@
+Run a diagnostic to find the SUMPRODUCT bug. Don't fix anything yet.
+
+ENVIRONMENT CHECK:
+First verify LibreOffice is available:
+    which libreoffice && libreoffice --version
+
+If NOT installed, install it:
+    apt-get install -y libreoffice-calc
+
+Then run this diagnostic script. Paste the FULL output back:
+
+cd artifacts/survey-insight-engine
+python3 << 'PYEOF'
+import sys, os, subprocess
+sys.path.insert(0, ".")
+
+# 1. Generate workbook
+from src.io import load_raw_data, load_datamap
+from src.datamap_parser import parse_datamap
+from src.question_classifier import classify_questions
+from src.raw_decoder import decode_raw_data
+from src.single_cut_engine import run_single_cuts
+from src.excel_exporter import export_single_cuts
+from src.ai_insights import (
+    categorize_questions_into_themes,
+    categorize_demographic_questions,
+    generate_short_labels,
+)
+
+datamap = load_datamap("sample_data/Datamap_sample.xlsx")
+schema = classify_questions(parse_datamap(datamap))
+decoded_df = decode_raw_data(load_raw_data("sample_data/Rawdata_sample.xlsx"), schema)
+results, skips, log, qr = run_single_cuts(decoded_df, schema)
+
+themes = categorize_questions_into_themes(
+    [{"question_id": q.canonical_id, "question_text": q.question_text,
+      "question_type": q.question_type.value, "is_demographic": q.is_demographic}
+     for q in schema.questions], cache={})
+demo_priority = categorize_demographic_questions(
+    [{"question_id": q.canonical_id, "question_text": q.question_text,
+      "question_type": q.question_type.value}
+     for q in schema.demographic_questions()], cache={})
+short_labels = generate_short_labels(
+    [{"question_id": q.canonical_id, "question_text": q.question_text}
+     for q in schema.questions], cache={})
+
+os.makedirs("outputs", exist_ok=True)
+out = "outputs/diag.xlsx"
+export_single_cuts(results=results, skips=skips, schema=schema,
+    quality_report=qr, log=log, output_path=out,
+    themes=themes, decoded_df=decoded_df,
+    demo_priority=demo_priority, short_labels=short_labels)
+print(f"Generated: {out}")
+
+# 2. Find expected Python-computed count for Q4 Industry option 
+# "Software, Hardware, Networking & IT Services" for comparison
+print("\n=== EXPECTED COUNTS (deterministic Python) ===")
+q4_results = [r for r in results if r.question_id == "Q4"]
+if q4_results:
+    r = q4_results[0]
+    if hasattr(r, "distribution"):
+        for label, info in r.distribution.items():
+            print(f"  {label[:60]!r:65s}: count={info.get('count','?')}")
+    elif hasattr(r, "rows"):
+        for row in r.rows:
+            print(f"  {row}")
+    else:
+        print(f"  Result attrs: {dir(r)}")
+
+# 3. LibreOffice recalc
+print("\n=== RUNNING LIBREOFFICE RECALC ===")
+result = subprocess.run(
+    ["libreoffice", "--headless", "--calc", "--convert-to", "xlsx", 
+     "--outdir", "outputs/recalc", out],
+    capture_output=True, text=True, timeout=180
+)
+print("stdout:", result.stdout[:300])
+print("stderr:", result.stderr[:300])
+
+# 4. Inspect cached values after recalc
+import openpyxl
+wb = openpyxl.load_workbook("outputs/recalc/diag.xlsx", data_only=True)
+
+print("\n=== Filters sheet AFTER RECALC ===")
+fs = wb["Filters"]
+for r in range(1, 25):
+    a = fs.cell(row=r, column=1).value
+    b = fs.cell(row=r, column=2).value
+    c = fs.cell(row=r, column=3).value
+    if a or b:
+        a_str = str(a)[:30] if a else ""
+        print(f"  R{r}: A={a_str!r:32s} B={b!r:20s} C(wrapped)={c!r}")
+
+# Find Q4 industry rows on Commercial Strategy sheet
+print("\n=== Q4 Industry results on Commercial Strategy AFTER RECALC ===")
+cs = wb["Commercial Strategy"]
+target = "Software, Hardware"
+for r in range(1, cs.max_row + 1):
+    a = cs.cell(row=r, column=1).value
+    if isinstance(a, str) and target in a:
+        # Found the option row
+        print(f"\nQ4 option section starting row {r}:")
+        for offset in range(0, 10):
+            rr = r + offset
+            cell_a = cs.cell(row=rr, column=1).value
+            cell_b = cs.cell(row=rr, column=2).value
+            cell_c = cs.cell(row=rr, column=3).value
+            cell_d = cs.cell(row=rr, column=4).value
+            print(f"  R{rr}: A={str(cell_a)[:50]!r:55s} B={cell_b!r:12s} C={cell_c!r:12s} D={cell_d!r}")
+        break
+
+# Also check theme-local filter rows on Commercial Strategy
+print("\n=== Commercial Strategy LOCAL filter rows (1-15) AFTER RECALC ===")
+for r in range(1, 16):
+    vals = [cs.cell(row=r, column=c).value for c in range(1, 6)]
+    if any(v is not None for v in vals):
+        v_strs = [str(v)[:40] if v else "" for v in vals]
+        print(f"  R{r}: {v_strs}")
+
+# 5. Read raw formula too to confirm what was written
+print("\n=== RAW FORMULAS (no recalc) ===")
+wb_raw = openpyxl.load_workbook(out, data_only=False)
+cs_raw = wb_raw["Commercial Strategy"]
+for r in range(1, cs_raw.max_row + 1):
+    a = cs_raw.cell(row=r, column=1).value
+    if isinstance(a, str) and target in a:
+        formula = cs_raw.cell(row=r, column=2).value
+        print(f"\nFormula at B{r} (first 600 chars):")
+        print(formula[:600] if isinstance(formula, str) else repr(formula))
+        # Also the resolved cells on theme
+        break
+
+# 6. Check resolved cell on theme sheet
+print("\n=== Theme-local _resolved cells (first 5) AFTER RECALC ===")
+all_names = wb.defined_names
+for name_key in list(all_names)[:30]:
+    if "Commercial_Strategy" in name_key and "_resolved" in name_key and "wrapped" not in name_key:
+        dn = all_names[name_key]
+        ref = dn.value
+        # Parse sheet and cell from ref like 'Commercial Strategy'!$B$5
+        print(f"  {name_key}: ref={ref}")
+        try:
+            sheet_name, cell_ref = ref.split("!")
+            sheet_name = sheet_name.strip("'")
+            cached = wb[sheet_name][cell_ref.replace("$","")].value
+            print(f"    cached value: {cached!r}")
+        except Exception as e:
+            print(f"    error reading: {e}")
+
+PYEOF
+
+PASTE FULL OUTPUT. Do not write any fix yet.
