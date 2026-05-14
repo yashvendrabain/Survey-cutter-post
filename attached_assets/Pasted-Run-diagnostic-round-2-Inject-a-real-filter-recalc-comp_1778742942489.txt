@@ -1,0 +1,187 @@
+Run diagnostic round 2. Inject a real filter, recalc, compare actual 
+counts to Python-deterministic counts. Also investigate the raw-codes 
+issue in Q4. Do not fix anything yet.
+
+ENVIRONMENT: LibreOffice is now installed. Sample data confirmed.
+
+cd artifacts/survey-insight-engine
+python3 << 'PYEOF'
+import sys, os, subprocess
+sys.path.insert(0, ".")
+
+from src.io import load_raw_data, load_datamap
+from src.datamap_parser import parse_datamap
+from src.question_classifier import classify_questions
+from src.raw_decoder import decode_raw_data
+from src.single_cut_engine import compute_single_cuts
+from src.excel_exporter import export_single_cuts
+from src.ai_insights import (
+    categorize_questions_into_themes,
+    categorize_demographic_questions,
+    generate_short_labels,
+)
+
+datamap = load_datamap("sample_data/Datamap_sample.xlsx")
+schema = classify_questions(parse_datamap(datamap))
+decoded_df = decode_raw_data(load_raw_data("sample_data/Rawdata_sample.xlsx"), schema)
+results, skips, log, qr = compute_single_cuts(decoded_df, schema)
+
+themes = categorize_questions_into_themes(
+    [{"question_id": q.canonical_id, "question_text": q.question_text,
+      "question_type": q.question_type.value, "is_demographic": q.is_demographic}
+     for q in schema.questions], cache={})
+demo_priority = categorize_demographic_questions(
+    [{"question_id": q.canonical_id, "question_text": q.question_text,
+      "question_type": q.question_type.value}
+     for q in schema.demographic_questions()], cache={})
+short_labels = generate_short_labels(
+    [{"question_id": q.canonical_id, "question_text": q.question_text}
+     for q in schema.questions], cache={})
+
+os.makedirs("outputs", exist_ok=True)
+out = "outputs/diag2.xlsx"
+export_single_cuts(results=results, skips=skips, schema=schema,
+    quality_report=qr, log=log, output_path=out,
+    themes=themes, decoded_df=decoded_df,
+    demo_priority=demo_priority, short_labels=short_labels)
+
+# ================================================================
+# CHECK 1 — Inspect _RawData to see if Q4 column has codes or labels
+# ================================================================
+import openpyxl
+print("=" * 70)
+print("CHECK 1 — _RawData column inspection")
+print("=" * 70)
+
+wb_raw = openpyxl.load_workbook(out, data_only=False)
+rd = wb_raw['_RawData']
+
+# Find Q4, QCountryGroups, QIndustry columns
+target_cols = {}
+for cell in list(rd.iter_rows(min_row=1, max_row=1))[0]:
+    if cell.value in ('Q4', 'QCountryGroups', 'QIndustry', 'Q13', 'Q14'):
+        target_cols[cell.value] = cell.column_letter
+
+print(f"Target columns: {target_cols}")
+
+for col_name, col_letter in target_cols.items():
+    print(f"\n{col_name} (column {col_letter}) — unique values (first 10):")
+    unique_vals = set()
+    for r in range(2, 1102):
+        v = rd.cell(row=r, column=openpyxl.utils.column_index_from_string(col_letter)).value
+        if v is not None:
+            unique_vals.add(v)
+    sorted_vals = sorted(unique_vals, key=lambda x: str(x))[:10]
+    for v in sorted_vals:
+        print(f"   {type(v).__name__:8s} {v!r}")
+
+# ================================================================
+# CHECK 2 — Inject filter F_Country = "EMEA", recalc, compare
+# ================================================================
+print("\n" + "=" * 70)
+print("CHECK 2 — Inject F_Country='EMEA' filter, recalc, compare")
+print("=" * 70)
+
+# Modify Filters sheet cell B3 (F_Country value)
+fs = wb_raw['Filters']
+# Find row where col A contains "QCountryGroups"
+country_row = None
+for r in range(1, 30):
+    v = fs.cell(row=r, column=1).value
+    if isinstance(v, str) and 'QCountryGroups' in v:
+        country_row = r
+        break
+print(f"F_Country value cell: B{country_row}")
+
+# Set the filter value
+fs.cell(row=country_row, column=2).value = "EMEA"
+wb_raw.save("outputs/diag2_filtered.xlsx")
+
+# Recalc with LibreOffice
+result = subprocess.run(
+    ["libreoffice", "--headless", "--calc", "--convert-to", "xlsx", 
+     "--outdir", "outputs/recalc2", "outputs/diag2_filtered.xlsx"],
+    capture_output=True, text=True, timeout=180
+)
+print(f"LibreOffice recalc: rc={result.returncode}")
+print(f"  stderr: {result.stderr[:200]}")
+
+# Read cached values from recalc
+wb_c = openpyxl.load_workbook("outputs/recalc2/diag2_filtered.xlsx", data_only=True)
+
+# Find Q4 results section on Commercial Strategy
+print(f"\n--- Q4 (Industry) on Commercial Strategy sheet, filter=EMEA ---")
+cs = wb_c['Commercial Strategy']
+target = "Software, Hardware"
+for r in range(1, cs.max_row + 1):
+    a = cs.cell(row=r, column=1).value
+    if isinstance(a, str) and target in a:
+        print(f"\nFound Q4 option section at row {r}:")
+        for offset in range(0, 10):
+            rr = r + offset
+            cell_a = cs.cell(row=rr, column=1).value
+            cell_b = cs.cell(row=rr, column=2).value
+            cell_c = cs.cell(row=rr, column=3).value
+            cell_d = cs.cell(row=rr, column=4).value
+            print(f"  R{rr}: A={str(cell_a)[:50]!r:55s} B={cell_b!r:15s} C={cell_c!r:12s} D={cell_d!r}")
+        break
+
+# Also dump local filter resolution chain on Demographics + Commercial Strategy
+print("\n--- Filters sheet AFTER recalc with EMEA selected ---")
+fs_c = wb_c['Filters']
+for r in range(1, 15):
+    a = fs_c.cell(row=r, column=1).value
+    b = fs_c.cell(row=r, column=2).value
+    c = fs_c.cell(row=r, column=3).value
+    if a or b:
+        print(f"  R{r}: A={str(a)[:30]!r:32s} B={b!r:15s} C(wrapped)={c!r}")
+
+# ================================================================
+# CHECK 3 — What does Python compute for Q4 by Country=EMEA?
+# ================================================================
+print("\n" + "=" * 70)
+print("CHECK 3 — Python-deterministic Q4 distribution filtered by EMEA")
+print("=" * 70)
+
+# Filter decoded_df where QCountryGroups == "EMEA"
+filtered_df = decoded_df[decoded_df['QCountryGroups'] == 'EMEA']
+print(f"\nEMEA respondents: {len(filtered_df)}")
+print(f"\nQ4 distribution within EMEA:")
+q4_counts = filtered_df['Q4'].value_counts()
+for label, count in q4_counts.items():
+    print(f"  {str(label)[:60]!r:65s}: {count}")
+
+# Also show unique Q4 values in decoded_df 
+print(f"\nUnique Q4 values in decoded_df (sample):")
+for v in decoded_df['Q4'].dropna().unique()[:10]:
+    print(f"  {type(v).__name__:8s} {v!r}")
+
+# ================================================================
+# CHECK 4 — Compare formula's actual computed count to Python count
+# ================================================================
+print("\n" + "=" * 70)
+print("CHECK 4 — Verification: do Excel and Python match?")
+print("=" * 70)
+
+# Re-find Q4 section, get the computed count for each row
+print("\n  Option                                              Excel  vs  Python")
+print("  " + "-" * 75)
+target_options = list(decoded_df['Q4'].dropna().unique())
+emea_q4_counts = filtered_df['Q4'].value_counts().to_dict()
+
+for r in range(1, cs.max_row + 1):
+    a = cs.cell(row=r, column=1).value
+    b = cs.cell(row=r, column=2).value
+    if isinstance(a, str) and a in target_options:
+        excel_count = b if isinstance(b, (int, float)) else None
+        python_count = emea_q4_counts.get(a, 0)
+        match = "✓" if excel_count == python_count else "✗ MISMATCH"
+        print(f"  {str(a)[:50]:52s} {excel_count!r:6s} vs {python_count!r:6s}  {match}")
+
+PYEOF
+
+PASTE FULL OUTPUT. Especially:
+- CHECK 1 (raw data column inspection — codes vs labels)
+- CHECK 4 (Excel vs Python comparison table)
+
+These two will pinpoint exactly where the bug is.
