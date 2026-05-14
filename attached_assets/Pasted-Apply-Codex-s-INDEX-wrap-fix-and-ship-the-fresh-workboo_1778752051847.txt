@@ -1,0 +1,118 @@
+Apply Codex's INDEX wrap fix and ship the fresh workbook.
+
+Codex delivered the Excel-365 implicit-intersection fix:
+- INDEX(name, 0) wrapping around every column-range reference 
+  inside SUMPRODUCT formulas
+- 353 tests passing
+- Confirmed in probe workbook: formulas now read
+  ...SEARCH("|"&INDEX(INDIRECT(...),0)&"|"...)*--(INDEX(Q17_data,0)=...)
+
+STEP 1 — REPLACE src/excel_exporter.py verbatim from Codex.
+
+STEP 2 — Run pytest:
+    pytest --tb=short -q
+Expected: 353+ pass
+
+STEP 3 — GENERATE A FRESH WORKBOOK from the real sample data and
+present it to the user:
+
+cd artifacts/survey-insight-engine
+python3 << 'PYEOF'
+import sys, os; sys.path.insert(0, ".")
+from src.io import load_raw_data, load_datamap
+from src.datamap_parser import parse_datamap
+from src.question_classifier import classify_questions
+from src.raw_decoder import decode_raw_data
+from src.single_cut_engine import compute_single_cuts
+from src.excel_exporter import export_single_cuts
+from src.ai_insights import (
+    categorize_questions_into_themes,
+    categorize_demographic_questions,
+    generate_short_labels,
+)
+
+datamap = load_datamap("sample_data/Datamap_sample.xlsx")
+schema = classify_questions(parse_datamap(datamap))
+decoded_df = decode_raw_data(load_raw_data("sample_data/Rawdata_sample.xlsx"), schema)
+results, skips, log, qr = compute_single_cuts(decoded_df, schema)
+
+qfs = [{"question_id": q.canonical_id, "question_text": q.question_text,
+        "question_type": q.question_type.value, "is_demographic": q.is_demographic}
+       for q in schema.questions]
+themes = categorize_questions_into_themes(qfs, cache={})
+
+dqs = [{"question_id": q.canonical_id, "question_text": q.question_text,
+        "question_type": q.question_type.value}
+       for q in schema.demographic_questions()]
+demo_priority = categorize_demographic_questions(dqs, cache={})
+
+short_labels = generate_short_labels(
+    [{"question_id": q.canonical_id, "question_text": q.question_text}
+     for q in schema.questions], cache={})
+
+# Force autocalc on for the user
+import openpyxl
+os.makedirs("outputs", exist_ok=True)
+out = "outputs/survey_v4_index_fix.xlsx"
+export_single_cuts(
+    results=results, skips=skips, schema=schema,
+    quality_report=qr, log=log, output_path=out,
+    themes=themes, decoded_df=decoded_df,
+    demo_priority=demo_priority, short_labels=short_labels,
+)
+# Open and force auto-calc
+wb = openpyxl.load_workbook(out)
+wb.calculation.calcMode = "auto"
+wb.calculation.fullCalcOnLoad = True
+wb.calculation.forceFullCalc = True
+wb.save(out)
+print(f"READY: {out}")
+PYEOF
+
+STEP 4 — Verify with LibreOffice recalc that everything still 
+computes correctly:
+
+cd artifacts/survey-insight-engine
+libreoffice --headless --calc --convert-to xlsx --outdir outputs/recalc_v4 outputs/survey_v4_index_fix.xlsx
+
+python3 << 'PYEOF'
+import openpyxl
+wb = openpyxl.load_workbook("outputs/recalc_v4/survey_v4_index_fix.xlsx", data_only=True)
+rg = wb['Revenue & Growth']
+# Sanity check Q17 unfiltered
+total = 0
+for r in range(1, rg.max_row + 1):
+    b = rg.cell(row=r, column=2).value
+    if isinstance(b, (int, float)) and rg.cell(row=r, column=4).value == 1100:
+        total += b
+        if total > 1100 * 5: break
+# Find Q17 specifically
+print("Q17 section (unfiltered, denominator should be 1100):")
+found = False
+for r in range(1, rg.max_row + 1):
+    a = rg.cell(row=r, column=1).value
+    if isinstance(a, str) and 'Q17' in a and 'Planned' in a:
+        found = True
+    if found:
+        b = rg.cell(row=r, column=2).value
+        d = rg.cell(row=r, column=4).value
+        if a or b:
+            print(f"  R{r}: A={str(a)[:40]!r:42s} B={b!r:10s} D={d!r}")
+        if d == 1100 and r > 30:
+            break
+PYEOF
+
+Expected Q17 unfiltered distribution (must match):
+  Revenue to grow 3-5%: 388
+  Revenue to grow 6-9%: 287
+  Revenue to grow 10-19%: 154
+  Revenue to grow 0-2%: 141
+  Revenue to grow 20-29%: 46
+  ...all summing to 1100
+
+STEP 5 — Present the workbook to user via direct download link.
+
+Report back:
+- Test count
+- LO unfiltered Q17 sum: should be 1100
+- File path for download

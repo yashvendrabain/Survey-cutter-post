@@ -1232,12 +1232,13 @@ def _build_numeric_formula(
 ) -> str:
     del fv_name
     mask = _numeric_mask_expression(data_name, sheet_filters, fq_name, theme_prefix)
+    data_array = _array_ref(data_name)
     if metric == "Mean":
-        return f"=IFERROR(SUMPRODUCT({mask}*{data_name})/SUMPRODUCT({mask}),0)"
+        return f"=IFERROR(SUMPRODUCT({mask}*{data_array})/SUMPRODUCT({mask}),0)"
     if metric == "Min":
-        return f"=IFERROR(AGGREGATE(15,6,{data_name}/({mask}),1),0)"
+        return f"=IFERROR(AGGREGATE(15,6,{data_array}/({mask}),1),0)"
     if metric == "Max":
-        return f"=IFERROR(AGGREGATE(14,6,{data_name}/({mask}),1),0)"
+        return f"=IFERROR(AGGREGATE(14,6,{data_array}/({mask}),1),0)"
     return "0"
 
 
@@ -1277,14 +1278,14 @@ def _numeric_mask_expression(
         factors.append(_dynamic_filter_factor("F_Custom1", "F_Custom1_Q"))
         factors.append(_dynamic_filter_factor("F_Custom2", "F_Custom2_Q"))
     factors.append(_dynamic_filter_factor(fq_name[:-2], fq_name))
-    factors.append(f"--ISNUMBER({data_name})")
+    factors.append(f"--ISNUMBER({_array_ref(data_name)})")
     return "*".join(factors)
 
 
 def _static_filter_factor(data_name: str, value_name: str, wrapped_name: str) -> str:
     return (
         f'IF(OR({value_name}="(All)",{value_name}="",ISBLANK({value_name})),1,'
-        f'--ISNUMBER(SEARCH("|"&{data_name}&"|",{wrapped_name})))'
+        f'--ISNUMBER(SEARCH("|"&{_array_ref(data_name)}&"|",{wrapped_name})))'
     )
 
 
@@ -1292,16 +1293,24 @@ def _dynamic_filter_factor(prefix: str, question_name: str) -> str:
     return (
         f'IF({question_name}="(None)",1,'
         f'IF({prefix}_wrapped="|(All)|",1,'
-        f'--ISNUMBER(SEARCH("|"&INDIRECT({prefix}_resolved_column)&"|",{prefix}_wrapped))))'
+        f'--ISNUMBER(SEARCH("|"&{_array_ref(f"INDIRECT({prefix}_resolved_column)")}&"|",{prefix}_wrapped))))'
     )
 
 
 def _match_factor(data_name: str, criteria: Any, criterion_is_expression: bool = False) -> str:
+    data_array = _array_ref(data_name)
     if criterion_is_expression:
-        return f"--({data_name}={criteria})"
+        return f"--({data_array}={criteria})"
     if criteria == "<>":
-        return f'--({data_name}<>"")'
-    return f"--({data_name}={_excel_criteria(criteria)})"
+        return f'--({data_array}<>"")'
+    return f"--({data_array}={_excel_criteria(criteria)})"
+
+
+def _array_ref(range_expr: str) -> str:
+    expr = str(range_expr).strip()
+    if expr.upper().startswith("INDEX("):
+        return expr
+    return f"INDEX({expr},0)"
 
 
 def _live_column_specs(schema: SurveySchema) -> list[_LiveColumnSpec]:

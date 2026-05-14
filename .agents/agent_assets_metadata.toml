@@ -18,3 +18,9 @@ id = "wDxXjw8nP4wPhagAt3Gej"
 uri = "file://artifacts/survey-insight-engine/outputs/post_blank_filtered.xlsx"
 type = "table"
 title = "Survey Insight Engine — verified workbook (blank filters → full sample)"
+
+[[outputs]]
+id = "NrTrZvIMdr4-9YDYZhXU8"
+uri = "file://artifacts/survey-insight-engine/outputs/survey_v4_index_fix.xlsx"
+type = "table"
+title = "Survey Insight Engine — v4 (INDEX wrap fix, full sample)"
