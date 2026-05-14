@@ -30,3 +30,9 @@ id = "UalYNaQVy4-wGDU1GbBUc"
 uri = "file://artifacts/survey-insight-engine/outputs/survey_v5_pure_boolean.xlsx"
 type = "table"
 title = "Survey Insight Engine — v5 (pure-boolean SUMPRODUCT, Excel-365 safe)"
+
+[[outputs]]
+id = "p_OMInhiTZ-OphEChglPO"
+uri = "file://artifacts/survey-insight-engine/outputs/survey_v6_countifs.xlsx"
+type = "table"
+title = "Survey Insight Engine — v6 (COUNTIFS + helper columns, Excel-365 safe)"

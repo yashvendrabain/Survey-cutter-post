@@ -19,7 +19,6 @@ from src.excel_exporter import (
     export_filtered_single_cuts,
     export_single_cuts,
     _wrapped_formula,
-    _static_filter_factor,
 )
 from src.models import (
     AuditRecord,
@@ -561,13 +560,6 @@ class TestExcelExporter(unittest.TestCase):
         self.assertIn('", ", "|"', formula)
         self.assertNotIn('SUBSTITUTE(SUBSTITUTE(', formula)
 
-    def test_static_filter_factor_treats_blank_as_all(self) -> None:
-        formula = _static_filter_factor("Q14_data", "F_Q14", "F_Q14_wrapped")
-
-        self.assertIn('F_Q14="(All)"', formula)
-        self.assertIn('F_Q14=""', formula)
-        self.assertIn('ISBLANK(F_Q14)', formula)
-
     def grid_single_select_format_fixture(
         self,
     ) -> tuple[GridSingleSelectResult, SurveySchema]:
@@ -766,8 +758,8 @@ class TestExcelExporter(unittest.TestCase):
             ["Option", "Count", "%", "Denominator"],
         )
         self.assertEqual(ws.cell(data_row, 1).value, "Yes")
-        self.assertTrue(ws.cell(data_row, 2).value.startswith("=SUMPRODUCT"))
-        self.assertIn("SEARCH", ws.cell(data_row, 2).value)
+        self.assertTrue(ws.cell(data_row, 2).value.startswith("=COUNTIFS"))
+        self.assertIn("passes_workbook_filters_data", ws.cell(data_row, 2).value)
         self.assertIn("Q_SS_EXPORT_data", ws.cell(data_row, 2).value)
         self.assertIn("SUBTOTAL", ws.cell(data_row, 3).value)
 
@@ -802,7 +794,7 @@ class TestExcelExporter(unittest.TestCase):
         )
         self.assertEqual(ws.cell(header_row, 1).value, "Metric")
         self.assertEqual(ws.cell(header_row + 1, 1).value, "Mean")
-        self.assertTrue(ws.cell(header_row + 1, 2).value.startswith("=IFERROR(SUMPRODUCT"))
+        self.assertTrue(ws.cell(header_row + 1, 2).value.startswith("=IFERROR(AVERAGEIFS"))
         self.assertEqual(ws.cell(header_row + 4, 1).value, "Std")
         self.assertEqual(ws.cell(header_row + 4, 2).value, 2.9)
         self.assertIn("Median not available", ws.cell(header_row + 5, 1).value)
@@ -820,8 +812,8 @@ class TestExcelExporter(unittest.TestCase):
             ["Option", "Count", "%", "Denominator"],
         )
         self.assertEqual(ws.cell(data_row, 1).value, "Grid first row")
-        self.assertTrue(ws.cell(data_row, 2).value.startswith("=SUMPRODUCT"))
-        self.assertIn("SEARCH", ws.cell(data_row, 2).value)
+        self.assertTrue(ws.cell(data_row, 2).value.startswith("=COUNTIFS"))
+        self.assertIn("passes_workbook_filters_data", ws.cell(data_row, 2).value)
         self.assertIn("Q_GRID_EXPORTr1_data", ws.cell(data_row, 2).value)
         self.assertIn("SUBTOTAL", ws.cell(data_row, 4).value)
 
@@ -865,7 +857,7 @@ class TestExcelExporter(unittest.TestCase):
         self.assertEqual(ws["A4"].value, "Filter")
         self.assertEqual(ws["B5"].value, "(Inherit)")
 
-    def test_filter_uses_sumproduct_not_countifs(self) -> None:
+    def test_filter_uses_countifs_with_passes_helper(self) -> None:
         output_path = self.export_workbook()
         workbook = load_workbook(output_path, read_only=True, data_only=False)
         self.addCleanup(workbook.close)
@@ -873,9 +865,9 @@ class TestExcelExporter(unittest.TestCase):
         header_row = table_header_row(ws, "Q_SS_EXPORT")
         formula = ws.cell(row=header_row + 1, column=2).value
 
-        self.assertIn("SUMPRODUCT", formula)
-        self.assertIn("SEARCH", formula)
-        self.assertFalse(formula.startswith("=COUNTIFS"))
+        self.assertTrue(formula.startswith("=COUNTIFS"))
+        self.assertIn("passes_workbook_filters_data", formula)
+        self.assertNotIn("SUMPRODUCT", formula)
 
     def test_inherit_pattern_resolves_to_workbook_value(self) -> None:
         output_path = self.export_workbook()
@@ -1046,10 +1038,10 @@ class TestExcelExporter(unittest.TestCase):
         header_row = table_header_row(ws, "Q_SS_EXPORT")
         formula = ws.cell(row=header_row + 1, column=2).value
 
-        self.assertTrue(formula.startswith("=SUMPRODUCT"))
+        self.assertTrue(formula.startswith("=COUNTIFS"))
         self.assertIn("Q_SS_EXPORT_data", formula)
-        self.assertIn("All_Questions_F_Custom1_wrapped", formula)
-        self.assertIn("SEARCH", formula)
+        self.assertIn("passes_workbook_filters_data", formula)
+        self.assertNotIn("SUMPRODUCT", formula)
         self.assertNotIn('IF(F_Custom1_Q="(None)"', formula)
 
     def test_named_cells_are_workbook_scoped(self) -> None:
@@ -1362,7 +1354,7 @@ class TestExcelExporter(unittest.TestCase):
         pct_formula = ws.cell(row=header_row + 1, column=3).value
 
         self.assertIn("_RawData", workbook.sheetnames)
-        self.assertTrue(count_formula.startswith("=SUMPRODUCT"))
+        self.assertTrue(count_formula.startswith("=COUNTIFS"))
         self.assertIn("SUBTOTAL", pct_formula)
 
     def test_export_writes_segment_profile_body(self) -> None:
