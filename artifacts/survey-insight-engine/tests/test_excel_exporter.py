@@ -19,6 +19,7 @@ from src.excel_exporter import (
     export_filtered_single_cuts,
     export_single_cuts,
     _wrapped_formula,
+    _static_filter_factor,
 )
 from src.models import (
     AuditRecord,
@@ -560,12 +561,12 @@ class TestExcelExporter(unittest.TestCase):
         self.assertIn('", ", "|"', formula)
         self.assertNotIn('SUBSTITUTE(SUBSTITUTE(', formula)
 
-    def test_wrapped_formula_treats_blank_as_all(self) -> None:
-        formula = _wrapped_formula("F_Q14")
+    def test_static_filter_factor_treats_blank_as_all(self) -> None:
+        formula = _static_filter_factor("Q14_data", "F_Q14", "F_Q14_wrapped")
 
-        self.assertIn('ISBLANK(F_Q14)', formula)
+        self.assertIn('F_Q14="(All)"', formula)
         self.assertIn('F_Q14=""', formula)
-        self.assertIn('"|(All)|"', formula)
+        self.assertIn('ISBLANK(F_Q14)', formula)
 
     def grid_single_select_format_fixture(
         self,

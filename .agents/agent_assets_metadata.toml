@@ -24,3 +24,9 @@ id = "NrTrZvIMdr4-9YDYZhXU8"
 uri = "file://artifacts/survey-insight-engine/outputs/survey_v4_index_fix.xlsx"
 type = "table"
 title = "Survey Insight Engine — v4 (INDEX wrap fix, full sample)"
+
+[[outputs]]
+id = "UalYNaQVy4-wGDU1GbBUc"
+uri = "file://artifacts/survey-insight-engine/outputs/survey_v5_pure_boolean.xlsx"
+type = "table"
+title = "Survey Insight Engine — v5 (pure-boolean SUMPRODUCT, Excel-365 safe)"

@@ -1,0 +1,141 @@
+Apply the pure-boolean exporter fix.
+
+Codex delivered the corrected src/excel_exporter.py with:
+- _static_filter_factor: pure boolean, no IF, no INDEX
+- _dynamic_filter_factor: pure boolean, no IF, no INDEX  
+- _match_factor: plain equality, no INDEX
+- _numeric_mask_expression: ISNUMBER(name)*1, no INDEX
+- _build_numeric_formula: no INDEX wrappers
+- 353 tests pass
+- LibreOffice independently confirmed: pure-boolean pattern 
+  computes correctly (5 matches in the test case)
+
+STEP 1 — REPLACE src/excel_exporter.py from the Codex attachment.
+
+WATCH for any blank-as-(All) edits you previously applied to 
+_wrapped_formula or _static_filter_factor — verify they survived 
+the file replacement. The new _static_filter_factor INCLUDES 
+blank-as-(All) handling via:
+    (value="(All)") + (value="") + ISBLANK(value) + ISNUMBER(SEARCH(...)) > 0
+
+So all three cases (literal "(All)", empty string, ISBLANK) are 
+treated as "no filter" by the pure-boolean pattern. No separate 
+patch needed.
+
+STEP 2 — RUN TESTS
+    pytest --tb=short -q
+Expected: 353+ pass.
+
+STEP 3 — GENERATE FRESH WORKBOOK with auto-calc forced and verify 
+with LibreOffice that no IF, no INDEX, no @ in formulas, and counts 
+still correct.
+
+cd artifacts/survey-insight-engine && python3 << 'PYEOF'
+import sys, os; sys.path.insert(0, ".")
+from src.io import load_raw_data, load_datamap
+from src.datamap_parser import parse_datamap
+from src.question_classifier import classify_questions
+from src.raw_decoder import decode_raw_data
+from src.single_cut_engine import compute_single_cuts
+from src.excel_exporter import export_single_cuts
+from src.ai_insights import (
+    categorize_questions_into_themes,
+    categorize_demographic_questions,
+    generate_short_labels,
+)
+import openpyxl, subprocess
+
+datamap = load_datamap("sample_data/Datamap_sample.xlsx")
+schema = classify_questions(parse_datamap(datamap))
+decoded_df = decode_raw_data(load_raw_data("sample_data/Rawdata_sample.xlsx"), schema)
+results, skips, log, qr = compute_single_cuts(decoded_df, schema)
+
+qfs = [{"question_id": q.canonical_id, "question_text": q.question_text,
+        "question_type": q.question_type.value, "is_demographic": q.is_demographic}
+       for q in schema.questions]
+themes = categorize_questions_into_themes(qfs, cache={})
+
+dqs = [{"question_id": q.canonical_id, "question_text": q.question_text,
+        "question_type": q.question_type.value}
+       for q in schema.demographic_questions()]
+demo_priority = categorize_demographic_questions(dqs, cache={})
+
+short_labels = generate_short_labels(
+    [{"question_id": q.canonical_id, "question_text": q.question_text}
+     for q in schema.questions], cache={})
+
+os.makedirs("outputs", exist_ok=True)
+out = "outputs/survey_v5_pure_boolean.xlsx"
+export_single_cuts(
+    results=results, skips=skips, schema=schema,
+    quality_report=qr, log=log, output_path=out,
+    themes=themes, decoded_df=decoded_df,
+    demo_priority=demo_priority, short_labels=short_labels,
+)
+
+wb = openpyxl.load_workbook(out)
+wb.calculation.calcMode = "auto"
+wb.calculation.fullCalcOnLoad = True
+wb.calculation.forceFullCalc = True
+wb.save(out)
+
+# Inspect formula
+rg = wb["Revenue & Growth"]
+for r in range(1, rg.max_row + 1):
+    a = rg.cell(row=r, column=1).value
+    if isinstance(a, str) and 'Revenue to grow 3-5%' in a:
+        formula = rg.cell(row=r, column=2).value
+        print(f"=== Formula at B{r} ===")
+        print(formula[:500])
+        print()
+        print(f"IF( count: {formula.count('IF(')}")
+        print(f"INDEX( count: {formula.count('INDEX(')}")
+        print(f"@ count: {formula.count('@')}")
+        break
+
+# LO recalc verification
+subprocess.run(["libreoffice","--headless","--calc","--convert-to","xlsx",
+                "--outdir","outputs/recalc_v5", out],
+               capture_output=True, text=True, timeout=180)
+
+wb_c = openpyxl.load_workbook("outputs/recalc_v5/survey_v5_pure_boolean.xlsx", data_only=True)
+rg_c = wb_c["Revenue & Growth"]
+print("\n=== Q17 unfiltered distribution after LO recalc ===")
+found = False
+total = 0
+for r in range(1, rg_c.max_row + 1):
+    a = rg_c.cell(row=r, column=1).value
+    if isinstance(a, str) and 'Q17' in a and 'Planned' in a:
+        found = True
+        continue
+    if found and a == 'Option':
+        continue
+    if found:
+        b = rg_c.cell(row=r, column=2).value
+        d = rg_c.cell(row=r, column=4).value
+        if isinstance(b, (int, float)):
+            total += b
+            print(f"  {str(a)[:40]:42s} count={b} denom={d}")
+        if d == 1100 and total >= 1100:
+            break
+print(f"\nTotal Q17 sum: {total} (expected 1100)")
+
+print(f"\nReady: {out}")
+PYEOF
+
+EXPECTED OUTPUT:
+- IF( count: 0
+- INDEX( count: 0  
+- @ count: 0
+- Total Q17 sum: 1100
+
+If all 4 expected outcomes match, the file is ready for user testing 
+in Excel 365.
+
+STEP 4 — PRESENT THE WORKBOOK to user via direct download.
+
+Report:
+- Test count
+- IF/INDEX/@ counts in sample formula
+- Total Q17 sum
+- File path for download
