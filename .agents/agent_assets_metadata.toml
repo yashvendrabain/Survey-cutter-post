@@ -6,3 +6,9 @@ id = "u9kknYgKzkzXTZ9aaq2fA"
 uri = "file://artifacts/survey-insight-engine/outputs/survey_v3.xlsx"
 type = "table"
 title = "Survey Insight Engine — v3 workbook (live filters + theme-local overrides)"
+
+[[outputs]]
+id = "3z-lT-x30IZ6w5je8RM6o"
+uri = "file://artifacts/survey-insight-engine/outputs/post_fix_filtered.xlsx"
+type = "table"
+title = "Survey Insight Engine — verified workbook (Q14 filter applied)"

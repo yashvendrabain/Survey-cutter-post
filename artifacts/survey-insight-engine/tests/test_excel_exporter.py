@@ -18,6 +18,7 @@ from src.excel_exporter import (
     export_cross_cuts_only,
     export_filtered_single_cuts,
     export_single_cuts,
+    _wrapped_formula,
 )
 from src.models import (
     AuditRecord,
@@ -552,6 +553,13 @@ def table_header_row(ws, question_id: str, header: str = "Option") -> int:
 
 
 class TestExcelExporter(unittest.TestCase):
+    def test_wrapped_formula_preserves_bare_commas(self) -> None:
+        formula = _wrapped_formula("F_Q14")
+
+        self.assertEqual(formula.count("SUBSTITUTE("), 1)
+        self.assertIn('", ", "|"', formula)
+        self.assertNotIn('SUBSTITUTE(SUBSTITUTE(', formula)
+
     def grid_single_select_format_fixture(
         self,
     ) -> tuple[GridSingleSelectResult, SurveySchema]:
@@ -900,8 +908,8 @@ class TestExcelExporter(unittest.TestCase):
         workbook = load_workbook(output_path, read_only=True, data_only=True)
         self.addCleanup(workbook.close)
 
-        self.assertIn("Yes", workbook["Filters"]["D3"].value)
-        self.assertIn("No", workbook["Filters"]["D3"].value)
+        self.assertIn("Yes", workbook["Filters"]["D4"].value)
+        self.assertIn("No", workbook["Filters"]["D4"].value)
         self.assertIn("Yes", workbook["Demographics"]["E5"].value)
 
     def test_question_title_has_cell_comment_with_full_text(self) -> None:
@@ -1067,7 +1075,7 @@ class TestExcelExporter(unittest.TestCase):
 
         self.assertIsNone(workbook.defined_names["F_Country"].localSheetId)
         self.assertIsNone(workbook.defined_names["F_Country_wrapped"].localSheetId)
-        self.assertEqual(workbook.defined_names["F_Country"].attr_text, "'Filters'!$B$3")
+        self.assertEqual(workbook.defined_names["F_Country"].attr_text, "'Filters'!$B$4")
 
     def test_per_question_filter_named_cells_exist(self) -> None:
         output_path = self.export_workbook()
@@ -1117,8 +1125,8 @@ class TestExcelExporter(unittest.TestCase):
         self.addCleanup(workbook.close)
         ws = workbook["Filters"]
 
-        self.assertEqual(ws["A3"].value, "Q_SS_EXPORT - Single select export question")
-        self.assertEqual(ws["A4"].value, "Q_MS_EXPORT - Multi select export question")
+        self.assertEqual(ws["A4"].value, "Q_SS_EXPORT - Single select export question")
+        self.assertEqual(ws["A5"].value, "Q_MS_EXPORT - Multi select export question")
 
     def test_workbook_has_one_sheet_per_theme(self) -> None:
         FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1235,9 +1243,7 @@ class TestExcelExporter(unittest.TestCase):
         self.assertNotIn("Code", values)
 
     def test_grid_single_select_ui_format(self) -> None:
-        app_path = (
-            Path(__file__).resolve().parents[1] / "app.py"
-        )
+        app_path = Path(__file__).resolve().parents[1] / "app.py"
         spec = importlib.util.spec_from_file_location("survey_insight_app", app_path)
         self.assertIsNotNone(spec)
         self.assertIsNotNone(spec.loader)
