@@ -1,0 +1,187 @@
+Two-part diagnostic. Confirm BOTH bugs exist independently. No fix yet.
+
+═════════════════════════════════════════════════════════════════════
+PART A — Confirm decode_raw_data() bug (you found it; double-check)
+═════════════════════════════════════════════════════════════════════
+
+cd artifacts/survey-insight-engine
+python3 << 'PYEOF'
+import sys; sys.path.insert(0, ".")
+from src.io import load_raw_data, load_datamap
+from src.datamap_parser import parse_datamap
+from src.question_classifier import classify_questions
+from src.raw_decoder import decode_raw_data
+
+datamap = load_datamap("sample_data/Datamap_sample.xlsx")
+schema = classify_questions(parse_datamap(datamap))
+raw_df = load_raw_data("sample_data/Rawdata_sample.xlsx")
+decoded_df = decode_raw_data(raw_df, schema)
+
+# Check Q4, Q13, Q14, QCountryGroups, QIndustry — pick first 3 unique values from each
+for col in ["Q4", "Q13", "Q14", "QCountryGroups", "QIndustry"]:
+    if col not in decoded_df.columns:
+        print(f"{col}: NOT IN decoded_df")
+        continue
+    vals = decoded_df[col].dropna().unique()[:3]
+    dtype = decoded_df[col].dtype
+    print(f"{col}: dtype={dtype}, sample values: {[repr(v) for v in vals]}")
+    
+    # Find the QuestionSpec
+    qspec = schema.get_question(col)
+    if qspec and hasattr(qspec, "option_map") and qspec.option_map:
+        # Show the first 3 mappings
+        items = list(qspec.option_map.items())[:3]
+        print(f"   option_map sample: {items}")
+PYEOF
+
+EXPECTED if bug exists: Q4 values are numeric (int 20, 13, etc) not 
+labels. option_map shows {20: "Software, Hardware...", 13: "..."}.
+
+═════════════════════════════════════════════════════════════════════
+PART B — Find the ACTUAL Excel filter-application bug
+═════════════════════════════════════════════════════════════════════
+
+The user said: "the values after applying filter is way too inaccurate"
+Showing for their Industry question:
+- "Software, Hardware..." → 0 (expected 97)  
+- "Finance" → 66 (expected 15)
+- "Agriculture" → 66 (expected 9)
+
+Your CHECK 2 with Q13 = "USD 5B to USD 10B" showed Excel = 235 = correct.
+
+So the user's complaint must be from a DIFFERENT filter situation. 
+Possibilities:
+1. They applied a per-question filter, not a workbook filter
+2. They applied a theme-local filter
+3. They typed a multiselect value
+4. They typed a value that doesn't exactly match (case, whitespace, smart quotes)
+
+REPRODUCE THE USER'S NUMBERS:
+
+The user reported sample size = 150 (Denominator column).
+1100 total → filter narrows to 150.
+
+Find what demographic filter value narrows to exactly 150 respondents:
+
+python3 << 'PYEOF'
+import sys; sys.path.insert(0, ".")
+from src.io import load_raw_data, load_datamap
+from src.datamap_parser import parse_datamap
+from src.question_classifier import classify_questions
+from src.raw_decoder import decode_raw_data
+from collections import Counter
+
+datamap = load_datamap("sample_data/Datamap_sample.xlsx")
+schema = classify_questions(parse_datamap(datamap))
+raw_df = load_raw_data("sample_data/Rawdata_sample.xlsx")
+decoded_df = decode_raw_data(raw_df, schema)
+
+print("Looking for filter values that yield ~150 respondents:")
+for col in ["QCountryGroups", "QIndustry", "Q13", "Q14", "Q24", "Q42", "Q61", "Q62"]:
+    if col not in decoded_df.columns:
+        continue
+    counts = decoded_df[col].value_counts()
+    for val, n in counts.items():
+        if 130 <= n <= 170:
+            qspec = schema.get_question(col)
+            label = qspec.option_map.get(val, val) if (qspec and hasattr(qspec, 'option_map') and qspec.option_map) else val
+            print(f"  {col}={val!r} ({label!r}): n={n}")
+
+# Once we find the right filter, compute expected Q4 distribution within that filter
+print("\nAlso show Q4 distribution within full sample (to compare what user reports):")
+q4_counts = decoded_df['Q4'].value_counts()
+q4_spec = schema.get_question('Q4')
+for code, count in q4_counts.head(10).items():
+    label = q4_spec.option_map.get(code, code) if (q4_spec and hasattr(q4_spec, 'option_map') and q4_spec.option_map) else code
+    print(f"  code={code!r} label={label!r}: n={count}")
+
+PYEOF
+
+═════════════════════════════════════════════════════════════════════
+PART C — Reproduce user's actual broken filter scenario
+═════════════════════════════════════════════════════════════════════
+
+Once you find a filter value that yields ~150 respondents, INJECT 
+that filter into Filters sheet, recalc, and compare Excel to Python.
+
+If Excel shows 66/66/0 like the user reported, we've reproduced 
+THEIR bug.
+If Excel shows the correct counts, the user's broken numbers were 
+from something else (per-question filter, theme-local, or 
+multiselect entry).
+
+Use this template, filling in the right column and value once you 
+find a ~150-respondent filter:
+
+python3 << 'PYEOF'
+import sys, os, subprocess
+sys.path.insert(0, ".")
+import openpyxl
+
+# Open existing diag2_filtered.xlsx (or regenerate)
+out = "outputs/diag2.xlsx"  # already exists from previous run
+wb = openpyxl.load_workbook(out, data_only=False)
+fs = wb['Filters']
+
+# Set the filter (REPLACE with what Part B finds)
+# Example: F_Q13 row, set to whichever value yields ~150
+TARGET_FILTER_ROW = 5  # likely Q13 row
+TARGET_FILTER_VAL = "USD 1B to USD 2B"  # ADJUST based on Part B output
+
+fs.cell(row=TARGET_FILTER_ROW, column=2).value = TARGET_FILTER_VAL
+wb.save("outputs/diag3.xlsx")
+
+# Recalc
+subprocess.run(["libreoffice","--headless","--calc","--convert-to","xlsx",
+                "--outdir","outputs/recalc3","outputs/diag3.xlsx"],
+               capture_output=True, text=True, timeout=180)
+
+# Read back
+wb_c = openpyxl.load_workbook("outputs/recalc3/diag3.xlsx", data_only=True)
+cs = wb_c['Commercial Strategy']
+
+# Find Q4 section and print
+target = "Software, Hardware"
+for r in range(1, cs.max_row + 1):
+    a = cs.cell(row=r, column=1).value
+    if isinstance(a, str) and target in a:
+        print(f"Q4 Industry section in filtered view:")
+        for offset in range(0, 12):
+            rr = r + offset
+            cell_a = cs.cell(row=rr, column=1).value
+            cell_b = cs.cell(row=rr, column=2).value
+            cell_d = cs.cell(row=rr, column=4).value
+            print(f"  R{rr}: {str(cell_a)[:55]!r:58s} count={cell_b!r:10s} denom={cell_d!r}")
+        break
+
+# Also compute the expected Python answer
+from src.io import load_raw_data, load_datamap
+from src.datamap_parser import parse_datamap
+from src.question_classifier import classify_questions
+from src.raw_decoder import decode_raw_data
+
+datamap = load_datamap("sample_data/Datamap_sample.xlsx")
+schema = classify_questions(parse_datamap(datamap))
+decoded_df = decode_raw_data(load_raw_data("sample_data/Rawdata_sample.xlsx"), schema)
+
+# Find the column for the filter row
+q_spec = schema.get_question('Q13')  # adjust to actual filter column
+code_for_label = None
+if q_spec and hasattr(q_spec, 'option_map') and q_spec.option_map:
+    for code, label in q_spec.option_map.items():
+        if label == TARGET_FILTER_VAL:
+            code_for_label = code
+            break
+
+print(f"\nPython: Q13 code for {TARGET_FILTER_VAL!r} = {code_for_label!r}")
+filtered = decoded_df[decoded_df['Q13'] == code_for_label]
+print(f"Filtered sample size: {len(filtered)}")
+print(f"Q4 distribution within filter (Python truth):")
+q4_spec = schema.get_question('Q4')
+for code, count in filtered['Q4'].value_counts().items():
+    label = q4_spec.option_map.get(code, code) if (q4_spec and hasattr(q4_spec, 'option_map') and q4_spec.option_map) else code
+    print(f"  {label!r:55s}: {count}")
+
+PYEOF
+
+PASTE ALL OUTPUT from Parts A, B, C.
