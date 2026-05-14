@@ -750,7 +750,8 @@ class TestExcelExporter(unittest.TestCase):
             ["Option", "Count", "%", "Denominator"],
         )
         self.assertEqual(ws.cell(data_row, 1).value, "Yes")
-        self.assertTrue(ws.cell(data_row, 2).value.startswith("=COUNTIFS"))
+        self.assertTrue(ws.cell(data_row, 2).value.startswith("=SUMPRODUCT"))
+        self.assertIn("SEARCH", ws.cell(data_row, 2).value)
         self.assertIn("Q_SS_EXPORT_data", ws.cell(data_row, 2).value)
         self.assertIn("SUBTOTAL", ws.cell(data_row, 3).value)
 
@@ -785,7 +786,7 @@ class TestExcelExporter(unittest.TestCase):
         )
         self.assertEqual(ws.cell(header_row, 1).value, "Metric")
         self.assertEqual(ws.cell(header_row + 1, 1).value, "Mean")
-        self.assertTrue(ws.cell(header_row + 1, 2).value.startswith("=IFERROR(AVERAGEIFS"))
+        self.assertTrue(ws.cell(header_row + 1, 2).value.startswith("=IFERROR(SUMPRODUCT"))
         self.assertEqual(ws.cell(header_row + 4, 1).value, "Std")
         self.assertEqual(ws.cell(header_row + 4, 2).value, 2.9)
         self.assertIn("Median not available", ws.cell(header_row + 5, 1).value)
@@ -803,7 +804,8 @@ class TestExcelExporter(unittest.TestCase):
             ["Option", "Count", "%", "Denominator"],
         )
         self.assertEqual(ws.cell(data_row, 1).value, "Grid first row")
-        self.assertTrue(ws.cell(data_row, 2).value.startswith("=COUNTIFS"))
+        self.assertTrue(ws.cell(data_row, 2).value.startswith("=SUMPRODUCT"))
+        self.assertIn("SEARCH", ws.cell(data_row, 2).value)
         self.assertIn("Q_GRID_EXPORTr1_data", ws.cell(data_row, 2).value)
         self.assertIn("SUBTOTAL", ws.cell(data_row, 4).value)
 
@@ -822,8 +824,12 @@ class TestExcelExporter(unittest.TestCase):
         ws = workbook["All Questions"]
 
         self.assertEqual(ws["A1"].value, "THEME: All Questions")
+        self.assertEqual(ws["A3"].value, "LOCAL FILTERS (override workbook defaults)")
         self.assertNotEqual(ws["A3"].value, "DEMOGRAPHIC FILTERS")
-        self.assertEqual(ws["A4"].value, "Q_SS_EXPORT - Single select export question")
+        self.assertEqual(
+            ws.cell(question_header_row(ws, "Q_SS_EXPORT"), 1).value,
+            "Q_SS_EXPORT - Single select export question",
+        )
 
     def test_filter_sheet_exists_visible(self) -> None:
         output_path = self.export_workbook()
@@ -832,6 +838,138 @@ class TestExcelExporter(unittest.TestCase):
 
         self.assertIn("Filters", workbook.sheetnames)
         self.assertEqual(workbook["Filters"].sheet_state, "visible")
+
+    def test_theme_sheet_has_local_filter_rows(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        self.addCleanup(workbook.close)
+        ws = workbook["All Questions"]
+
+        self.assertEqual(ws["A3"].value, "LOCAL FILTERS (override workbook defaults)")
+        self.assertEqual(ws["A4"].value, "Filter")
+        self.assertEqual(ws["B5"].value, "(Inherit)")
+
+    def test_filter_uses_sumproduct_not_countifs(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=True, data_only=False)
+        self.addCleanup(workbook.close)
+        ws = workbook["All Questions"]
+        header_row = table_header_row(ws, "Q_SS_EXPORT")
+        formula = ws.cell(row=header_row + 1, column=2).value
+
+        self.assertIn("SUMPRODUCT", formula)
+        self.assertIn("SEARCH", formula)
+        self.assertFalse(formula.startswith("=COUNTIFS"))
+
+    def test_inherit_pattern_resolves_to_workbook_value(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=True, data_only=False)
+        self.addCleanup(workbook.close)
+        ws = workbook["All Questions"]
+
+        self.assertEqual(ws["B5"].value, "(Inherit)")
+        self.assertIn('="(Inherit)"', ws["C5"].value)
+        self.assertIn("F_Custom1_Q", ws["C5"].value)
+
+    def test_available_values_column_present(self) -> None:
+        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = (
+            FIXTURE_DIR
+            / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
+        )
+        results, skips, schema, quality_report, log = make_export_fixture()
+        schema = replace(
+            schema,
+            questions=tuple(
+                replace(question, is_demographic=question.canonical_id == "Q_SS_EXPORT")
+                for question in schema.questions
+            ),
+        )
+        export_single_cuts(
+            results,
+            skips,
+            schema,
+            quality_report,
+            log,
+            str(output_path),
+            demo_priority={
+                "priority_ordered": ["Q_SS_EXPORT"],
+                "categories": {"Q_SS_EXPORT": "country"},
+            },
+        )
+        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        self.addCleanup(workbook.close)
+
+        self.assertIn("Yes", workbook["Filters"]["D3"].value)
+        self.assertIn("No", workbook["Filters"]["D3"].value)
+        self.assertIn("Yes", workbook["Demographics"]["E5"].value)
+
+    def test_question_title_has_cell_comment_with_full_text(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=False, data_only=True)
+        self.addCleanup(workbook.close)
+        ws = workbook["All Questions"]
+        title_row = question_header_row(ws, "Q_SS_EXPORT")
+
+        self.assertIsNotNone(ws.cell(title_row, 1).comment)
+        self.assertEqual(
+            ws.cell(title_row, 1).comment.text,
+            "Single select export question",
+        )
+
+    def test_short_labels_used_in_question_titles(self) -> None:
+        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = (
+            FIXTURE_DIR
+            / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
+        )
+        results, skips, schema, quality_report, log = make_export_fixture()
+        export_single_cuts(
+            results,
+            skips,
+            schema,
+            quality_report,
+            log,
+            str(output_path),
+            short_labels={"Q_SS_EXPORT": "Short revenue label"},
+        )
+        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        self.addCleanup(workbook.close)
+        ws = workbook["All Questions"]
+
+        self.assertEqual(
+            ws.cell(question_header_row(ws, "Q_SS_EXPORT"), 1).value,
+            "Q_SS_EXPORT - Short revenue label",
+        )
+
+    def test_per_question_filter_named_cells_scoped_per_theme(self) -> None:
+        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = (
+            FIXTURE_DIR
+            / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
+        )
+        results, skips, schema, quality_report, log = make_export_fixture()
+        themes = {
+            "themes": [
+                {"name": "Theme One", "question_ids": ["Q_SS_EXPORT"]},
+                {"name": "Theme Two", "question_ids": ["Q_NUM_EXPORT"]},
+            ]
+        }
+        export_single_cuts(
+            results,
+            skips,
+            schema,
+            quality_report,
+            log,
+            str(output_path),
+            themes=themes,
+        )
+        workbook = load_workbook(output_path, read_only=False, data_only=True)
+        self.addCleanup(workbook.close)
+
+        self.assertIn("Theme_One_Q_SS_EXPORT_F_V", workbook.defined_names)
+        self.assertIn("Theme_Two_Q_NUM_EXPORT_F_V", workbook.defined_names)
+        self.assertIsNone(workbook.defined_names["Theme_One_Q_SS_EXPORT_F_V"].localSheetId)
 
     def test_raw_data_sheet_is_hidden(self) -> None:
         output_path = self.export_workbook()
@@ -892,9 +1030,10 @@ class TestExcelExporter(unittest.TestCase):
         header_row = table_header_row(ws, "Q_SS_EXPORT")
         formula = ws.cell(row=header_row + 1, column=2).value
 
-        self.assertTrue(formula.startswith("=COUNTIFS"))
+        self.assertTrue(formula.startswith("=SUMPRODUCT"))
         self.assertIn("Q_SS_EXPORT_data", formula)
-        self.assertIn("F_Custom1_crit", formula)
+        self.assertIn("All_Questions_F_Custom1_wrapped", formula)
+        self.assertIn("SEARCH", formula)
         self.assertNotIn('IF(F_Custom1_Q="(None)"', formula)
 
     def test_named_cells_are_workbook_scoped(self) -> None:
@@ -927,7 +1066,7 @@ class TestExcelExporter(unittest.TestCase):
         self.addCleanup(workbook.close)
 
         self.assertIsNone(workbook.defined_names["F_Country"].localSheetId)
-        self.assertIsNone(workbook.defined_names["F_Country_crit"].localSheetId)
+        self.assertIsNone(workbook.defined_names["F_Country_wrapped"].localSheetId)
         self.assertEqual(workbook.defined_names["F_Country"].attr_text, "'Filters'!$B$3")
 
     def test_per_question_filter_named_cells_exist(self) -> None:
@@ -935,15 +1074,15 @@ class TestExcelExporter(unittest.TestCase):
         workbook = load_workbook(output_path, read_only=False, data_only=True)
         self.addCleanup(workbook.close)
 
-        self.assertIn("Q_SS_EXPORT_F_Q", workbook.defined_names)
-        self.assertIn("Q_SS_EXPORT_F_V", workbook.defined_names)
+        self.assertIn("All_Questions_Q_SS_EXPORT_F_Q", workbook.defined_names)
+        self.assertIn("All_Questions_Q_SS_EXPORT_F_V", workbook.defined_names)
 
     def test_cross_tab_named_cell_exists(self) -> None:
         output_path = self.export_workbook()
         workbook = load_workbook(output_path, read_only=False, data_only=True)
         self.addCleanup(workbook.close)
 
-        self.assertIn("Q_SS_EXPORT_CT", workbook.defined_names)
+        self.assertIn("All_Questions_Q_SS_EXPORT_CT", workbook.defined_names)
 
     def test_priority_demographic_ordering(self) -> None:
         FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1096,7 +1235,9 @@ class TestExcelExporter(unittest.TestCase):
         self.assertNotIn("Code", values)
 
     def test_grid_single_select_ui_format(self) -> None:
-        app_path = Path(__file__).resolve().parents[1] / "app.py"
+        app_path = (
+            Path(__file__).resolve().parents[1] / "app.py"
+        )
         spec = importlib.util.spec_from_file_location("survey_insight_app", app_path)
         self.assertIsNotNone(spec)
         self.assertIsNotNone(spec.loader)
@@ -1207,7 +1348,7 @@ class TestExcelExporter(unittest.TestCase):
         pct_formula = ws.cell(row=header_row + 1, column=3).value
 
         self.assertIn("_RawData", workbook.sheetnames)
-        self.assertTrue(count_formula.startswith("=COUNTIFS"))
+        self.assertTrue(count_formula.startswith("=SUMPRODUCT"))
         self.assertIn("SUBTOTAL", pct_formula)
 
     def test_export_writes_segment_profile_body(self) -> None:

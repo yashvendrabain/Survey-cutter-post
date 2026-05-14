@@ -1683,6 +1683,7 @@ def _run_pipeline(
     from src.ai_insights import (
         categorize_demographic_questions,
         categorize_questions_into_themes,
+        generate_short_labels,
     )
 
     questions_for_themes = [
@@ -1710,6 +1711,13 @@ def _run_pipeline(
         demographic_questions_for_priority,
         cache=_INSIGHT_CACHE,
     )
+    short_labels = generate_short_labels(
+        [
+            {"question_id": q.canonical_id, "question_text": q.question_text}
+            for q in schema.questions
+        ],
+        cache=_INSIGHT_CACHE,
+    )
     export_single_cuts(
         results=results,
         skips=skips,
@@ -1720,6 +1728,7 @@ def _run_pipeline(
         themes=themes,
         decoded_df=dataframe,
         demo_priority=demo_priority,
+        short_labels=short_labels,
     )
 
     app = _require_streamlit()
@@ -1755,6 +1764,7 @@ def _refresh_full_workbook() -> None:
     from src.ai_insights import (
         categorize_demographic_questions,
         categorize_questions_into_themes,
+        generate_short_labels,
     )
     from src.excel_exporter import export_single_cuts
 
@@ -1785,6 +1795,13 @@ def _refresh_full_workbook() -> None:
         demographic_questions_for_priority,
         cache=_INSIGHT_CACHE,
     )
+    short_labels = generate_short_labels(
+        [
+            {"question_id": q.canonical_id, "question_text": q.question_text}
+            for q in schema.questions
+        ],
+        cache=_INSIGHT_CACHE,
+    )
     export_single_cuts(
         results=app.session_state["results"],
         skips=app.session_state["skips"],
@@ -1797,6 +1814,7 @@ def _refresh_full_workbook() -> None:
         themes=themes,
         decoded_df=app.session_state.get("decoded_df"),
         demo_priority=demo_priority,
+        short_labels=short_labels,
     )
 
 
