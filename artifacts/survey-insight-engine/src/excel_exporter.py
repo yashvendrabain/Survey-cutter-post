@@ -1283,7 +1283,7 @@ def _numeric_mask_expression(
 
 def _static_filter_factor(data_name: str, value_name: str, wrapped_name: str) -> str:
     return (
-        f'IF({value_name}="(All)",1,'
+        f'IF(OR({value_name}="(All)",{value_name}="",ISBLANK({value_name})),1,'
         f'--ISNUMBER(SEARCH("|"&{data_name}&"|",{wrapped_name})))'
     )
 
@@ -1545,7 +1545,10 @@ def _live_set_filter_column_widths(worksheet: Any) -> None:
 
 
 def _wrapped_formula(value_name: str) -> str:
-    return f'="|" & SUBSTITUTE({value_name}, ", ", "|") & "|"'
+    return (
+        f'=IF(OR({value_name}="",ISBLANK({value_name})),"|(All)|",'
+        f'"|" & SUBSTITUTE({value_name}, ", ", "|") & "|")'
+    )
 
 
 def _available_values_for_column(

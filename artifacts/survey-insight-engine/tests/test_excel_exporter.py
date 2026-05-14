@@ -560,6 +560,13 @@ class TestExcelExporter(unittest.TestCase):
         self.assertIn('", ", "|"', formula)
         self.assertNotIn('SUBSTITUTE(SUBSTITUTE(', formula)
 
+    def test_wrapped_formula_treats_blank_as_all(self) -> None:
+        formula = _wrapped_formula("F_Q14")
+
+        self.assertIn('ISBLANK(F_Q14)', formula)
+        self.assertIn('F_Q14=""', formula)
+        self.assertIn('"|(All)|"', formula)
+
     def grid_single_select_format_fixture(
         self,
     ) -> tuple[GridSingleSelectResult, SurveySchema]:

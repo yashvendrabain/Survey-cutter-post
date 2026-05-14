@@ -12,3 +12,9 @@ id = "3z-lT-x30IZ6w5je8RM6o"
 uri = "file://artifacts/survey-insight-engine/outputs/post_fix_filtered.xlsx"
 type = "table"
 title = "Survey Insight Engine — verified workbook (Q14 filter applied)"
+
+[[outputs]]
+id = "wDxXjw8nP4wPhagAt3Gej"
+uri = "file://artifacts/survey-insight-engine/outputs/post_blank_filtered.xlsx"
+type = "table"
+title = "Survey Insight Engine — verified workbook (blank filters → full sample)"
