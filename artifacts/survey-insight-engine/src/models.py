@@ -101,6 +101,7 @@ class QuestionSpec:
     grid_row_labels: dict[str, str] | None = None
     option_other_code: int | str | None = None
     is_demographic: bool = False
+    conditional_on: str | None = None
 
     def __post_init__(self) -> None:
         _require_non_empty_string(self.question_id, "question_id")
@@ -588,27 +589,17 @@ class FilterSpec:
     def __post_init__(self) -> None:
         _require_non_empty_string(self.filter_question_id, "filter_question_id")
 
-    def is_breakdown(self) -> bool:
-        """True if this filter has no specific value(s).
-
-        Empty ``filter_values`` is treated the same as ``None`` to keep
-        ``is_breakdown()`` consistent with ``get_effective_values()``.
-        """
-        if self.filter_value is not None:
-            return False
-        return not self.filter_values
-
-    def get_effective_values(self) -> list | None:
-        """Return the list of values to filter on, or None for breakdown.
-
-        ``filter_value`` (single) takes precedence over ``filter_values`` (multi)
-        when both are set, preserving backward-compatible semantics.
-        """
+    def get_effective_values(self) -> list[int | str] | None:
+        """Return list of values to filter on (None = breakdown)."""
         if self.filter_value is not None:
             return [self.filter_value]
         if self.filter_values:
             return list(self.filter_values)
         return None
+
+    def is_breakdown(self) -> bool:
+        """True if this filter has no specific value."""
+        return self.get_effective_values() is None
 
 
 @dataclass(frozen=True, slots=True)
@@ -861,13 +852,11 @@ class GlobalFilterState:
     def description(self) -> str:
         if not self.filters:
             return "(no global filter)"
-        parts: list[str] = []
+        parts = []
         for filter_spec in self.filters:
             values = filter_spec.get_effective_values()
             if values is None:
-                parts.append(
-                    f"{filter_spec.filter_question_id} == {filter_spec.filter_value!r}"
-                )
+                parts.append(f"{filter_spec.filter_question_id} == None")
             elif len(values) == 1:
                 parts.append(f"{filter_spec.filter_question_id} == {values[0]!r}")
             else:

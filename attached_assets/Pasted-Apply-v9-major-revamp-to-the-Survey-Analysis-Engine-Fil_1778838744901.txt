@@ -1,0 +1,34 @@
+Apply v9 (major revamp) to the Survey Analysis Engine.
+Files to replace:
+
+src/raw_decoder.py — full replacement (455 lines)
+src/question_classifier.py — full replacement (381 lines)
+src/models.py — Codex added conditional_on: str | None field to QuestionSpec; apply that change
+src/excel_exporter.py — full replacement (5626 lines)
+tests/test_raw_decoder.py — apply Codex's added tests
+tests/test_question_classifier.py — apply Codex's added tests
+tests/test_excel_exporter.py — apply Codex's added tests
+
+What this iteration ships (5 coordinated changes):
+
+Grid single-select decoding now handles "NO TO:"-style rejection prefixes generically across all surveys. Template placeholder values ($ {...}) are excluded from denominators.
+Pipe / Pn resolution — [pipe: Xxx] and [Pn: Xxx] in question text are resolved to "prior selection (<short label>)" at schema load.
+Filter labels drop the Q-number prefix — Filters sheet, per-question filter rows, and custom filter labels now show "Country", "Industry", etc.
+Question headings drop the Q-number prefix on theme sheets — "Q38 - Changes to decision for vendor" becomes "Changes to decision for vendor".
+Formatting revamp — 3-color heatmap (green/yellow/red) on Count and % columns of every single-cut and cross-cut table; "Total respondents" row at bottom with grey fill, bold, top border; italic grey 9pt subset note row when denominator < 90% of total respondents.
+
+Run after replacing:
+
+pytest (full suite) — must show 373 passes (was 358).
+Generate a fresh workbook against sample_data/Rawdata_sample.xlsx and save to outputs/survey_v9_revamp.xlsx.
+Open the workbook in Excel.
+
+Verification — confirm all 5 checks:
+
+Heatmap visible: On any theme sheet, the Count column of any single-cut table shows red→yellow→green gradient by value (highest = green, lowest = red). Same on the % column independently.
+Total respondents row: Every single-cut table has a final row labeled "Total respondents" with the denominator value, light grey fill, bold, top border.
+Filter labels: On the Filters sheet, column A shows readable labels like "Country", "Industry", "Company Size" — not "Q1", "Q4", etc.
+Question headings: On theme sheets, question headings show readable text without "Q17 -" prefix.
+Filter still works (regression check): Setting Country to a value on the Filters sheet still propagates to all theme sheet COUNTIFS.
+
+Report: test count, all 5 manual checks (pass/fail), and any visual issues with the formatting.

@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 import importlib.util
 from pathlib import Path
+import re
 import unittest
 from uuid import uuid4
 
@@ -44,6 +45,14 @@ from tests.conftest import CROSS_CUT_30_RESPONDENTS_PATH
 UTC_NOW = datetime(2026, 5, 4, 12, 0, tzinfo=timezone.utc)
 LONG_ID = "Q_VERY_LONG_SINGLE_SELECT_EXPORT_NAME"
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
+QUESTION_HEADING_BY_ID = {
+    "Q_SS_EXPORT": "Single select export question",
+    "Q_MS_EXPORT": "Multi select export question",
+    "Q_NUM_EXPORT": "Numeric export question",
+    "Q_GRID_EXPORT": "Grid export question",
+    LONG_ID: "Long sheet name export question",
+    "Q_GRID_FORMAT": "Grid format question",
+}
 
 
 def make_audit(
@@ -537,9 +546,12 @@ def question_title(question_id: str, text: str) -> str:
 
 def question_header_row(ws, question_id: str) -> int:
     prefix = f"{question_id} - "
+    expected_heading = QUESTION_HEADING_BY_ID.get(question_id)
     for row_index in range(1, ws.max_row + 1):
         value = ws.cell(row=row_index, column=1).value
-        if isinstance(value, str) and value.startswith(prefix):
+        if isinstance(value, str) and (
+            value.startswith(prefix) or value == expected_heading
+        ):
             return row_index
     raise AssertionError(f"Question block {question_id!r} not found")
 
@@ -751,7 +763,7 @@ class TestExcelExporter(unittest.TestCase):
         data_row = header_row + 1
         self.assertEqual(
             ws.cell(row=question_header_row(ws, "Q_SS_EXPORT"), column=1).value,
-            "Q_SS_EXPORT - Single select export question",
+            "Single select export question",
         )
         self.assertEqual(
             [ws.cell(header_row, col).value for col in range(1, 5)],
@@ -774,7 +786,7 @@ class TestExcelExporter(unittest.TestCase):
         data_row = header_row + 1
         self.assertEqual(
             ws.cell(row=question_header_row(ws, "Q_MS_EXPORT"), column=1).value,
-            "Q_MS_EXPORT - Multi select export question",
+            "Multi select export question",
         )
         self.assertEqual(ws.cell(header_row, 1).value, "Option")
         self.assertEqual(ws.cell(header_row, 2).value, "Count")
@@ -791,7 +803,7 @@ class TestExcelExporter(unittest.TestCase):
         header_row = table_header_row(ws, "Q_NUM_EXPORT", header="Metric")
         self.assertEqual(
             ws.cell(row=question_header_row(ws, "Q_NUM_EXPORT"), column=1).value,
-            "Q_NUM_EXPORT - Numeric export question",
+            "Numeric export question",
         )
         self.assertEqual(ws.cell(header_row, 1).value, "Metric")
         self.assertEqual(ws.cell(header_row + 1, 1).value, "Mean")
@@ -829,6 +841,49 @@ class TestExcelExporter(unittest.TestCase):
 
         self.assertGreater(len(ws.tables), 0)
 
+    def test_distribution_count_column_has_color_scale(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=False, data_only=False)
+        self.addCleanup(workbook.close)
+        ws = workbook["All Questions"]
+        header_row = table_header_row(ws, "Q_SS_EXPORT")
+        range_ref = f"B{header_row + 1}:B{header_row + 2}"
+
+        self.assertTrue(
+            any(
+                str(formatting.sqref) == range_ref
+                and any(rule.type == "colorScale" for rule in formatting.rules)
+                for formatting in ws.conditional_formatting
+            )
+        )
+
+    def test_distribution_percent_column_has_color_scale(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=False, data_only=False)
+        self.addCleanup(workbook.close)
+        ws = workbook["All Questions"]
+        header_row = table_header_row(ws, "Q_SS_EXPORT")
+        range_ref = f"C{header_row + 1}:C{header_row + 2}"
+
+        self.assertTrue(
+            any(
+                str(formatting.sqref) == range_ref
+                and any(rule.type == "colorScale" for rule in formatting.rules)
+                for formatting in ws.conditional_formatting
+            )
+        )
+
+    def test_total_respondents_row_follows_distribution_options(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=True, data_only=False)
+        self.addCleanup(workbook.close)
+        ws = workbook["All Questions"]
+        header_row = table_header_row(ws, "Q_SS_EXPORT")
+        total_row = header_row + 3
+
+        self.assertEqual(ws.cell(total_row, 1).value, "Total respondents")
+        self.assertEqual(ws.cell(total_row, 2).value, 10)
+
     def test_sc_sheet_filter_block_no_filter(self) -> None:
         output_path = self.export_workbook()
         workbook = load_workbook(output_path, read_only=True, data_only=True)
@@ -840,7 +895,64 @@ class TestExcelExporter(unittest.TestCase):
         self.assertNotEqual(ws["A3"].value, "DEMOGRAPHIC FILTERS")
         self.assertEqual(
             ws.cell(question_header_row(ws, "Q_SS_EXPORT"), 1).value,
-            "Q_SS_EXPORT - Single select export question",
+            "Single select export question",
+        )
+
+    def test_subset_denominator_note_appears_when_denominator_is_small(self) -> None:
+        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = (
+            FIXTURE_DIR
+            / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
+        )
+        results, skips, schema, quality_report, log = make_export_fixture()
+        subset_result = replace(
+            results[0],
+            valid_n=5,
+            missing_n=5,
+            distribution={
+                1: {"label": "Yes", "count": 3, "rate": 0.6},
+                2: {"label": "No", "count": 2, "rate": 0.4},
+            },
+        )
+        export_single_cuts(
+            [subset_result, *results[1:]],
+            skips,
+            schema,
+            quality_report,
+            log,
+            str(output_path),
+        )
+        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        self.addCleanup(workbook.close)
+        ws = workbook["All Questions"]
+        values = [
+            ws.cell(row=row_index, column=1).value
+            for row_index in range(
+                question_header_row(ws, "Q_SS_EXPORT"),
+                table_header_row(ws, "Q_SS_EXPORT") + 1,
+            )
+        ]
+
+        self.assertIn(
+            "Note: This question was shown to a subset. Total respondents shown: 5.",
+            values,
+        )
+
+    def test_subset_denominator_note_absent_for_full_denominator(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        self.addCleanup(workbook.close)
+        ws = workbook["All Questions"]
+        values = [
+            ws.cell(row=row_index, column=1).value
+            for row_index in range(
+                question_header_row(ws, "Q_SS_EXPORT"),
+                table_header_row(ws, "Q_SS_EXPORT") + 1,
+            )
+        ]
+
+        self.assertFalse(
+            any(isinstance(value, str) and value.startswith("Note:") for value in values)
         )
 
     def test_filter_sheet_exists_visible(self) -> None:
@@ -850,6 +962,58 @@ class TestExcelExporter(unittest.TestCase):
 
         self.assertIn("Filters", workbook.sheetnames)
         self.assertEqual(workbook["Filters"].sheet_state, "visible")
+
+    def test_filter_display_label_drops_question_number(self) -> None:
+        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = (
+            FIXTURE_DIR
+            / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
+        )
+        results, skips, schema, quality_report, log = make_export_fixture()
+        schema = replace(
+            schema,
+            questions=tuple(
+                replace(
+                    question,
+                    question_text="Q14 - In which country are you based?",
+                    is_demographic=True,
+                )
+                if question.canonical_id == "Q_SS_EXPORT"
+                else question
+                for question in schema.questions
+            ),
+        )
+        export_single_cuts(
+            results,
+            skips,
+            schema,
+            quality_report,
+            log,
+            str(output_path),
+            demo_priority={
+                "priority_ordered": ["Q_SS_EXPORT"],
+                "categories": {"Q_SS_EXPORT": "country"},
+            },
+        )
+        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        self.addCleanup(workbook.close)
+
+        self.assertEqual(workbook["Filters"]["A4"].value, "Country")
+        self.assertNotRegex(str(workbook["Filters"]["A4"].value), r"\bQ\d+")
+
+    def test_per_question_dropdown_options_are_readable_labels(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        self.addCleanup(workbook.close)
+        ws = workbook["_Options"]
+        values = [
+            ws.cell(row=row_index, column=1).value
+            for row_index in range(2, ws.max_row + 1)
+            if ws.cell(row=row_index, column=1).value
+        ]
+
+        self.assertIn("Single Select Export Question", values)
+        self.assertFalse(any(re.search(r"\bQ\d+", str(value)) for value in values))
 
     def test_theme_sheet_has_local_filter_rows(self) -> None:
         output_path = self.export_workbook()
@@ -981,7 +1145,10 @@ class TestExcelExporter(unittest.TestCase):
                 root = ET.fromstring(archive.read(name))
                 for cell in root.iter(f"{namespace}c"):
                     formula = cell.find(f"{namespace}f")
-                    if formula is None or "INDEX(INDIRECT" not in (formula.text or ""):
+                    if formula is None:
+                        continue
+                    formula_text = formula.text or ""
+                    if "INDEX(INDIRECT" not in formula_text or "_options" not in formula_text:
                         continue
                     cached = cell.find(f"{namespace}v")
                     self.assertIsNotNone(cached)
@@ -1092,6 +1259,16 @@ class TestExcelExporter(unittest.TestCase):
             "Single select export question",
         )
 
+    def test_theme_question_heading_drops_question_number_prefix(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        self.addCleanup(workbook.close)
+        ws = workbook["All Questions"]
+        heading = ws.cell(question_header_row(ws, "Q_SS_EXPORT"), 1).value
+
+        self.assertEqual(heading, "Single select export question")
+        self.assertNotRegex(str(heading), r"^Q\d+[A-Za-z]*\s*[-:]?")
+
     def test_short_labels_used_in_question_titles(self) -> None:
         FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
@@ -1113,8 +1290,8 @@ class TestExcelExporter(unittest.TestCase):
         ws = workbook["All Questions"]
 
         self.assertEqual(
-            ws.cell(question_header_row(ws, "Q_SS_EXPORT"), 1).value,
-            "Q_SS_EXPORT - Short revenue label",
+            ws.cell(find_row(ws, "Short revenue label"), 1).value,
+            "Short revenue label",
         )
 
     def test_per_question_filter_named_cells_scoped_per_theme(self) -> None:
@@ -1292,8 +1469,8 @@ class TestExcelExporter(unittest.TestCase):
         self.addCleanup(workbook.close)
         ws = workbook["Filters"]
 
-        self.assertEqual(ws["A4"].value, "Q_SS_EXPORT - Single select export question")
-        self.assertEqual(ws["A5"].value, "Q_MS_EXPORT - Multi select export question")
+        self.assertEqual(ws["A4"].value, "Single Select Export Question")
+        self.assertEqual(ws["A5"].value, "Multi Select Export Question")
 
     def test_workbook_has_one_sheet_per_theme(self) -> None:
         FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1410,10 +1587,7 @@ class TestExcelExporter(unittest.TestCase):
         self.assertNotIn("Code", values)
 
     def test_grid_single_select_ui_format(self) -> None:
-        app_path = (
-            Path(__file__).resolve().parents[1]
-            / "app.py"
-        )
+        app_path = Path(__file__).resolve().parents[1] / "app.py"
         spec = importlib.util.spec_from_file_location("survey_insight_app", app_path)
         self.assertIsNotNone(spec)
         self.assertIsNotNone(spec.loader)
