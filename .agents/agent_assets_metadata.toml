@@ -36,3 +36,9 @@ id = "p_OMInhiTZ-OphEChglPO"
 uri = "file://artifacts/survey-insight-engine/outputs/survey_v6_countifs.xlsx"
 type = "table"
 title = "Survey Insight Engine — v6 (COUNTIFS) — fresh untouched copy"
+
+[[outputs]]
+id = "XQurfRHuxtLbWiTaNyTHH"
+uri = "file://artifacts/survey-insight-engine/outputs/survey_v7_cached.xlsx"
+type = "table"
+title = "Survey Insight Engine — v7 (COUNTIFS + pre-cached values)"
