@@ -432,7 +432,13 @@ def _build_options_sheet(
     worksheet.cell(row=2, column=all_questions_col, value="(None)")
     filter_labels = _unique_filter_option_labels(context.columns)
     for row_index, column in enumerate(context.columns, start=3):
-        worksheet.cell(row=row_index, column=all_questions_col, value=filter_labels[column.key])
+        # Fix 2 — strip the leading "Q\d+" prefix from every All_Questions
+        # entry so the dropdown shows clean labels with no "Q47 - " noise.
+        worksheet.cell(
+            row=row_index,
+            column=all_questions_col,
+            value=_strip_question_prefix(filter_labels[column.key]) or filter_labels[column.key],
+        )
     _add_named_range(
         workbook,
         "All_Questions",
@@ -3383,9 +3389,11 @@ def _set_single_cut_column_widths(ws: Any) -> None:
 
 
 def _filter_condition_text(filter_spec: FilterSpec, schema: SurveySchema) -> str:
-    if filter_spec.filter_value is None:
+    values = filter_spec.get_effective_values()
+    if not values:
         return "(breakdown)"
-    return f"= {_filter_option_label(filter_spec, schema)}"
+    labels = _filter_value_labels(filter_spec, schema, values)
+    return f"in [{', '.join(labels)}]"
 
 
 def _filters_description(
@@ -4683,12 +4691,14 @@ def _write_filtered_filter_log(
         for filter_spec in result.filters_applied:
             _write(ws, row_index, 0, sheet_name)
             _write(ws, row_index, 1, filter_spec.filter_question_id)
-            _write(
-                ws,
-                row_index,
-                2,
-                "" if filter_spec.filter_value is None else filter_spec.filter_value,
-            )
+            values = filter_spec.get_effective_values()
+            if not values:
+                value_cell = ""
+            elif len(values) == 1:
+                value_cell = values[0]
+            else:
+                value_cell = ", ".join(str(v) for v in values)
+            _write(ws, row_index, 2, value_cell)
             _write(
                 ws,
                 row_index,
@@ -4870,32 +4880,53 @@ def _filter_description(
     schema: SurveySchema,
     compact_breakdown: bool,
 ) -> str:
-    if filter_spec.filter_value is None:
+    values = filter_spec.get_effective_values()
+    if not values:
         if compact_breakdown:
             return f"{filter_spec.filter_question_id} (breakdown)"
         return f"{filter_spec.filter_question_id} (breakdown - no specific value)"
 
-    label = _filter_option_label(filter_spec, schema)
-    if label:
-        return (
-            f"{filter_spec.filter_question_id} == {filter_spec.filter_value} "
-            f"({label})"
-        )
-    return f"{filter_spec.filter_question_id} == {filter_spec.filter_value}"
+    labels = _filter_value_labels(filter_spec, schema, values)
+    return f"{filter_spec.filter_question_id} in [{', '.join(labels)}]"
 
 
 def _filter_option_label(filter_spec: FilterSpec, schema: SurveySchema) -> str | None:
+    """Single-value option label lookup, kept for callers that pass legacy
+    single-value FilterSpec objects. Multi-value rendering goes through
+    _filter_value_labels."""
     spec = schema.get_question(filter_spec.filter_question_id)
     if spec is None:
         return None
     value = filter_spec.filter_value
-    if value in spec.option_map:
-        return str(spec.option_map[value])
+    return _option_label_for_value(spec, value) if value is not None else None
+
+
+def _option_label_for_value(question_spec: Any, value: Any) -> str | None:
+    if value in question_spec.option_map:
+        return str(question_spec.option_map[value])
     value_as_string = str(value)
-    for option_code, label in spec.option_map.items():
+    for option_code, label in question_spec.option_map.items():
         if str(option_code) == value_as_string:
             return str(label)
     return None
+
+
+def _filter_value_labels(
+    filter_spec: FilterSpec,
+    schema: SurveySchema,
+    values: list[Any],
+) -> list[str]:
+    """Render every value in a FilterSpec as 'code (label)' or 'code' fallback."""
+    spec = schema.get_question(filter_spec.filter_question_id)
+    rendered: list[str] = []
+    for value in values:
+        if spec is not None:
+            label = _option_label_for_value(spec, value)
+            if label:
+                rendered.append(f"{value} ({label})")
+                continue
+        rendered.append(str(value))
+    return rendered
 
 
 def _filtered_audit_records(

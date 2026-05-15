@@ -1961,7 +1961,7 @@ class TestExcelExporter(unittest.TestCase):
         self.assertEqual(ws.max_row, 4)
         self.assertEqual(ws["A1"].value, "Sheet Name")
         self.assertEqual(ws["B2"].value, "Q_SS_EXPORT")
-        self.assertEqual(ws["C2"].value, "Q_SEG_1 == 1 (Segment 1)")
+        self.assertEqual(ws["C2"].value, "Q_SEG_1 in [1 (Segment 1)]")
         self.assertEqual(ws["D4"].value, "cross_cut_breakdown")
         self.assertEqual(ws["E4"].value, 30)
 
@@ -1976,8 +1976,8 @@ class TestExcelExporter(unittest.TestCase):
         self.assertEqual(ws["A4"].value, "Target question:")
         self.assertEqual(ws["B5"].value, "Q_SS_EXPORT")
         self.assertIn("Q_SEG_1", values)
-        self.assertIn("= Segment 1", values)
-        self.assertIn("FILTERED VIEW: Q_SEG_1 == 1 (Segment 1) (n=6)", values)
+        self.assertIn("in [1 (Segment 1)]", values)
+        self.assertIn("FILTERED VIEW: Q_SEG_1 in [1 (Segment 1)] (n=6)", values)
         self.assertIn("Code", values)
         self.assertIn("Yes", values)
         self.assertIn(6, values)
@@ -1994,7 +1994,7 @@ class TestExcelExporter(unittest.TestCase):
             if cell is not None
         ]
 
-        self.assertIn("FILTERED VIEW: Q_SEG_1 == 1 (Segment 1) (n=6)", values)
+        self.assertIn("FILTERED VIEW: Q_SEG_1 in [1 (Segment 1)] (n=6)", values)
         self.assertIn("n=6 respondents match filter", values)
         self.assertIsNotNone(ws.auto_filter.ref)
 
@@ -2035,7 +2035,7 @@ class TestExcelExporter(unittest.TestCase):
                 "FSC_Q_SS_EXPORT_01",
                 "Q_SEG_1",
                 1,
-                "Q_SEG_1 == 1 (Segment 1)",
+                "Q_SEG_1 in [1 (Segment 1)]",
             ),
             rows,
         )
@@ -2057,6 +2057,146 @@ class TestExcelExporter(unittest.TestCase):
         self.assertIn("CC_CC_TAB_EXPORT", values)
         self.assertNotIn("Q_MS_EXPORT", values)
         self.assertNotIn("Q_UNRELATED_EXPORT", values)
+
+
+class V9PolishRegressionTests(unittest.TestCase):
+    """Regression tests for the v9 polish pass:
+    Fix 1 — multi-value FilterSpec rendering uses `in [a, b, c]` syntax.
+    Fix 2 — All_Questions named range strips `Q\\d+` prefix from labels.
+    """
+
+    def test_filter_description_renders_multi_value_filterspec(self) -> None:
+        """Fix 1 — _filter_description must render every selected value, not just one."""
+        from src.excel_exporter import _filter_description, _filter_condition_text
+
+        schema = SurveySchema(
+            questions=(
+                QuestionSpec(
+                    question_id="[Q_SEG_1]",
+                    canonical_id="Q_SEG_1",
+                    question_text="Segment",
+                    question_type=QuestionType.SINGLE_SELECT,
+                    raw_columns=("Q_SEG_1",),
+                    option_map={1: "Segment 1", 2: "Segment 2", 3: "Segment 3"},
+                ),
+            ),
+            respondent_id_column="respondent_id",
+            total_respondents=10,
+            source_datamap_path="datamap.xlsx",
+            source_rawdata_path="raw.csv",
+            parsed_at=UTC_NOW,
+        )
+        multi = FilterSpec(filter_question_id="Q_SEG_1", filter_values=(1, 3))
+        single = FilterSpec(filter_question_id="Q_SEG_1", filter_value=2)
+
+        self.assertEqual(
+            _filter_description(multi, schema, compact_breakdown=False),
+            "Q_SEG_1 in [1 (Segment 1), 3 (Segment 3)]",
+        )
+        self.assertEqual(
+            _filter_description(single, schema, compact_breakdown=False),
+            "Q_SEG_1 in [2 (Segment 2)]",
+        )
+        self.assertEqual(
+            _filter_condition_text(multi, schema),
+            "in [1 (Segment 1), 3 (Segment 3)]",
+        )
+
+    def test_all_questions_named_range_strips_q_prefix(self) -> None:
+        """Fix 2 — _Options sheet column 1 (All_Questions) must not contain `Q\\d+` prefixes."""
+        import xlsxwriter
+        from openpyxl import load_workbook
+        from src.excel_exporter import export_single_cuts
+        import tempfile, os
+
+        schema = SurveySchema(
+            questions=(
+                QuestionSpec(
+                    question_id="[Q47]",
+                    canonical_id="Q47",
+                    question_text="Q47 - Country of residence",
+                    question_type=QuestionType.SINGLE_SELECT,
+                    raw_columns=("Q47",),
+                    option_map={1: "Spain", 2: "France"},
+                ),
+                QuestionSpec(
+                    question_id="[Q12_a]",
+                    canonical_id="Q12_a",
+                    question_text="Q12 - Satisfaction (no Q-prefix on label)",
+                    question_type=QuestionType.SINGLE_SELECT,
+                    raw_columns=("Q12_a",),
+                    option_map={1: "Yes", 2: "No"},
+                ),
+            ),
+            respondent_id_column="respondent_id",
+            total_respondents=10,
+            source_datamap_path="datamap.xlsx",
+            source_rawdata_path="raw.csv",
+            parsed_at=UTC_NOW,
+        )
+        results = [
+            SingleSelectResult(
+                question_id="Q47",
+                question_type=QuestionType.SINGLE_SELECT,
+                valid_n=10,
+                missing_n=0,
+                denominator_policy=DenominatorPolicy.VALID_RESPONSES,
+                distribution={
+                    1: {"label": "Spain", "count": 6, "rate": 0.6},
+                    2: {"label": "France", "count": 4, "rate": 0.4},
+                },
+            ),
+            SingleSelectResult(
+                question_id="Q12_a",
+                question_type=QuestionType.SINGLE_SELECT,
+                valid_n=10,
+                missing_n=0,
+                denominator_policy=DenominatorPolicy.VALID_RESPONSES,
+                distribution={
+                    1: {"label": "Yes", "count": 7, "rate": 0.7},
+                    2: {"label": "No", "count": 3, "rate": 0.3},
+                },
+            ),
+        ]
+        log = CalculationLog()
+        quality_report = DataQualityReport(
+            total_rows=10,
+            total_columns=2,
+            columns_in_datamap=2,
+            columns_not_in_datamap=(),
+            per_column_missing_pct={"Q47": 0.0, "Q12_a": 0.0},
+            per_column_out_of_range_pct={},
+            coercion_log=(),
+            warnings=(),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = Path(tmp) / "v9_fix2.xlsx"
+            export_single_cuts(
+                results=results,
+                skips=[],
+                schema=schema,
+                quality_report=quality_report,
+                log=log,
+                output_path=str(output_path),
+            )
+            workbook = load_workbook(output_path, read_only=True, data_only=True)
+            try:
+                ws = workbook["_Options"]
+                values = [
+                    ws.cell(row=row_index, column=1).value
+                    for row_index in range(2, ws.max_row + 1)
+                    if ws.cell(row=row_index, column=1).value
+                ]
+            finally:
+                workbook.close()
+
+        self.assertTrue(values, "_Options column 1 should be populated")
+        for value in values:
+            self.assertNotRegex(
+                str(value),
+                r"^Q\d+",
+                f"All_Questions entry {value!r} still carries a Q-prefix",
+            )
 
 
 if __name__ == "__main__":
