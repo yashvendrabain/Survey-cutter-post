@@ -108,6 +108,34 @@ def export_single_cuts(
         results=results,
         short_labels_map=short_labels_map,
     )
+
+    # Fix 4 — Memory safety valve. For large dataframes (e.g. BCN: 4631×1187),
+    # writing every cell + every COUNTIFS formula + cached-value registry
+    # blows past available RAM and the Streamlit worker is silently SIGKILLed
+    # by the OOM killer. Above the configured threshold, switch to static-
+    # values mode: collapse _RawData to a placeholder row and write every
+    # formula as its pre-computed cached number. Workbook still shows correct
+    # counts; loses live filter interactivity.
+    try:
+        from config import RAW_DATA_SHEET_ROW_LIMIT as _RAW_LIMIT
+    except Exception:
+        _RAW_LIMIT = 2000
+    decoded_row_count = 0
+    if decoded_df is not None:
+        try:
+            decoded_row_count = int(getattr(decoded_df, "shape", (0, 0))[0])
+        except Exception:
+            decoded_row_count = 0
+    workbook.sie_raw_limit = _RAW_LIMIT
+    if decoded_row_count > _RAW_LIMIT:
+        live_context.static_only = True
+        _set_static_only(workbook, True)
+        live_context.warnings.append(
+            f"Static-values export: {decoded_row_count} rows exceeds "
+            f"RAW_DATA_SHEET_ROW_LIMIT ({_RAW_LIMIT}); _RawData collapsed and "
+            f"all formulas written as cached values. Live filtering disabled."
+        )
+
     with export_memory.memory_step("build_raw_data_sheet"):
         _build_raw_data_sheet(workbook, decoded_df, schema, results, live_context)
     with export_memory.memory_step("build_options_sheet"):
@@ -263,9 +291,11 @@ class _LiveWorkbookContext:
     column_by_key: dict[str, _LiveColumnSpec] = field(default_factory=dict)
     option_values: dict[str, list[str]] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    static_only: bool = False
 
 
 _FORMULA_CACHE_ATTR = "_sie_formula_cache_values"
+_STATIC_ONLY_ATTR = "_sie_static_only_export"
 _SPREADSHEET_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 _RELATIONSHIP_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 _PACKAGE_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
@@ -286,11 +316,29 @@ def _live_formula(
     formula: str,
     cached_value: Any,
 ) -> Any:
-    """Write an openpyxl formula and remember the cached value to patch into XML."""
+    """Write an openpyxl formula and remember the cached value to patch into XML.
+
+    When the workbook is in static-values export mode (set via
+    _set_static_only on large dataframes), write the cached value directly as
+    a static cell instead of a live formula. This trades filter interactivity
+    for guaranteed completion on memory-constrained runs.
+    """
+
+    if getattr(worksheet.parent, _STATIC_ONLY_ATTR, False):
+        static_value = _normalise_formula_cache_value(cached_value)
+        return worksheet.cell(row=row, column=column, value=static_value)
 
     cell = worksheet.cell(row=row, column=column, value=formula)
     _record_formula_cache(worksheet.parent, worksheet.title, cell.coordinate, cached_value)
     return cell
+
+
+def _set_static_only(workbook: Any, enabled: bool) -> None:
+    setattr(workbook, _STATIC_ONLY_ATTR, bool(enabled))
+
+
+def _is_static_only(workbook: Any) -> bool:
+    return bool(getattr(workbook, _STATIC_ONLY_ATTR, False))
 
 
 def _record_formula_cache(
@@ -332,6 +380,50 @@ def _build_raw_data_sheet(
     worksheet.cell(row=1, column=1, value="respondent_id")
     for index, column in enumerate(columns, start=2):
         worksheet.cell(row=1, column=index, value=column.header)
+
+    # Fix 4 — Static-values export: skip writing every row of the raw
+    # dataframe. Write a single placeholder row (so named ranges remain
+    # valid and downstream sheets don't break with #REF errors) and derive
+    # dropdown option values from the datamap option_map instead of from
+    # observed raw rows.
+    if context.static_only:
+        worksheet.cell(
+            row=2,
+            column=1,
+            value=(
+                "_RawData omitted for large files "
+                f"(>{getattr(workbook, 'sie_raw_limit', 'configured limit')} rows). "
+                "Filters use pre-computed values."
+            ),
+        )
+        last_row = 2
+        _add_named_range(workbook, "respondent_id_data", "_RawData", "$A$2:$A$2")
+        for index, column in enumerate(columns, start=2):
+            col_letter = _openpyxl_column_letter(index)
+            _add_named_range(
+                workbook,
+                column.data_name,
+                "_RawData",
+                f"${col_letter}$2:${col_letter}$2",
+            )
+        for column in columns:
+            values: list[str] = []
+            question = column.question
+            if question is not None and getattr(question, "option_map", None):
+                for raw_value in question.option_map.values():
+                    text = str(raw_value)
+                    if text and text not in values:
+                        values.append(text)
+            elif column.kind in {"multi_select", "grid_single"}:
+                values = ["Selected"]
+            if len(values) > 100:
+                context.warnings.append(
+                    f"{column.key} has more than 100 unique values; dropdown capped at 100"
+                )
+                values = values[:100]
+            context.option_values[column.key] = values
+        worksheet.freeze_panes = "A2"
+        return
 
     rows = _raw_rows_from_dataframe(decoded_df, schema, columns)
     if not rows:
@@ -891,6 +983,13 @@ def _live_write_run_summary(
         ("Audit log records:", len(log)),
         ("Quality warnings:", len(quality_report.warnings)),
     ]
+    if _is_static_only(workbook):
+        rows.append(
+            (
+                "Memory-safety mode:",
+                "Static-values export — _RawData omitted, formulas written as cached values",
+            )
+        )
     for row_index, (label, value) in enumerate(rows, start=1):
         worksheet.cell(row=row_index, column=1, value=label).font = _live_font(bold=True)
         worksheet.cell(row=row_index, column=2, value=value)
