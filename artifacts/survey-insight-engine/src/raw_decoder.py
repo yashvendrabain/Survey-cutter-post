@@ -102,6 +102,7 @@ def decode_raw_data(
         dataframe[respondent_id_column] = dataframe[respondent_id_column].astype("Int64")
 
     dataframe = _decode_option_columns(dataframe, data_map)
+    dataframe = _normalise_dataframe_for_excel(dataframe)
 
     return dataframe, report
 
@@ -126,6 +127,7 @@ def _load_raw_file(
             engine="openpyxl",
             sheet_name=sheet_name,
         )
+        dataframe = _normalise_dataframe_for_excel(dataframe)
         if fallback_warning:
             dataframe.attrs["_raw_decoder_sheet_warning"] = fallback_warning
         elif isinstance(sheet_name, str) and sheet_name != first_sheet_name:
@@ -135,6 +137,12 @@ def _load_raw_file(
             )
         return dataframe
     raise ValueError(f"unsupported raw data file extension: {suffix or '<none>'}")
+
+
+def _normalise_dataframe_for_excel(dataframe: pd.DataFrame) -> pd.DataFrame:
+    from src.io import _normalise_dataframe
+
+    return _normalise_dataframe(dataframe)
 
 
 def _find_data_sheet(path: str, expected_columns: set[str]) -> tuple[str, str | None]:

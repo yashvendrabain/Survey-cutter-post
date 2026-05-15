@@ -9,10 +9,12 @@ import unittest
 from unittest.mock import patch
 
 from openpyxl import Workbook
+import pandas as pd
 
 from src.io import (
     _detect_scenario,
     _identify_file_roles,
+    _normalise_dataframe,
     load_survey_inputs,
 )
 from tests.conftest import (
@@ -58,6 +60,26 @@ def fallback_combined_upload() -> Upload:
 
 
 class TestIO(unittest.TestCase):
+    def test_normalise_dataframe_removes_nullable_dtypes_and_pd_na(self) -> None:
+        dataframe = pd.DataFrame(
+            {
+                "nullable_int": pd.Series([1, pd.NA], dtype="Int64"),
+                "nullable_string": pd.Series(["A", pd.NA], dtype="string"),
+                "nullable_boolean": pd.Series([True, pd.NA], dtype="boolean"),
+                "nullable_float": pd.Series([1.5, pd.NA], dtype="Float64"),
+            }
+        )
+
+        normalised = _normalise_dataframe(dataframe)
+        dtypes = {str(dtype) for dtype in normalised.dtypes}
+
+        self.assertNotIn("Int64", dtypes)
+        self.assertNotIn("string", dtypes)
+        self.assertNotIn("boolean", dtypes)
+        self.assertNotIn("Float64", dtypes)
+        for value in normalised.to_numpy(dtype=object).ravel():
+            self.assertIsNot(value, pd.NA)
+
     def test_load_scenario_a_two_separate_files(self) -> None:
         data_map, raw_df, report = load_survey_inputs(
             [

@@ -72,6 +72,30 @@ RAW_NAME_KEYWORDS = {
 }
 
 
+def _normalise_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Pandas 3.x convert_dtypes() produces nullable dtypes (Int64, StringDtype,
+    boolean) that use pd.NA for missing values. openpyxl cannot serialize pd.NA.
+    Coerce all nullable dtypes back to numpy-backed equivalents.
+    """
+
+    result = df.copy()
+    for col in result.columns:
+        dtype = str(result[col].dtype)
+        if dtype in ("str", "string"):
+            result[col] = result[col].astype(object)
+        elif dtype.startswith("Int") or dtype.startswith("UInt"):
+            result[col] = result[col].astype(float)
+        elif dtype == "boolean":
+            result[col] = result[col].astype(object)
+        elif dtype in ("Float32", "Float64"):
+            result[col] = result[col].astype(float)
+
+        if str(result[col].dtype) == "object":
+            result[col] = result[col].where(~result[col].isna(), None)
+    return result
+
+
 def load_survey_inputs(
     uploaded_files: list[UploadedFile],
 ) -> tuple[DataMap, pd.DataFrame, LoadReport]:
@@ -143,6 +167,7 @@ def _load_scenario_a(
     try:
         data_map = parse_datamap(dm_path)
         raw_df, _quality_report = decode_raw_data(raw_path, data_map)
+        raw_df = _normalise_dataframe(raw_df)
     finally:
         _safe_unlink(dm_path)
         _safe_unlink(raw_path)
@@ -176,6 +201,7 @@ def _load_scenario_b(
     try:
         data_map = parse_datamap(dm_path)
         raw_df, _quality_report = decode_raw_data(combined_path, data_map)
+        raw_df = _normalise_dataframe(raw_df)
     finally:
         _safe_unlink(dm_path)
         _safe_unlink(combined_path)
@@ -208,6 +234,7 @@ def _load_scenario_c(
     try:
         data_map = parse_word_survey(doc_path)
         raw_df, _quality_report = decode_raw_data(raw_path, data_map)
+        raw_df = _normalise_dataframe(raw_df)
     finally:
         _safe_unlink(doc_path)
         _safe_unlink(raw_path)

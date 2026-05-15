@@ -48,3 +48,9 @@ id = "E9lK0n-ZoS7LwQuMQz2ZF"
 uri = "file://artifacts/survey-insight-engine/outputs/survey_v8_filters_wired.xlsx"
 type = "table"
 title = "Survey Insight Engine — v8 (theme-local + per-question filters wired, blanks fixed)"
+
+[[outputs]]
+id = "Y83Pq5SZzwxbBI3XJK6Zy"
+uri = "file://artifacts/survey-insight-engine/outputs/BCN_v8_1000rows.xlsx"
+type = "table"
+title = "BCN — v8 NA-fix verification (1000-row subsample)"
