@@ -50,7 +50,6 @@ _CHART_COLORS = [
 
 PASS_WORKBOOK_FILTERS_DATA_NAME = "passes_workbook_filters_data"
 PASS_WORKBOOK_CUSTOM_FILTERS_DATA_NAME = "passes_workbook_custom_filters_data"
-_EXCEL_SHORT_LABEL_CACHE: dict[str, Any] = {}
 
 
 def export_single_cuts(
@@ -79,18 +78,12 @@ def export_single_cuts(
     default_sheet = workbook.active
     workbook.remove(default_sheet)
 
-    questions_for_labels = [
+    demographic_questions = [
         {"question_id": q.canonical_id, "question_text": q.question_text}
         for q in schema.questions
+        if getattr(q, "is_demographic", False)
     ]
-    short_labels_map = dict(
-        generate_short_labels(
-            questions_for_labels,
-            cache=_EXCEL_SHORT_LABEL_CACHE,
-        )
-    )
-    if short_labels:
-        short_labels_map.update(short_labels)
+    short_labels_map = generate_short_labels(demographic_questions)
 
     live_context = _LiveWorkbookContext(
         schema=schema,
@@ -155,7 +148,7 @@ def export_single_cuts(
             schema,
             live_context,
             sheet_filters,
-            live_context.short_labels_map,
+            short_labels or {},
         )
 
     _live_write_calculation_log(workbook, log)
@@ -359,48 +352,47 @@ def _build_options_sheet(
     worksheet.cell(row=1, column=all_questions_col, value="All_Questions")
     worksheet.cell(row=2, column=all_questions_col, value="(None)")
     filter_labels = _unique_filter_option_labels(context.columns, context)
-    question_entries = _all_questions_dropdown_entries(schema, context)
-    for row_index, entry in enumerate(question_entries, start=3):
-        worksheet.cell(row=row_index, column=all_questions_col, value=entry["label"])
+    for row_index, column in enumerate(context.columns, start=3):
+        worksheet.cell(row=row_index, column=all_questions_col, value=filter_labels[column.key])
     _add_named_range(
         workbook,
         "All_Questions",
         "_Options",
-        f"$A$2:$A${len(question_entries) + 2}",
+        f"$A$2:$A${len(context.columns) + 2}",
     )
 
     worksheet.cell(row=1, column=2, value="All_Questions_Local")
     worksheet.cell(row=2, column=2, value="(Inherit)")
     worksheet.cell(row=3, column=2, value="(None)")
-    for row_index, entry in enumerate(question_entries, start=4):
-        worksheet.cell(row=row_index, column=2, value=entry["label"])
+    for row_index, column in enumerate(context.columns, start=4):
+        worksheet.cell(row=row_index, column=2, value=filter_labels[column.key])
     _add_named_range(
         workbook,
         "All_Questions_Local",
         "_Options",
-        f"$B$2:$B${len(question_entries) + 3}",
+        f"$B$2:$B${len(context.columns) + 3}",
     )
 
     worksheet.cell(row=1, column=3, value="All_Questions_Data_Names")
     worksheet.cell(row=2, column=3, value="respondent_id_data")
-    for row_index, entry in enumerate(question_entries, start=3):
-        worksheet.cell(row=row_index, column=3, value=entry["data_name"])
+    for row_index, column in enumerate(context.columns, start=3):
+        worksheet.cell(row=row_index, column=3, value=column.data_name)
     _add_named_range(
         workbook,
         "All_Questions_Data_Names",
         "_Options",
-        f"$C$2:$C${len(question_entries) + 2}",
+        f"$C$2:$C${len(context.columns) + 2}",
     )
 
     worksheet.cell(row=1, column=4, value="All_Questions_Options_Names")
     worksheet.cell(row=2, column=4, value="None_options")
-    for row_index, entry in enumerate(question_entries, start=3):
-        worksheet.cell(row=row_index, column=4, value=entry["options_name"])
+    for row_index, column in enumerate(context.columns, start=3):
+        worksheet.cell(row=row_index, column=4, value=f"{column.header}_options")
     _add_named_range(
         workbook,
         "All_Questions_Options_Names",
         "_Options",
-        f"$D$2:$D${len(question_entries) + 2}",
+        f"$D$2:$D${len(context.columns) + 2}",
     )
 
     worksheet.cell(row=1, column=5, value="None_options")
@@ -452,52 +444,6 @@ def _option_values_for_column(
     if question.option_map and column.kind == "single":
         return [str(value) for value in question.option_map.values()]
     return []
-
-
-def _all_questions_dropdown_entries(
-    schema: SurveySchema,
-    context: _LiveWorkbookContext,
-) -> list[dict[str, str]]:
-    """Return visible question choices and their aligned lookup metadata."""
-
-    entries: list[dict[str, str]] = []
-    used_labels: set[str] = {"(None)", "(Inherit)"}
-    for question in schema.questions:
-        if not _is_all_questions_dropdown_eligible(question):
-            continue
-        column = context.column_by_key.get(question.canonical_id)
-        if column is None:
-            continue
-        label = _dedupe_dropdown_label(
-            _question_dropdown_label(question, context),
-            used_labels,
-        )
-        entries.append(
-            {
-                "label": label,
-                "data_name": column.data_name,
-                "options_name": f"{column.header}_options",
-            }
-        )
-    return entries
-
-
-def _is_all_questions_dropdown_eligible(question: Any) -> bool:
-    return (
-        getattr(question, "question_type", None) is QuestionType.SINGLE_SELECT
-        and bool(getattr(question, "analysis_eligible", False))
-        and len(getattr(question, "option_map", {}) or {}) >= 2
-    )
-
-
-def _dedupe_dropdown_label(label: str, used_labels: set[str]) -> str:
-    candidate = label
-    suffix = 2
-    while candidate in used_labels:
-        candidate = f"{label} {suffix}"
-        suffix += 1
-    used_labels.add(candidate)
-    return candidate
 
 
 def _build_filters_sheet(
@@ -1324,11 +1270,11 @@ def _live_write_question_block(
 
     heading_fill = _live_fill("FFCC0000")
     heading_font = _live_font(bold=True, size=11, color="FFFFFFFF")
-    heading_last_col = 14
-    for col_index in range(1, heading_last_col + 1):
+    for col_index in range(1, 11):
         cell = worksheet.cell(row=row_index, column=col_index)
         cell.fill = heading_fill
         cell.font = heading_font
+    worksheet.merge_cells(start_row=row_index, start_column=1, end_row=row_index, end_column=10)
     short_label = _question_heading_text(question, short_labels)
     title_cell = worksheet.cell(
         row=row_index,
@@ -1494,58 +1440,87 @@ def _live_write_numeric_table(
     fv_name: str,
     theme_prefix: str,
 ) -> int:
-    if result.question_type is QuestionType.NUMERIC_ALLOCATION:
-        return _live_write_numeric_allocation_table(
-            worksheet,
-            start_row,
-            result,
-            question,
-            context,
-            sheet_filters,
-            fq_name,
-            fv_name,
-            theme_prefix,
-        )
-
     headers = ["Metric", "Value", "Note", "Denominator"]
     _live_header_row(worksheet, start_row, headers)
     row_index = start_row + 1
-    column = context.column_by_key.get(question.canonical_id)
-    if column is None:
-        return start_row
-    for metric, static_value in (
-        ("Mean", None),
-        ("Min", None),
-        ("Max", None),
-        ("Std", result.std),
-    ):
-        worksheet.cell(row=row_index, column=1, value=metric)
-        if static_value is None:
+    if result.question_type is QuestionType.NUMERIC_ALLOCATION:
+        for option_id, payload in (result.per_option_stats or {}).items():
+            column = context.column_by_key.get(str(option_id))
+            if column is None:
+                continue
+            label = question.option_map.get(option_id, option_id)
+            for metric in ("Mean", "Min", "Max"):
+                worksheet.cell(row=row_index, column=1, value=f"{label} {metric}")
+                _live_formula(
+                    worksheet,
+                    row=row_index,
+                    column=2,
+                    formula=_build_numeric_formula(
+                        metric,
+                        column.data_name,
+                        sheet_filters,
+                        fq_name,
+                        fv_name,
+                        theme_prefix,
+                    ),
+                    cached_value=_numeric_formula_cache_value(metric, payload),
+                )
+                _live_formula(
+                    worksheet,
+                    row_index,
+                    4,
+                    _build_numeric_count_formula(column.data_name, sheet_filters, fq_name, fv_name, theme_prefix),
+                    int(payload.get("valid_n", result.valid_n)),
+                )
+                row_index += 1
+            worksheet.cell(row=row_index, column=1, value=f"{label} Std")
+            worksheet.cell(row=row_index, column=2, value=float(payload.get("std", 0.0)))
+            worksheet.cell(row=row_index, column=3, value="static baseline")
             _live_formula(
                 worksheet,
-                row=row_index,
-                column=2,
-                formula=_build_numeric_formula(
-                    metric,
-                    column.data_name,
-                    sheet_filters,
-                    fq_name,
-                    fv_name,
-                    theme_prefix,
-                ),
-                cached_value=_numeric_result_cache_value(metric, result),
+                row_index,
+                4,
+                _build_numeric_count_formula(column.data_name, sheet_filters, fq_name, fv_name, theme_prefix),
+                int(payload.get("valid_n", result.valid_n)),
             )
-        else:
-            worksheet.cell(row=row_index, column=2, value=static_value)
-            worksheet.cell(row=row_index, column=3, value="static baseline")
-        _live_formula(
-            worksheet,
-            row_index,
-            4,
-            _build_numeric_count_formula(column.data_name, sheet_filters, fq_name, fv_name, theme_prefix),
-            result.valid_n,
-        )
-        row_index += 1
+            row_index += 1
+    else:
+        column = context.column_by_key.get(question.canonical_id)
+        if column is None:
+            return start_row
+        for metric, static_value in (
+            ("Mean", None),
+            ("Min", None),
+            ("Max", None),
+            ("Std", result.std),
+        ):
+            worksheet.cell(row=row_index, column=1, value=metric)
+            if static_value is None:
+                _live_formula(
+                    worksheet,
+                    row=row_index,
+                    column=2,
+                    formula=_build_numeric_formula(
+                        metric,
+                        column.data_name,
+                        sheet_filters,
+                        fq_name,
+                        fv_name,
+                        theme_prefix,
+                    ),
+                    cached_value=_numeric_result_cache_value(metric, result),
+                )
+            else:
+                worksheet.cell(row=row_index, column=2, value=static_value)
+                worksheet.cell(row=row_index, column=3, value="static baseline")
+            _live_formula(
+                worksheet,
+                row_index,
+                4,
+                _build_numeric_count_formula(column.data_name, sheet_filters, fq_name, fv_name, theme_prefix),
+                result.valid_n,
+            )
+            row_index += 1
     worksheet.cell(
         row=row_index,
         column=1,
@@ -1553,74 +1528,6 @@ def _live_write_numeric_table(
     ).font = _live_font(italic=True, size=9, color="666666")
     _openpyxl_add_table(worksheet, start_row, 1, max(start_row + 1, row_index - 1), 4)
     return row_index
-
-
-def _live_write_numeric_allocation_table(
-    worksheet: Any,
-    start_row: int,
-    result: NumericResult,
-    question: Any,
-    context: _LiveWorkbookContext,
-    sheet_filters: list[dict[str, str]],
-    fq_name: str,
-    fv_name: str,
-    theme_prefix: str,
-) -> int:
-    headers = ["Option", "Mean", "Median", "Denominator"]
-    _live_header_row(worksheet, start_row, headers)
-    row_index = start_row + 1
-    for option_id, payload in (result.per_option_stats or {}).items():
-        column = context.column_by_key.get(str(option_id))
-        if column is None:
-            continue
-        worksheet.cell(
-            row=row_index,
-            column=1,
-            value=_numeric_allocation_option_label(question, str(option_id)),
-        )
-        _live_formula(
-            worksheet,
-            row=row_index,
-            column=2,
-            formula=_build_numeric_formula(
-                "Mean",
-                column.data_name,
-                sheet_filters,
-                fq_name,
-                fv_name,
-                theme_prefix,
-            ),
-            cached_value=_numeric_formula_cache_value("Mean", payload),
-        ).number_format = "0.0"
-        worksheet.cell(
-            row=row_index,
-            column=3,
-            value=_numeric_formula_cache_value("Median", payload),
-        ).number_format = "0.0"
-        _live_formula(
-            worksheet,
-            row_index,
-            4,
-            _build_numeric_count_formula(
-                column.data_name,
-                sheet_filters,
-                fq_name,
-                fv_name,
-                theme_prefix,
-            ),
-            int(payload.get("valid_n", result.valid_n)),
-        )
-        row_index += 1
-
-    data_start = start_row + 1
-    data_end = row_index - 1
-    if data_end >= data_start:
-        _apply_color_scale_range(worksheet, data_start, 2, data_end, 2)
-        _apply_color_scale_range(worksheet, data_start, 3, data_end, 3)
-    total_row = row_index
-    _write_total_respondents_row(worksheet, total_row, result.valid_n, 4)
-    _openpyxl_add_table(worksheet, start_row, 1, total_row, 4)
-    return total_row
 
 
 def _live_write_cross_tab_table(
@@ -1801,19 +1708,6 @@ def _numeric_formula_cache_value(metric: str, payload: dict[str, Any]) -> float:
         return float(payload.get(key, 0.0))
     except (TypeError, ValueError):
         return 0.0
-
-
-def _numeric_allocation_option_label(question: Any, option_id: str) -> str:
-    grid_row_labels = getattr(question, "grid_row_labels", None) or {}
-    if option_id in grid_row_labels:
-        return str(grid_row_labels[option_id])
-    option_map = getattr(question, "option_map", None) or {}
-    if option_id in option_map:
-        return str(option_map[option_id])
-    for key, value in option_map.items():
-        if str(key) == option_id:
-            return str(value)
-    return option_id
 
 
 def _numeric_result_cache_value(metric: str, result: NumericResult) -> float:
@@ -2284,10 +2178,6 @@ def _filter_option_label_for_column(
     return _filter_display_label(question, context)
 
 
-def _question_dropdown_label(question: Any, context: _LiveWorkbookContext) -> str:
-    return f"{_question_display_id(question)} - {_short_label_for_question(question, context)}"
-
-
 def _question_data_name_formula(question_name: str) -> str:
     return (
         f'XLOOKUP({question_name},All_Questions,'
@@ -2303,34 +2193,8 @@ def _question_options_name_formula(question_name: str) -> str:
 
 
 def _question_heading_text(question: Any, short_labels: dict[str, str]) -> str:
-    label = short_labels.get(getattr(question, "canonical_id", ""), "")
-    if isinstance(label, str) and label.strip():
-        short_label = _strip_question_prefix(label.strip())
-    else:
-        short_label = _short_question_label(str(getattr(question, "question_text", "")))
-    return f"{_question_display_id(question)} - {short_label.title()}"
-
-
-def _short_label_for_question(question: Any, context: _LiveWorkbookContext) -> str:
-    label = context.short_labels_map.get(getattr(question, "canonical_id", ""), "")
-    if isinstance(label, str) and label.strip():
-        cleaned = _strip_question_prefix(label.strip())
-        if cleaned:
-            return cleaned.title()
-    return _short_question_label(str(getattr(question, "question_text", ""))).title()
-
-
-def _question_display_id(question: Any) -> str:
-    raw_id = str(
-        getattr(
-            question,
-            "question_id_raw",
-            getattr(question, "question_id", getattr(question, "canonical_id", "")),
-        )
-    ).strip()
-    if raw_id.startswith("[") and raw_id.endswith("]"):
-        raw_id = raw_id[1:-1].strip()
-    return raw_id or str(getattr(question, "canonical_id", "Question"))
+    del short_labels
+    return f"{question.canonical_id} - {question.question_text}"
 
 
 def _strip_question_prefix(text: str) -> str:

@@ -2060,7 +2060,12 @@ class TestExcelExporter(unittest.TestCase):
         self.assertNotIn("Code", values)
 
     def test_grid_single_select_ui_format(self) -> None:
-        app_path = Path(__file__).resolve().parents[1] / "app.py"
+        app_path = (
+            Path(__file__).resolve().parents[1]
+            / "artifacts"
+            / "survey-insight-engine"
+            / "app.py"
+        )
         spec = importlib.util.spec_from_file_location("survey_insight_app", app_path)
         self.assertIsNotNone(spec)
         self.assertIsNotNone(spec.loader)

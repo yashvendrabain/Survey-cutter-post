@@ -531,17 +531,6 @@ def find_row(ws, value: object, column: int = 1) -> int:
     raise AssertionError(f"{value!r} not found in column {column}")
 
 
-def defined_range_values(workbook, name: str) -> list[object]:
-    destinations = list(workbook.defined_names[name].destinations)
-    values: list[object] = []
-    for sheet_name, coord in destinations:
-        ws = workbook[sheet_name]
-        for row in ws[coord]:
-            for cell in row:
-                values.append(cell.value)
-    return values
-
-
 def question_title(question_id: str, text: str) -> str:
     return f"{question_id} - {text}"
 
@@ -640,114 +629,6 @@ class TestExcelExporter(unittest.TestCase):
         )
         results, skips, schema, quality_report, log = make_export_fixture()
         export_single_cuts(results, skips, schema, quality_report, log, str(output_path))
-        return output_path
-
-    def export_numeric_allocation_workbook(self) -> Path:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
-        output_path = (
-            FIXTURE_DIR
-            / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
-        )
-        per_option_stats = {
-            "Q20r1": {
-                "mean": 28.9,
-                "median": 27.0,
-                "std": 10.5,
-                "min_val": 0.0,
-                "max_val": 100.0,
-                "valid_n": 1022,
-                "missing_n": 0,
-            },
-            "Q20r2": {
-                "mean": 24.6,
-                "median": 22.0,
-                "std": 9.1,
-                "min_val": 0.0,
-                "max_val": 100.0,
-                "valid_n": 1022,
-                "missing_n": 0,
-            },
-            "Q20r3": {
-                "mean": 22.9,
-                "median": 20.0,
-                "std": 8.4,
-                "min_val": 0.0,
-                "max_val": 100.0,
-                "valid_n": 1022,
-                "missing_n": 0,
-            },
-        }
-        audits = tuple(
-            AuditRecord(
-                output_sheet="SC_Q20",
-                metric_name=metric_name,
-                source_question_id="Q20",
-                source_columns=(option_id,),
-                filter_expr=None,
-                numerator=100.0,
-                denominator=int(payload["valid_n"]),
-                formula=f"{metric_name} formula",
-                value_raw=float(payload[metric_name.rsplit("_", 1)[-1]]),
-                valid_n=int(payload["valid_n"]),
-                missing_n=int(payload["missing_n"]),
-                timestamp=UTC_NOW,
-            )
-            for option_id, payload in per_option_stats.items()
-            for metric_name in ("numeric_allocation_mean", "numeric_allocation_median")
-        )
-        result = NumericResult(
-            question_id="Q20",
-            question_type=QuestionType.NUMERIC_ALLOCATION,
-            valid_n=1022,
-            missing_n=0,
-            denominator_policy=DenominatorPolicy.VALID_RESPONSES,
-            mean=25.5,
-            median=23.0,
-            std=3.0,
-            min_val=0.0,
-            max_val=100.0,
-            percentiles={25: 20.0, 50: 23.0, 75: 28.9},
-            allocation_target=100.0,
-            allocation_tolerance=2.0,
-            allocation_excluded_n=0,
-            per_option_stats=per_option_stats,
-            audit_records=audits,
-        )
-        schema = SurveySchema(
-            questions=(
-                QuestionSpec(
-                    question_id="[Q20]",
-                    canonical_id="Q20",
-                    question_text="Allocate growth by source",
-                    question_type=QuestionType.NUMERIC_ALLOCATION,
-                    raw_columns=("Q20r1", "Q20r2", "Q20r3"),
-                    option_map={
-                        "Q20r1": "Existing customers - net retention",
-                        "Q20r2": "Existing customers - cross-sell / up-sell",
-                        "Q20r3": "New customers - existing geographies",
-                    },
-                ),
-            ),
-            respondent_id_column="respondent_id",
-            total_respondents=1022,
-            source_datamap_path="datamap.xlsx",
-            source_rawdata_path="raw.csv",
-            parsed_at=UTC_NOW,
-        )
-        quality_report = DataQualityReport(
-            total_rows=1022,
-            total_columns=3,
-            columns_in_datamap=1,
-            columns_not_in_datamap=(),
-            per_column_missing_pct={},
-            per_column_out_of_range_pct={},
-            coercion_log=(),
-            warnings=(),
-        )
-        log = CalculationLog()
-        for audit in audits:
-            log.record(audit)
-        export_single_cuts([result], [], schema, quality_report, log, str(output_path))
         return output_path
 
     def export_workbook_with_cross_cuts(self) -> Path:
@@ -870,7 +751,7 @@ class TestExcelExporter(unittest.TestCase):
         data_row = header_row + 1
         self.assertEqual(
             ws.cell(row=question_header_row(ws, "Q_SS_EXPORT"), column=1).value,
-            "Q_SS_EXPORT - Single Select Export Question",
+            "Q_SS_EXPORT - Single select export question",
         )
         self.assertEqual(
             [ws.cell(header_row, col).value for col in range(1, 5)],
@@ -893,7 +774,7 @@ class TestExcelExporter(unittest.TestCase):
         data_row = header_row + 1
         self.assertEqual(
             ws.cell(row=question_header_row(ws, "Q_MS_EXPORT"), column=1).value,
-            "Q_MS_EXPORT - Multi Select Export Question",
+            "Q_MS_EXPORT - Multi select export question",
         )
         self.assertEqual(ws.cell(header_row, 1).value, "Option")
         self.assertEqual(ws.cell(header_row, 2).value, "Count")
@@ -910,7 +791,7 @@ class TestExcelExporter(unittest.TestCase):
         header_row = table_header_row(ws, "Q_NUM_EXPORT", header="Metric")
         self.assertEqual(
             ws.cell(row=question_header_row(ws, "Q_NUM_EXPORT"), column=1).value,
-            "Q_NUM_EXPORT - Numeric Export Question",
+            "Q_NUM_EXPORT - Numeric export question",
         )
         self.assertEqual(ws.cell(header_row, 1).value, "Metric")
         self.assertEqual(ws.cell(header_row + 1, 1).value, "Mean")
@@ -920,60 +801,6 @@ class TestExcelExporter(unittest.TestCase):
         self.assertEqual(ws.cell(header_row + 4, 1).value, "Std")
         self.assertEqual(ws.cell(header_row + 4, 2).value, 2.9)
         self.assertIn("Median not available", ws.cell(header_row + 5, 1).value)
-
-    def test_numeric_allocation_table_is_option_oriented_with_mean_and_median(self) -> None:
-        output_path = self.export_numeric_allocation_workbook()
-        workbook = load_workbook(output_path, read_only=True, data_only=False)
-        self.addCleanup(workbook.close)
-        ws = workbook["All Questions"]
-        header_row = table_header_row(ws, "Q20")
-
-        self.assertEqual(
-            [ws.cell(header_row, col).value for col in range(1, 5)],
-            ["Option", "Mean", "Median", "Denominator"],
-        )
-        option_labels = [ws.cell(header_row + offset, 1).value for offset in range(1, 4)]
-        self.assertIn("Existing customers - net retention", option_labels)
-        self.assertFalse(any(str(label).startswith("Q20r") for label in option_labels))
-        table_values = [
-            ws.cell(row, 1).value
-            for row in range(header_row, table_header_row(ws, "Q20") + 6)
-        ]
-        self.assertFalse(any(value in {"Std", "Min", "Max"} for value in table_values))
-
-    def test_numeric_allocation_mean_and_median_columns_have_color_scales(self) -> None:
-        output_path = self.export_numeric_allocation_workbook()
-        workbook = load_workbook(output_path, read_only=False, data_only=False)
-        self.addCleanup(workbook.close)
-        ws = workbook["All Questions"]
-        header_row = table_header_row(ws, "Q20")
-
-        self.assertTrue(
-            any(
-                str(formatting.sqref) == f"B{header_row + 1}:B{header_row + 3}"
-                and any(rule.type == "colorScale" for rule in formatting.rules)
-                for formatting in ws.conditional_formatting
-            )
-        )
-        self.assertTrue(
-            any(
-                str(formatting.sqref) == f"C{header_row + 1}:C{header_row + 3}"
-                and any(rule.type == "colorScale" for rule in formatting.rules)
-                for formatting in ws.conditional_formatting
-            )
-        )
-
-    def test_numeric_allocation_audit_log_contains_per_option_medians(self) -> None:
-        output_path = self.export_numeric_allocation_workbook()
-        workbook = load_workbook(output_path, read_only=True, data_only=True)
-        self.addCleanup(workbook.close)
-        ws = workbook["Calculation_Log"]
-        metric_names = [
-            ws.cell(row=row_index, column=2).value
-            for row_index in range(2, ws.max_row + 1)
-        ]
-
-        self.assertEqual(metric_names.count("numeric_allocation_median"), 3)
 
     def test_sc_sheet_for_grid_has_compact_distribution_table(self) -> None:
         output_path = self.export_workbook()
@@ -1056,7 +883,7 @@ class TestExcelExporter(unittest.TestCase):
         self.assertNotEqual(ws["A3"].value, "DEMOGRAPHIC FILTERS")
         self.assertEqual(
             ws.cell(question_header_row(ws, "Q_SS_EXPORT"), 1).value,
-            "Q_SS_EXPORT - Single Select Export Question",
+            "Q_SS_EXPORT - Single select export question",
         )
 
     def test_subset_denominator_note_appears_when_denominator_is_small(self) -> None:
@@ -1274,137 +1101,8 @@ class TestExcelExporter(unittest.TestCase):
             if ws.cell(row=row_index, column=1).value
         ]
 
-        self.assertIn("Q_SS_EXPORT - Single Select Export Question", values)
-        self.assertFalse(any(str(value) in {"Yes", "No", "First", "Second"} for value in values))
-
-    def test_all_questions_dropdown_contains_only_eligible_single_select_questions(self) -> None:
-        output_path = self.export_workbook()
-        workbook = load_workbook(output_path, read_only=False, data_only=True)
-        self.addCleanup(workbook.close)
-
-        values = defined_range_values(workbook, "All_Questions")
-        eligible_questions = [
-            question
-            for question in make_export_fixture()[2].questions
-            if question.question_type is QuestionType.SINGLE_SELECT
-            and question.analysis_eligible
-            and len(question.option_map) >= 2
-        ]
-
-        self.assertEqual(len(values), len(eligible_questions) + 1)
-        self.assertEqual(values[0], "(None)")
-        self.assertIn("Q_SS_EXPORT - Single Select Export Question", values)
-        self.assertIn(f"{LONG_ID} - Long Sheet Name Export Question", values)
-        self.assertNotIn("Yes", values)
-        self.assertNotIn("No", values)
-        self.assertNotIn("Version 2", values)
-        self.assertFalse(any("term:" in str(value) for value in values))
-
-    def test_all_questions_dropdown_entries_use_q_number_dash_label_format(self) -> None:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
-        output_path = (
-            FIXTURE_DIR
-            / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
-        )
-        questions = (
-            QuestionSpec(
-                question_id="[Q1]",
-                canonical_id="Q1",
-                question_text="In which country do you currently work?",
-                question_type=QuestionType.SINGLE_SELECT,
-                raw_columns=("Q1",),
-                option_map={1: "United States", 2: "Canada", 3: "India"},
-                is_demographic=True,
-            ),
-            QuestionSpec(
-                question_id="[Q2]",
-                canonical_id="Q2",
-                question_text="Which survey version did the respondent see?",
-                question_type=QuestionType.SINGLE_SELECT,
-                raw_columns=("Q2",),
-                option_map={1: "Version 2", 2: "Version 3"},
-            ),
-            QuestionSpec(
-                question_id="[Q3]",
-                canonical_id="Q3",
-                question_text="Which terms apply?",
-                question_type=QuestionType.MULTI_SELECT_BINARY,
-                raw_columns=("Q3r1",),
-                option_map={"Q3r1": "term: Selected Other at Q2"},
-                value_range=(0, 1),
-            ),
-        )
-        schema = SurveySchema(
-            questions=questions,
-            respondent_id_column="respondent_id",
-            total_respondents=4,
-            source_datamap_path="datamap.xlsx",
-            source_rawdata_path="raw.csv",
-            parsed_at=UTC_NOW,
-        )
-        quality_report = DataQualityReport(
-            total_rows=4,
-            total_columns=3,
-            columns_in_datamap=3,
-            columns_not_in_datamap=(),
-            per_column_missing_pct={},
-            per_column_out_of_range_pct={},
-            coercion_log=(),
-            warnings=(),
-        )
-        results = [
-            SingleSelectResult(
-                question_id="Q1",
-                question_type=QuestionType.SINGLE_SELECT,
-                valid_n=4,
-                missing_n=0,
-                denominator_policy=DenominatorPolicy.VALID_RESPONSES,
-                distribution={
-                    1: {"label": "United States", "count": 2, "rate": 0.5},
-                    2: {"label": "Canada", "count": 1, "rate": 0.25},
-                    3: {"label": "India", "count": 1, "rate": 0.25},
-                },
-            ),
-            SingleSelectResult(
-                question_id="Q2",
-                question_type=QuestionType.SINGLE_SELECT,
-                valid_n=4,
-                missing_n=0,
-                denominator_policy=DenominatorPolicy.VALID_RESPONSES,
-                distribution={
-                    1: {"label": "Version 2", "count": 2, "rate": 0.5},
-                    2: {"label": "Version 3", "count": 2, "rate": 0.5},
-                },
-            ),
-        ]
-
-        with patch(
-            "src.ai_insights.generate_short_labels",
-            return_value={"Q1": "Country", "Q2": "Survey Version", "Q3": "Terms"},
-        ):
-            export_single_cuts(
-                results,
-                [],
-                schema,
-                quality_report,
-                CalculationLog(),
-                str(output_path),
-            )
-        workbook = load_workbook(output_path, read_only=False, data_only=True)
-        self.addCleanup(workbook.close)
-        values = defined_range_values(workbook, "All_Questions")
-
-        self.assertEqual(values, ["(None)", "Q1 - Country", "Q2 - Survey Version"])
-        for value in values[1:]:
-            self.assertRegex(str(value), r"^Q\d+\s*-\s*\w+")
-        self.assertFalse(
-            any(
-                value in {"United States", "Canada", "India", "Version 2", "Version 3"}
-                for value in values
-            )
-        )
-        local_values = defined_range_values(workbook, "All_Questions_Local")
-        self.assertEqual(local_values, ["(Inherit)", "(None)", "Q1 - Country", "Q2 - Survey Version"])
+        self.assertIn("Single Select Export Question", values)
+        self.assertFalse(any(re.search(r"\bQ\d+", str(value)) for value in values))
 
     def test_theme_sheet_has_local_filter_rows(self) -> None:
         output_path = self.export_workbook()
@@ -1657,10 +1355,10 @@ class TestExcelExporter(unittest.TestCase):
         ws = workbook["All Questions"]
         heading = ws.cell(question_header_row(ws, "Q_SS_EXPORT"), 1).value
 
-        self.assertEqual(heading, "Q_SS_EXPORT - Single Select Export Question")
+        self.assertEqual(heading, "Q_SS_EXPORT - Single select export question")
         self.assertRegex(str(heading), r"^Q\w+\s*[-:]?\s*")
 
-    def test_short_labels_replace_visible_question_title_only(self) -> None:
+    def test_short_labels_do_not_replace_question_titles(self) -> None:
         FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
             FIXTURE_DIR
@@ -1682,7 +1380,7 @@ class TestExcelExporter(unittest.TestCase):
 
         self.assertEqual(
             ws.cell(question_header_row(ws, "Q_SS_EXPORT"), 1).value,
-            "Q_SS_EXPORT - Short Revenue Label",
+            "Q_SS_EXPORT - Single select export question",
         )
 
     def test_question_heading_row_uses_bain_red_style(self) -> None:
@@ -1690,82 +1388,11 @@ class TestExcelExporter(unittest.TestCase):
         workbook = load_workbook(output_path, read_only=False, data_only=True)
         self.addCleanup(workbook.close)
         ws = workbook["All Questions"]
-        heading_row = question_header_row(ws, "Q_SS_EXPORT")
-        heading_cell = ws.cell(heading_row, 1)
+        heading_cell = ws.cell(question_header_row(ws, "Q_SS_EXPORT"), 1)
 
         self.assertEqual(heading_cell.fill.fgColor.rgb, "FFCC0000")
         self.assertEqual(heading_cell.font.color.rgb, "FFFFFFFF")
         self.assertTrue(heading_cell.font.bold)
-        for column in range(1, 5):
-            self.assertEqual(ws.cell(heading_row, column).fill.fgColor.rgb, "FFCC0000")
-
-    def test_question_heading_uses_short_label_with_full_text_comment(self) -> None:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
-        output_path = (
-            FIXTURE_DIR
-            / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
-        )
-        full_text = (
-            "Q7 - Which of the following best describes your current seniority "
-            "within your organization?"
-        )
-        schema = SurveySchema(
-            questions=(
-                QuestionSpec(
-                    question_id="[Q7]",
-                    canonical_id="Q7",
-                    question_text=full_text,
-                    question_type=QuestionType.SINGLE_SELECT,
-                    raw_columns=("Q7",),
-                    option_map={1: "Executive", 2: "Manager"},
-                ),
-            ),
-            respondent_id_column="respondent_id",
-            total_respondents=4,
-            source_datamap_path="datamap.xlsx",
-            source_rawdata_path="raw.csv",
-            parsed_at=UTC_NOW,
-        )
-        result = SingleSelectResult(
-            question_id="Q7",
-            question_type=QuestionType.SINGLE_SELECT,
-            valid_n=4,
-            missing_n=0,
-            denominator_policy=DenominatorPolicy.VALID_RESPONSES,
-            distribution={
-                1: {"label": "Executive", "count": 1, "rate": 0.25},
-                2: {"label": "Manager", "count": 3, "rate": 0.75},
-            },
-        )
-        quality_report = DataQualityReport(
-            total_rows=4,
-            total_columns=1,
-            columns_in_datamap=1,
-            columns_not_in_datamap=(),
-            per_column_missing_pct={},
-            per_column_out_of_range_pct={},
-            coercion_log=(),
-            warnings=(),
-        )
-        with patch("src.ai_insights.generate_short_labels", return_value={"Q7": "Seniority"}):
-            export_single_cuts(
-                [result],
-                [],
-                schema,
-                quality_report,
-                CalculationLog(),
-                str(output_path),
-            )
-        workbook = load_workbook(output_path, read_only=False, data_only=True)
-        self.addCleanup(workbook.close)
-        ws = workbook["All Questions"]
-        heading_cell = ws.cell(question_header_row(ws, "Q7"), 1)
-
-        self.assertRegex(str(heading_cell.value), r"^Q\d+[a-z]*\s*-\s*.+")
-        self.assertEqual(heading_cell.value, "Q7 - Seniority")
-        self.assertIsNotNone(heading_cell.comment)
-        self.assertIn(full_text, heading_cell.comment.text)
-        self.assertGreater(len(heading_cell.comment.text), len(str(heading_cell.value)))
 
     def test_per_question_filter_named_cells_scoped_per_theme(self) -> None:
         FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
@@ -2060,7 +1687,12 @@ class TestExcelExporter(unittest.TestCase):
         self.assertNotIn("Code", values)
 
     def test_grid_single_select_ui_format(self) -> None:
-        app_path = Path(__file__).resolve().parents[1] / "app.py"
+        app_path = (
+            Path(__file__).resolve().parents[1]
+            / "artifacts"
+            / "survey-insight-engine"
+            / "app.py"
+        )
         spec = importlib.util.spec_from_file_location("survey_insight_app", app_path)
         self.assertIsNotNone(spec)
         self.assertIsNotNone(spec.loader)
