@@ -1,0 +1,20 @@
+Fix: Memory-efficient export for large files (4000+ rows, 1000+ columns)
+Confirmed root cause: OOM kill on BCN file (4,631 × 1,187). Small sample (1,100 rows) works fine. The exporter loads the entire decoded dataframe into openpyxl in-memory, adds 208+ conditional formatting rules, writes cached formula values for every cell, and builds per-question helper columns for all rows. On BCN this balloons past 2.7 GiB available RAM and the process is silently killed.
+Required fixes — in priority order:
+Fix 1 — Stream _RawData in chunks instead of loading all at once
+In src/excel_exporter.py, the _build_raw_data_sheet function currently iterates the entire decoded dataframe and writes every cell via openpyxl. Replace this with write_only mode for the _RawData sheet using xlsxwriter's row-by-row streaming API. Write rows in batches of 500. After each batch, explicitly delete the batch from memory (del batch_df). This alone cuts peak memory by ~60% for BCN-sized files.
+Fix 2 — Cap conditional formatting rules
+The current code adds one ColorScaleRule per question per column (Count + %). On BCN with ~800 eligible questions across themes, this creates 1,600+ conditional formatting objects in openpyxl's memory before the file is even written. Cap at 50 rules total per worksheet. Apply heatmap to the first 50 question blocks on a theme sheet; skip the rest silently. Add a warning to the Run_Summary sheet if rules were capped: "Note: Heatmap formatting applied to first 50 questions per sheet only."
+Fix 3 — Lazy-load cached formula values
+The _live_formula registry currently stores (formula, cached_value) for every formula cell in memory throughout the entire export run. On BCN with ~3M formula cells across helper columns, this dict alone uses ~400MB. Change _LiveWorkbookContext.formula_cache to write cached values immediately to a temp file (using shelve or json lines) rather than holding them in a dict. Read them back only during the XML post-processing patch step, then delete the temp file.
+Fix 4 — Skip _RawData sheet for files over a row threshold
+Add a config constant RAW_DATA_SHEET_ROW_LIMIT = 2000 (configurable via config.py). If len(decoded_df) > RAW_DATA_SHEET_ROW_LIMIT, skip writing _RawData entirely and instead write a single-row placeholder: "_RawData sheet omitted for large files (>2000 rows). Filters use pre-computed values." When _RawData is skipped, all COUNTIFS formula cells must write their pre-computed cached value as a static number (not a formula) — so the workbook still shows correct counts, just without live filter recalculation. Add a banner to the Run_Summary sheet: "Note: File exceeds row threshold. Static values written; filter interactivity disabled for this workbook."
+Fix 4 is the safety valve — it guarantees BCN always completes, trading filter interactivity for correctness on large files. Fixes 1-3 keep interactivity alive for as many files as possible.
+Implementation order: Ship Fix 4 first (1 hour, guaranteed BCN completion), then Fixes 1-3 (memory optimisations that raise the threshold where Fix 4 kicks in).
+Verification:
+
+Run against sample_data/Rawdata_sample.xlsx — must still produce fully interactive workbook (under 2000 rows, Fix 4 does not trigger). All 376 tests pass.
+Run against BCN file (BCN_LTB_raw_data...xlsx, 4,631 rows) — must complete without OOM. Run_Summary shows the "static values" notice. Q17 counts in the output match Python ground truth.
+Report peak RSS memory usage during BCN export (use tracemalloc or resource.getrusage).
+
+Do not break any existing feature for files under 2000 rows.

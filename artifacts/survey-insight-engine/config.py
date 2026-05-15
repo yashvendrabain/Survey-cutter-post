@@ -43,6 +43,14 @@ ACCEPTED_RAWDATA_EXTENSIONS = (".csv", ".xlsx")
 ACCEPTED_DATAMAP_EXTENSIONS = (".xlsx",)
   # CSV cannot represent the multi-sheet structure we need.
 
+# Memory safety valve for the Excel exporter. When the decoded dataframe has
+# more rows than this threshold, the exporter switches to static-values mode:
+# _RawData is collapsed to a single placeholder row, and every formula cell
+# (COUNTIFS / helper masks / wrapped lookups) is written as its pre-computed
+# cached value instead of a live formula. The workbook still shows correct
+# numbers but loses live filter interactivity. Configure as needed.
+RAW_DATA_SHEET_ROW_LIMIT = 2000
+
 # ---------- AI insight layer (Stage A) ----------
 PORTKEY_BASE_URL = "https://portkey.bain.dev/v1"
 PORTKEY_DEFAULT_MODEL = "@personal-openai/gpt-4o-mini"
