@@ -1,0 +1,26 @@
+Apply v8 to the Survey Analysis Engine.
+Files to replace:
+
+src/excel_exporter.py — full replacement, expanded to 5421 lines
+tests/test_excel_exporter.py — full replacement, expanded to 1891 lines
+
+What this iteration ships:
+
+Theme-local override filters are now wired into every COUNTIFS, AVERAGEIFS, MINIFS, MAXIFS, and numeric count formula on theme sheets, via new hidden helper columns on _RawData (<theme>_passes_local_filters_data).
+Per-question filters are wired in via per-question helper columns on _RawData (<theme>_<Q>_F_passes_per_q_filter_data).
+Cross-tab header formula cache fidelity fixed — "" no longer collapses to 0 in non-recalc viewers (SharePoint preview, Excel Online).
+
+Run after replacing:
+
+pytest tests/test_excel_exporter.py -v — must show 82 passes (was 79).
+pytest (full suite) — must show 358 passes (was 355).
+Generate a fresh workbook against sample_data/Rawdata_sample.xlsx and save it to outputs/survey_v8_filters_wired.xlsx.
+
+Verification before reporting back — open the workbook and confirm:
+
+Demographic filters still work (regression check): On the Filters sheet, set Country to EMEA. Q17 distribution on the "All Questions" theme sheet should drop from 1100 total to ~481 total (EMEA respondent count). Reset to (All).
+Theme-local override filters now work (new): On the All Questions sheet rows 5-12, change one of the (Inherit) values to a specific value (e.g., set the Q14 local override to 5,000 to 9,999 employees). The Q17 distribution should now reflect only respondents with that company size, even though the workbook-level Country filter is still (All). Reset to (Inherit).
+Per-question filters now work (new): On any question block (e.g., Q17), in the "Per-question filter" row, set Filter Q to a real question name like Q14 and Value to a specific value like 5,000 to 9,999 employees. Only Q17's distribution should change, not the other question blocks on the sheet.
+Cross-tab header blanks (new): On any question block where the Cross-tab by value is (None), the columns G/H/I... of the cross-tab table should display empty cells (not 0).
+
+Report results of all 4 manual checks plus the test counts. If anything fails, paste the failing screenshot or cell contents.

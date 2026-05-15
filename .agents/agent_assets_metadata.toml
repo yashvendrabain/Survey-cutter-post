@@ -42,3 +42,9 @@ id = "XQurfRHuxtLbWiTaNyTHH"
 uri = "file://artifacts/survey-insight-engine/outputs/survey_v7_cached.xlsx"
 type = "table"
 title = "Survey Insight Engine — v7 (COUNTIFS + pre-cached values)"
+
+[[outputs]]
+id = "E9lK0n-ZoS7LwQuMQz2ZF"
+uri = "file://artifacts/survey-insight-engine/outputs/survey_v8_filters_wired.xlsx"
+type = "table"
+title = "Survey Insight Engine — v8 (theme-local + per-question filters wired, blanks fixed)"

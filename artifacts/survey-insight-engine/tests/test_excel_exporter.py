@@ -759,8 +759,9 @@ class TestExcelExporter(unittest.TestCase):
         )
         self.assertEqual(ws.cell(data_row, 1).value, "Yes")
         self.assertTrue(ws.cell(data_row, 2).value.startswith("=COUNTIFS"))
-        self.assertIn("passes_workbook_filters_data", ws.cell(data_row, 2).value)
         self.assertIn("Q_SS_EXPORT_data", ws.cell(data_row, 2).value)
+        self.assertIn("passes_workbook_filters_data", ws.cell(data_row, 2).value)
+        self.assertIn("passes_workbook_custom_filters_data", ws.cell(data_row, 2).value)
         self.assertIn("SUBTOTAL", ws.cell(data_row, 3).value)
 
     def test_sc_sheet_for_multi_select_has_selections_table(self) -> None:
@@ -795,6 +796,8 @@ class TestExcelExporter(unittest.TestCase):
         self.assertEqual(ws.cell(header_row, 1).value, "Metric")
         self.assertEqual(ws.cell(header_row + 1, 1).value, "Mean")
         self.assertTrue(ws.cell(header_row + 1, 2).value.startswith("=IFERROR(AVERAGEIFS"))
+        self.assertIn("passes_workbook_filters_data", ws.cell(header_row + 1, 2).value)
+        self.assertIn("passes_workbook_custom_filters_data", ws.cell(header_row + 1, 2).value)
         self.assertEqual(ws.cell(header_row + 4, 1).value, "Std")
         self.assertEqual(ws.cell(header_row + 4, 2).value, 2.9)
         self.assertIn("Median not available", ws.cell(header_row + 5, 1).value)
@@ -813,8 +816,9 @@ class TestExcelExporter(unittest.TestCase):
         )
         self.assertEqual(ws.cell(data_row, 1).value, "Grid first row")
         self.assertTrue(ws.cell(data_row, 2).value.startswith("=COUNTIFS"))
-        self.assertIn("passes_workbook_filters_data", ws.cell(data_row, 2).value)
         self.assertIn("Q_GRID_EXPORTr1_data", ws.cell(data_row, 2).value)
+        self.assertIn("passes_workbook_filters_data", ws.cell(data_row, 2).value)
+        self.assertIn("passes_workbook_custom_filters_data", ws.cell(data_row, 2).value)
         self.assertIn("SUBTOTAL", ws.cell(data_row, 4).value)
 
     def test_sc_sheet_has_autofilter(self) -> None:
@@ -857,7 +861,7 @@ class TestExcelExporter(unittest.TestCase):
         self.assertEqual(ws["A4"].value, "Filter")
         self.assertEqual(ws["B5"].value, "(Inherit)")
 
-    def test_filter_uses_countifs_with_passes_helper(self) -> None:
+    def test_filter_uses_countifs_not_sumproduct(self) -> None:
         output_path = self.export_workbook()
         workbook = load_workbook(output_path, read_only=True, data_only=False)
         self.addCleanup(workbook.close)
@@ -867,7 +871,170 @@ class TestExcelExporter(unittest.TestCase):
 
         self.assertTrue(formula.startswith("=COUNTIFS"))
         self.assertIn("passes_workbook_filters_data", formula)
+        self.assertIn("passes_workbook_custom_filters_data", formula)
         self.assertNotIn("SUMPRODUCT", formula)
+        self.assertNotIn("INDEX(", formula)
+
+    def test_formulas_use_countifs_helpers_no_sumproduct(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=True, data_only=False)
+        self.addCleanup(workbook.close)
+
+        formulas: list[str] = []
+        for worksheet in workbook.worksheets:
+            if worksheet.title.startswith("_"):
+                continue
+            for row in worksheet.iter_rows():
+                for cell in row:
+                    value = cell.value
+                    if isinstance(value, str) and (
+                        "COUNTIFS" in value
+                        or "AVERAGEIFS" in value
+                        or "MINIFS" in value
+                        or "MAXIFS" in value
+                    ):
+                        formulas.append(value)
+
+        self.assertTrue(formulas)
+        for formula in formulas:
+            self.assertNotIn("@", formula)
+            self.assertNotIn("INDEX(", formula)
+            self.assertNotIn("SUMPRODUCT", formula)
+
+    def test_formula_cells_have_cached_values_and_calc_chain(self) -> None:
+        import xml.etree.ElementTree as ET
+        from zipfile import ZipFile
+
+        output_path = self.export_workbook()
+        formula_cells: list[tuple[str, str]] = []
+        namespace = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+
+        with ZipFile(output_path) as archive:
+            names = set(archive.namelist())
+            self.assertIn("xl/calcChain.xml", names)
+
+            for name in sorted(names):
+                if not name.startswith("xl/worksheets/sheet") or not name.endswith(".xml"):
+                    continue
+                root = ET.fromstring(archive.read(name))
+                for cell in root.iter(f"{namespace}c"):
+                    formula = cell.find(f"{namespace}f")
+                    if formula is None:
+                        continue
+                    ref = cell.attrib.get("r", "")
+                    formula_cells.append((name, ref))
+                    cached = cell.find(f"{namespace}v")
+                    self.assertIsNotNone(cached, f"{name}!{ref} has no cached <v>")
+                    if "INDEX(INDIRECT" not in (formula.text or ""):
+                        self.assertIsNotNone(cached.text, f"{name}!{ref} has an empty cache")
+                        self.assertNotEqual(cached.text, "", f"{name}!{ref} has an empty cache")
+
+        self.assertTrue(formula_cells)
+
+    def test_countifs_include_theme_local_and_per_question_helpers(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=True, data_only=False)
+        self.addCleanup(workbook.close)
+        ws = workbook["All Questions"]
+        header_row = table_header_row(ws, "Q_SS_EXPORT")
+        formula = ws.cell(row=header_row + 1, column=2).value
+
+        self.assertTrue(formula.startswith("=COUNTIFS"))
+        self.assertIn("All_Questions_passes_local_filters_data,1", formula)
+        self.assertIn(
+            "All_Questions_Q_SS_EXPORT_F_passes_per_q_filter_data,1",
+            formula,
+        )
+
+    def test_numeric_formulas_include_theme_local_and_per_question_helpers(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=True, data_only=False)
+        self.addCleanup(workbook.close)
+        ws = workbook["All Questions"]
+        header_row = table_header_row(ws, "Q_NUM_EXPORT", header="Metric")
+        mean_formula = ws.cell(row=header_row + 1, column=2).value
+        count_formula = ws.cell(row=header_row + 1, column=4).value
+
+        self.assertIn("All_Questions_passes_local_filters_data,1", mean_formula)
+        self.assertIn(
+            "All_Questions_Q_NUM_EXPORT_F_passes_per_q_filter_data,1",
+            mean_formula,
+        )
+        self.assertIn("All_Questions_passes_local_filters_data,1", count_formula)
+        self.assertIn(
+            "All_Questions_Q_NUM_EXPORT_F_passes_per_q_filter_data,1",
+            count_formula,
+        )
+
+    def test_cross_tab_header_formula_cache_is_blank_by_default(self) -> None:
+        import xml.etree.ElementTree as ET
+        from zipfile import ZipFile
+
+        output_path = self.export_workbook()
+        namespace = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+        blank_caches = 0
+
+        with ZipFile(output_path) as archive:
+            for name in archive.namelist():
+                if not name.startswith("xl/worksheets/sheet") or not name.endswith(".xml"):
+                    continue
+                root = ET.fromstring(archive.read(name))
+                for cell in root.iter(f"{namespace}c"):
+                    formula = cell.find(f"{namespace}f")
+                    if formula is None or "INDEX(INDIRECT" not in (formula.text or ""):
+                        continue
+                    cached = cell.find(f"{namespace}v")
+                    self.assertIsNotNone(cached)
+                    self.assertIn(cached.text, (None, ""))
+                    self.assertNotEqual(cached.text, "0")
+                    blank_caches += 1
+
+        self.assertGreater(blank_caches, 0)
+
+    def test_raw_data_has_filter_helper_columns(self) -> None:
+        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = (
+            FIXTURE_DIR
+            / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
+        )
+        results, skips, schema, quality_report, log = make_export_fixture()
+        schema = replace(
+            schema,
+            questions=tuple(
+                replace(question, is_demographic=question.canonical_id == "Q_SS_EXPORT")
+                for question in schema.questions
+            ),
+        )
+        export_single_cuts(
+            results,
+            skips,
+            schema,
+            quality_report,
+            log,
+            str(output_path),
+            demo_priority={
+                "priority_ordered": ["Q_SS_EXPORT"],
+                "categories": {"Q_SS_EXPORT": "country"},
+            },
+        )
+        workbook = load_workbook(output_path, read_only=True, data_only=False)
+        self.addCleanup(workbook.close)
+        ws = workbook["_RawData"]
+        headers = [ws.cell(row=1, column=col).value for col in range(1, ws.max_column + 1)]
+
+        self.assertIn("F_Country_match", headers)
+        self.assertIn("passes_workbook_filters", headers)
+        self.assertIn("F_Custom1_match", headers)
+        self.assertIn("F_Custom2_match", headers)
+        self.assertIn("passes_workbook_custom_filters", headers)
+        pass_col = headers.index("passes_workbook_filters") + 1
+        self.assertIn("*", ws.cell(row=2, column=pass_col).value)
+        custom_col = headers.index("passes_workbook_custom_filters") + 1
+        self.assertIn("*", ws.cell(row=2, column=custom_col).value)
+        self.assertIn("passes_workbook_filters_data", workbook.defined_names)
+        self.assertIn("F_Custom1_match_data", workbook.defined_names)
+        self.assertIn("F_Custom2_match_data", workbook.defined_names)
+        self.assertIn("passes_workbook_custom_filters_data", workbook.defined_names)
 
     def test_inherit_pattern_resolves_to_workbook_value(self) -> None:
         output_path = self.export_workbook()
@@ -1041,8 +1208,8 @@ class TestExcelExporter(unittest.TestCase):
         self.assertTrue(formula.startswith("=COUNTIFS"))
         self.assertIn("Q_SS_EXPORT_data", formula)
         self.assertIn("passes_workbook_filters_data", formula)
+        self.assertIn("passes_workbook_custom_filters_data", formula)
         self.assertNotIn("SUMPRODUCT", formula)
-        self.assertNotIn('IF(F_Custom1_Q="(None)"', formula)
 
     def test_named_cells_are_workbook_scoped(self) -> None:
         FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1243,7 +1410,10 @@ class TestExcelExporter(unittest.TestCase):
         self.assertNotIn("Code", values)
 
     def test_grid_single_select_ui_format(self) -> None:
-        app_path = Path(__file__).resolve().parents[1] / "app.py"
+        app_path = (
+            Path(__file__).resolve().parents[1]
+            / "app.py"
+        )
         spec = importlib.util.spec_from_file_location("survey_insight_app", app_path)
         self.assertIsNotNone(spec)
         self.assertIsNotNone(spec.loader)
@@ -1355,6 +1525,8 @@ class TestExcelExporter(unittest.TestCase):
 
         self.assertIn("_RawData", workbook.sheetnames)
         self.assertTrue(count_formula.startswith("=COUNTIFS"))
+        self.assertIn("passes_workbook_filters_data", count_formula)
+        self.assertIn("passes_workbook_custom_filters_data", count_formula)
         self.assertIn("SUBTOTAL", pct_formula)
 
     def test_export_writes_segment_profile_body(self) -> None:
