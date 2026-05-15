@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timezone
 import importlib.util
+import os
 from pathlib import Path
 import re
 import unittest
@@ -570,6 +571,56 @@ class TestExcelExporter(unittest.TestCase):
         self.assertEqual(formula.count("SUBSTITUTE("), 1)
         self.assertIn('", ", "|"', formula)
         self.assertNotIn('SUBSTITUTE(SUBSTITUTE(', formula)
+
+    def test_memory_profile_report_written_when_enabled(self) -> None:
+        from src import memory_profiler
+
+        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = (
+            FIXTURE_DIR
+            / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
+        )
+        report_path = Path("outputs") / f"{output_path.stem}.memory_report.txt"
+        if report_path.exists():
+            report_path.unlink()
+        results, skips, schema, quality_report, log = make_export_fixture()
+        expected_labels = [
+            "load_or_receive_decoded_df",
+            "generate_short_labels",
+            "build_raw_data_sheet",
+            "build_options_sheet",
+            "build_filters_sheet",
+            "build_helper_columns",
+            "build_run_summary_sheet",
+            "build_question_metadata_sheet",
+            "build_single_cut_index_sheet",
+            "build_theme_sheets",
+            "build_calculation_log_sheet",
+            "build_filter_log_sheet",
+            "build_warnings_sheet",
+            "save_workbook",
+            "patch_formula_caches",
+            "write_calc_chain",
+        ]
+
+        try:
+            with patch.dict(os.environ, {"SURVEY_PROFILE_MEMORY": "1"}):
+                export_single_cuts(
+                    results,
+                    skips,
+                    schema,
+                    quality_report,
+                    log,
+                    str(output_path),
+                )
+        finally:
+            memory_profiler.disable_profiling()
+            memory_profiler.reset_log()
+
+        self.assertTrue(report_path.exists())
+        report = report_path.read_text(encoding="utf-8")
+        for label in expected_labels:
+            self.assertIn(label, report)
 
     def grid_single_select_format_fixture(
         self,
