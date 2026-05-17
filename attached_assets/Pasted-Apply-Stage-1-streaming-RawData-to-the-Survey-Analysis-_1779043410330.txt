@@ -1,0 +1,67 @@
+Apply Stage 1 (streaming _RawData) to the Survey Analysis Engine and verify against BCN.
+Files to replace from Codex:
+
+src/excel_exporter.py — full replacement, adds _build_raw_data_sheet_streaming + splice mechanism
+config.py — RAW_DATA_SHEET_ROW_LIMIT = 50000 (was 2000)
+tests/test_excel_exporter.py — 2 new regression tests
+outputs/stage1_comparison.md — comparison artifact
+
+What this iteration ships:
+
+_RawData now streams via openpyxl's WriteOnlyWorksheet for files between 2,000 and 50,000 rows. Implementation streams to a temp write-only workbook, then splices the resulting sheet XML into the main workbook post-save.
+Helper columns stream inline with _RawData rows (single-pass write).
+Named ranges define after streaming completes, all pointing to correct ranges.
+Small-file path (≤2,000 rows) unchanged.
+Static-mode safety valve raised to >50,000 rows (essentially never triggered in practice).
+
+Run after replacing:
+
+pytest (full suite). Codex reported 384 passes. Confirm exact number and report any discrepancy from previous 385 baseline.
+Run the small sample workbook through the Streamlit app — verify nothing regressed. Open the resulting xlsx, set a Country filter, confirm counts change. Report success/failure.
+The critical test — run BCN through the streaming path.
+
+BCN verification:
+Restart Streamlit cleanly first:
+bashpkill -9 -f streamlit
+sleep 8
+free -h
+Confirm >4 GiB available. Then run the profiled BCN export via the pickled-data approach you used last time (stage 1 + stage 2 split, since bash has 120s timeout):
+Stage 1 of run (load + pickle):
+bashpython3 -c "
+import pickle, sys
+sys.path.insert(0, 'artifacts/survey-insight-engine')
+from src.io import load_survey_inputs
+decoded_df, schema, load_report = load_survey_inputs(['sample_data/BCN_LTB_raw_data-_3_9_26_EOD_.xlsx'])
+with open('/tmp/bcn_decoded.pkl','wb') as f: pickle.dump((decoded_df, schema, load_report), f)
+print('Loaded:', decoded_df.shape)
+"
+Stage 2 of run (profile the export):
+bashSURVEY_PROFILE_MEMORY=1 python3 -c "
+import pickle, sys, os
+sys.path.insert(0, 'artifacts/survey-insight-engine')
+with open('/tmp/bcn_decoded.pkl','rb') as f:
+    decoded_df, schema, load_report = pickle.load(f)
+from src.single_cut.engine import compute_single_cuts
+from src.excel_exporter import export_single_cuts
+results, skips = compute_single_cuts(decoded_df, schema)
+export_single_cuts(decoded_df, schema, results, skips, 'outputs/survey_stage1_bcn.xlsx', load_report=load_report)
+print('Done')
+"
+Report back:
+
+Final test count.
+Small-file regression result (sample workbook still works + filter changes propagate).
+Did BCN export complete? Yes/no.
+If yes: total export duration in seconds, peak RSS, final workbook size.
+If yes: contents of outputs/survey_stage1_bcn.memory_report.txt (all 13+ steps with timings and memory).
+If yes: open the BCN workbook (read-only via openpyxl, data_only=False) and assert:
+
+_RawData sheet has 4,632 rows (header + 4,631 data rows)
+At least one helper column (e.g., F_Country_match) is present with formulas in each data row
+The named range respondent_id_data resolves to _RawData!$A$2:$A$4632
+The Run_Summary sheet does NOT contain the "Memory-safety mode:" notice (because we're below the 50K threshold and streaming, not static)
+
+
+If no: full crash output and which step it died on per the memory_report.
+
+Decision gate: if BCN export completes in under 3 minutes with peak RSS under 2.5 GiB, Stage 1 succeeded and we move to Stage 4 (regression test + ship). If above either threshold, we discuss Stage 2.

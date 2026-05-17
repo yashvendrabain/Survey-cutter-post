@@ -49,7 +49,7 @@ ACCEPTED_DATAMAP_EXTENSIONS = (".xlsx",)
 # (COUNTIFS / helper masks / wrapped lookups) is written as its pre-computed
 # cached value instead of a live formula. The workbook still shows correct
 # numbers but loses live filter interactivity. Configure as needed.
-RAW_DATA_SHEET_ROW_LIMIT = 2000
+RAW_DATA_SHEET_ROW_LIMIT = 50000
 
 # ---------- AI insight layer (Stage A) ----------
 PORTKEY_BASE_URL = "https://portkey.bain.dev/v1"

@@ -801,6 +801,68 @@ class TestExcelExporter(unittest.TestCase):
         export_single_cuts([result], [], schema, quality_report, log, str(output_path))
         return output_path
 
+    def export_streaming_raw_workbook(self) -> Path:
+        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = (
+            FIXTURE_DIR
+            / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
+        )
+        row_count = 3000
+        decoded_df = pd.DataFrame(
+            {
+                "respondent_id": range(1, row_count + 1),
+                "Q_STREAM": ["A" if index % 2 == 0 else "B" for index in range(row_count)],
+            }
+        )
+        result = SingleSelectResult(
+            question_id="Q_STREAM",
+            question_type=QuestionType.SINGLE_SELECT,
+            valid_n=row_count,
+            missing_n=0,
+            denominator_policy=DenominatorPolicy.VALID_RESPONSES,
+            distribution={
+                1: {"label": "A", "count": 1500, "rate": 0.5},
+                2: {"label": "B", "count": 1500, "rate": 0.5},
+            },
+        )
+        schema = SurveySchema(
+            questions=(
+                QuestionSpec(
+                    question_id="[Q_STREAM]",
+                    canonical_id="Q_STREAM",
+                    question_text="Streaming raw data question",
+                    question_type=QuestionType.SINGLE_SELECT,
+                    raw_columns=("Q_STREAM",),
+                    option_map={1: "A", 2: "B"},
+                ),
+            ),
+            respondent_id_column="respondent_id",
+            total_respondents=row_count,
+            source_datamap_path="datamap.xlsx",
+            source_rawdata_path="raw.csv",
+            parsed_at=UTC_NOW,
+        )
+        quality_report = DataQualityReport(
+            total_rows=row_count,
+            total_columns=2,
+            columns_in_datamap=1,
+            columns_not_in_datamap=(),
+            per_column_missing_pct={},
+            per_column_out_of_range_pct={},
+            coercion_log=(),
+            warnings=(),
+        )
+        export_single_cuts(
+            [result],
+            [],
+            schema,
+            quality_report,
+            CalculationLog(),
+            str(output_path),
+            decoded_df=decoded_df,
+        )
+        return output_path
+
     def export_workbook_with_cross_cuts(self) -> Path:
         FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
@@ -1650,6 +1712,36 @@ class TestExcelExporter(unittest.TestCase):
         self.assertIn("F_Custom1_match_data", workbook.defined_names)
         self.assertIn("F_Custom2_match_data", workbook.defined_names)
         self.assertIn("passes_workbook_custom_filters_data", workbook.defined_names)
+
+    def test_streaming_raw_data_named_ranges_cover_all_rows(self) -> None:
+        output_path = self.export_streaming_raw_workbook()
+        workbook = load_workbook(output_path, read_only=False, data_only=True)
+        self.addCleanup(workbook.close)
+
+        self.assertEqual(
+            workbook.defined_names["respondent_id_data"].attr_text,
+            "'_RawData'!$A$2:$A$3001",
+        )
+        self.assertEqual(
+            workbook.defined_names["Q_STREAM_data"].attr_text,
+            "'_RawData'!$B$2:$B$3001",
+        )
+        self.assertEqual(
+            workbook.defined_names["passes_workbook_filters_data"].attr_text,
+            "'_RawData'!$C$2:$C$3001",
+        )
+        self.assertIn("All_Questions_Q_STREAM_F_passes_per_q_filter_data", workbook.defined_names)
+
+    def test_streaming_raw_data_sheet_contains_all_rows_after_reload(self) -> None:
+        output_path = self.export_streaming_raw_workbook()
+        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        self.addCleanup(workbook.close)
+        ws = workbook["_RawData"]
+
+        rows = list(ws.iter_rows(values_only=True))
+        self.assertEqual(len(rows), 3001)
+        self.assertEqual(rows[0][0], "respondent_id")
+        self.assertEqual(rows[-1][1], "B")
 
     def test_inherit_pattern_resolves_to_workbook_value(self) -> None:
         output_path = self.export_workbook()
@@ -2587,79 +2679,6 @@ class TestExcelExporter(unittest.TestCase):
         self.assertIn("CC_CC_TAB_EXPORT", values)
         self.assertNotIn("Q_MS_EXPORT", values)
         self.assertNotIn("Q_UNRELATED_EXPORT", values)
-
-    def test_fix4_static_values_mode_activates_above_row_limit(self) -> None:
-        """Regression sentinel for 'Fix 4' memory-safety static-values mode.
-
-        Fix 4 was silently dropped between v9 and v11 and only resurfaced
-        when BCN (4631 rows) broke the export. This test builds a 2,500-row
-        decoded_df (above the 2,000 threshold) and asserts:
-
-          * _RawData has exactly 2 rows (header + placeholder)
-          * Run_Summary contains a cell starting with "Memory-safety mode:"
-            (this is the persisted static-mode marker — the in-memory
-            workbook flag does not survive a save/reload cycle)
-        """
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
-        output_path = (
-            FIXTURE_DIR
-            / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
-        )
-        results, skips, schema, quality_report, log = make_export_fixture()
-
-        row_count = 2500
-        decoded_df = pd.DataFrame(
-            {
-                "respondent_id": range(1, row_count + 1),
-                "Q_SS_EXPORT": [1] * row_count,
-                "Q_MS_EXPORTr1": [0] * row_count,
-                "Q_MS_EXPORTr2": [1] * row_count,
-                "Q_NUM_EXPORT": [5.0] * row_count,
-                "Q_GRID_EXPORTr1": [1] * row_count,
-                "Q_GRID_EXPORTr2": [2] * row_count,
-                LONG_ID: [1] * row_count,
-                "Q_TEXT_EXPORT": [""] * row_count,
-            }
-        )
-
-        export_single_cuts(
-            results,
-            skips,
-            schema,
-            quality_report,
-            log,
-            str(output_path),
-            decoded_df=decoded_df,
-        )
-
-        workbook = load_workbook(output_path, read_only=False, data_only=True)
-        self.addCleanup(workbook.close)
-
-        # _RawData should be collapsed to header + 1 placeholder row.
-        raw_sheet = workbook["_RawData"]
-        self.assertEqual(
-            raw_sheet.max_row,
-            2,
-            "_RawData should have exactly 2 rows (header + placeholder) "
-            "when Fix 4 static-values mode is active",
-        )
-
-        # Run_Summary must announce the mode so users know live filtering
-        # is disabled.
-        run_summary = workbook["Run_Summary"]
-        summary_labels = [
-            run_summary.cell(row=r, column=1).value
-            for r in range(1, run_summary.max_row + 1)
-        ]
-        self.assertTrue(
-            any(
-                isinstance(label, str) and label.startswith("Memory-safety mode:")
-                for label in summary_labels
-            ),
-            f"Run_Summary should contain a 'Memory-safety mode:' notice; "
-            f"got labels: {summary_labels}",
-        )
-
 
 
 if __name__ == "__main__":
