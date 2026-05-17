@@ -1,0 +1,54 @@
+Apply Stage 2 (streaming formula cache patcher) and verify against BCN.
+Files to replace from Codex:
+
+src/excel_exporter.py — full replacement (6,463 lines). Refactors _write_formula_caches to single-pass streaming. Adds _patch_sheet_formula_cache_values_stream, _patch_formula_cells_in_xml_chunk, _write_calc_chain_xml_stream, _replace_output_file helpers.
+tests/test_excel_exporter.py — adds 1 regression test asserting patch_formula_caches <100 MiB on 3,000-row synthetic.
+outputs/stage2_comparison.md
+
+What this iteration ships:
+
+_write_formula_caches now streams the xlsx zip patch: opens source archive read-only, opens temp archive write-only, iterates entries one at a time via archive.infolist(), patches sheets via archive.open()/patched_archive.open() file-like streams (no full-archive load).
+Sheet XML patching uses chunked regex substitution. Each chunk reads _XML_COPY_CHUNK_SIZE bytes, finds the last complete </c> cell, patches everything up to it, holds the remainder.
+calcChain refs spool to a temp file (tempfile.NamedTemporaryFile) and stream into the output xlsx via _write_calc_chain_xml_stream.
+Formula cache dict shrinks via pop(sheet_name) after each sheet patched; full dict cleared + gc.collect() after the loop.
+Atomic replace via os.replace, with Windows-OneDrive fallback to streamed overwrite.
+
+Local synthetic 3,000-row results: patch_formula_caches 33 MiB → 12 MiB (2.75× reduction), write_calc_chain 21 MiB → 4 MiB (5× reduction). 102 exporter tests pass, 385 total.
+Heads-up on known regressions Codex keeps reintroducing:
+
+Path-doubling in test_grid_single_select_ui_format: should be parents[1] / "app.py"
+8 stale AI-label assertions: "Single/Multi/Numeric Export Question" → trimmed to "Single/Multi/Numeric Export"
+
+Check and fix before running tests if present.
+Run after replacing:
+
+pytest (full suite). Target: 388 (387 + 1 new). Codex reported 385 — investigate the delta. Likely the same regressions above accounting for 3 fixes you've applied historically.
+Smoke-test the small sample workbook through the Streamlit app. Confirm filters propagate — this is the regression-risk surface for the patcher refactor.
+Run the BCN profile using the pickled-load + workflow approach from Stage 1.
+
+bashpkill -9 -f streamlit
+sleep 8
+free -h    # confirm >4 GiB available
+Then run BCN load to pickle, followed by the profiled export (via workflow or setsid trick, since bash 120s limit).
+Report back:
+
+Final test count.
+Small-file smoke test: pass/fail.
+BCN export duration in seconds.
+BCN peak RSS in MiB.
+BCN final workbook size.
+Full memory_report.txt contents for BCN.
+Verification checks (re-run from Stage 1):
+
+_RawData has 4,632 rows
+Helper columns present with formulas
+respondent_id_data named range correct
+No "Memory-safety mode:" notice in Run_Summary
+
+
+One additional check: Open BCN workbook in Excel (or via openpyxl), pick any theme sheet, change a global filter on the Filters sheet (e.g., Country to a specific value), and confirm the theme-sheet COUNTIFS counts recalculate. This is the actual user-facing "filters work on BCN" test.
+
+Decision gate:
+
+BCN <3 min AND peak RSS <2.5 GiB → success. Move to Stage 4.
+Anything over → report new profile, we'll discuss Stage 3.

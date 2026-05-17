@@ -983,7 +983,7 @@ class TestExcelExporter(unittest.TestCase):
         data_row = header_row + 1
         self.assertEqual(
             ws.cell(row=question_header_row(ws, "Q_SS_EXPORT"), column=1).value,
-            "Q_SS_EXPORT - Single Select Export",
+            "Q_SS_EXPORT - Single Select Export Question",
         )
         self.assertEqual(
             [ws.cell(header_row, col).value for col in range(1, 5)],
@@ -1006,7 +1006,7 @@ class TestExcelExporter(unittest.TestCase):
         data_row = header_row + 1
         self.assertEqual(
             ws.cell(row=question_header_row(ws, "Q_MS_EXPORT"), column=1).value,
-            "Q_MS_EXPORT - Multi Select Export",
+            "Q_MS_EXPORT - Multi Select Export Question",
         )
         self.assertEqual(ws.cell(header_row, 1).value, "Option")
         self.assertEqual(ws.cell(header_row, 2).value, "Count")
@@ -1023,7 +1023,7 @@ class TestExcelExporter(unittest.TestCase):
         header_row = table_header_row(ws, "Q_NUM_EXPORT", header="Metric")
         self.assertEqual(
             ws.cell(row=question_header_row(ws, "Q_NUM_EXPORT"), column=1).value,
-            "Q_NUM_EXPORT - Numeric Export",
+            "Q_NUM_EXPORT - Numeric Export Question",
         )
         self.assertEqual(ws.cell(header_row, 1).value, "Metric")
         self.assertEqual(ws.cell(header_row + 1, 1).value, "Mean")
@@ -1169,7 +1169,7 @@ class TestExcelExporter(unittest.TestCase):
         self.assertNotEqual(ws["A3"].value, "DEMOGRAPHIC FILTERS")
         self.assertEqual(
             ws.cell(question_header_row(ws, "Q_SS_EXPORT"), 1).value,
-            "Q_SS_EXPORT - Single Select Export",
+            "Q_SS_EXPORT - Single Select Export Question",
         )
 
     def test_subset_denominator_note_appears_when_denominator_is_small(self) -> None:
@@ -1387,7 +1387,7 @@ class TestExcelExporter(unittest.TestCase):
             if ws.cell(row=row_index, column=1).value
         ]
 
-        self.assertIn("Q_SS_EXPORT - Single Select Export", values)
+        self.assertIn("Q_SS_EXPORT - Single Select Export Question", values)
         self.assertFalse(any(str(value) in {"Yes", "No", "First", "Second"} for value in values))
 
     def test_all_questions_dropdown_contains_only_eligible_single_select_questions(self) -> None:
@@ -1406,14 +1406,8 @@ class TestExcelExporter(unittest.TestCase):
 
         self.assertEqual(len(values), len(eligible_questions) + 1)
         self.assertEqual(values[0], "(None)")
-        self.assertIn("Q_SS_EXPORT - Single Select Export", values)
-        self.assertTrue(
-            any(
-                isinstance(v, str) and v.startswith(f"{LONG_ID} - ")
-                for v in values
-            ),
-            f"Expected a value starting with '{LONG_ID} - '; got: {values}",
-        )
+        self.assertIn("Q_SS_EXPORT - Single Select Export Question", values)
+        self.assertIn(f"{LONG_ID} - Long Sheet Name Export Question", values)
         self.assertNotIn("Yes", values)
         self.assertNotIn("No", values)
         self.assertNotIn("Version 2", values)
@@ -1830,7 +1824,7 @@ class TestExcelExporter(unittest.TestCase):
         ws = workbook["All Questions"]
         heading = ws.cell(question_header_row(ws, "Q_SS_EXPORT"), 1).value
 
-        self.assertEqual(heading, "Q_SS_EXPORT - Single Select Export")
+        self.assertEqual(heading, "Q_SS_EXPORT - Single Select Export Question")
         self.assertRegex(str(heading), r"^Q\w+\s*[-:]?\s*")
 
     def test_short_labels_replace_visible_question_title_only(self) -> None:
@@ -2115,8 +2109,8 @@ class TestExcelExporter(unittest.TestCase):
         self.addCleanup(workbook.close)
         ws = workbook["Filters"]
 
-        self.assertEqual(ws["A4"].value, "Single Select Export")
-        self.assertEqual(ws["A5"].value, "Multi Select Export")
+        self.assertEqual(ws["A4"].value, "Single Select Export Question")
+        self.assertEqual(ws["A5"].value, "Multi Select Export Question")
 
     def test_workbook_has_one_sheet_per_theme(self) -> None:
         FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
@@ -2233,7 +2227,12 @@ class TestExcelExporter(unittest.TestCase):
         self.assertNotIn("Code", values)
 
     def test_grid_single_select_ui_format(self) -> None:
-        app_path = Path(__file__).resolve().parents[1] / "app.py"
+        app_path = (
+            Path(__file__).resolve().parents[1]
+            / "artifacts"
+            / "survey-insight-engine"
+            / "app.py"
+        )
         spec = importlib.util.spec_from_file_location("survey_insight_app", app_path)
         self.assertIsNotNone(spec)
         self.assertIsNotNone(spec.loader)
