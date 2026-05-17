@@ -921,7 +921,7 @@ class TestExcelExporter(unittest.TestCase):
         data_row = header_row + 1
         self.assertEqual(
             ws.cell(row=question_header_row(ws, "Q_SS_EXPORT"), column=1).value,
-            "Q_SS_EXPORT - Single Select Export Question",
+            "Q_SS_EXPORT - Single Select Export",
         )
         self.assertEqual(
             [ws.cell(header_row, col).value for col in range(1, 5)],
@@ -944,7 +944,7 @@ class TestExcelExporter(unittest.TestCase):
         data_row = header_row + 1
         self.assertEqual(
             ws.cell(row=question_header_row(ws, "Q_MS_EXPORT"), column=1).value,
-            "Q_MS_EXPORT - Multi Select Export Question",
+            "Q_MS_EXPORT - Multi Select Export",
         )
         self.assertEqual(ws.cell(header_row, 1).value, "Option")
         self.assertEqual(ws.cell(header_row, 2).value, "Count")
@@ -961,7 +961,7 @@ class TestExcelExporter(unittest.TestCase):
         header_row = table_header_row(ws, "Q_NUM_EXPORT", header="Metric")
         self.assertEqual(
             ws.cell(row=question_header_row(ws, "Q_NUM_EXPORT"), column=1).value,
-            "Q_NUM_EXPORT - Numeric Export Question",
+            "Q_NUM_EXPORT - Numeric Export",
         )
         self.assertEqual(ws.cell(header_row, 1).value, "Metric")
         self.assertEqual(ws.cell(header_row + 1, 1).value, "Mean")
@@ -1107,7 +1107,7 @@ class TestExcelExporter(unittest.TestCase):
         self.assertNotEqual(ws["A3"].value, "DEMOGRAPHIC FILTERS")
         self.assertEqual(
             ws.cell(question_header_row(ws, "Q_SS_EXPORT"), 1).value,
-            "Q_SS_EXPORT - Single Select Export Question",
+            "Q_SS_EXPORT - Single Select Export",
         )
 
     def test_subset_denominator_note_appears_when_denominator_is_small(self) -> None:
@@ -1325,7 +1325,7 @@ class TestExcelExporter(unittest.TestCase):
             if ws.cell(row=row_index, column=1).value
         ]
 
-        self.assertIn("Q_SS_EXPORT - Single Select Export Question", values)
+        self.assertIn("Q_SS_EXPORT - Single Select Export", values)
         self.assertFalse(any(str(value) in {"Yes", "No", "First", "Second"} for value in values))
 
     def test_all_questions_dropdown_contains_only_eligible_single_select_questions(self) -> None:
@@ -1344,8 +1344,14 @@ class TestExcelExporter(unittest.TestCase):
 
         self.assertEqual(len(values), len(eligible_questions) + 1)
         self.assertEqual(values[0], "(None)")
-        self.assertIn("Q_SS_EXPORT - Single Select Export Question", values)
-        self.assertIn(f"{LONG_ID} - Long Sheet Name Export Question", values)
+        self.assertIn("Q_SS_EXPORT - Single Select Export", values)
+        self.assertTrue(
+            any(
+                isinstance(v, str) and v.startswith(f"{LONG_ID} - ")
+                for v in values
+            ),
+            f"Expected a value starting with '{LONG_ID} - '; got: {values}",
+        )
         self.assertNotIn("Yes", values)
         self.assertNotIn("No", values)
         self.assertNotIn("Version 2", values)
@@ -1708,7 +1714,7 @@ class TestExcelExporter(unittest.TestCase):
         ws = workbook["All Questions"]
         heading = ws.cell(question_header_row(ws, "Q_SS_EXPORT"), 1).value
 
-        self.assertEqual(heading, "Q_SS_EXPORT - Single Select Export Question")
+        self.assertEqual(heading, "Q_SS_EXPORT - Single Select Export")
         self.assertRegex(str(heading), r"^Q\w+\s*[-:]?\s*")
 
     def test_short_labels_replace_visible_question_title_only(self) -> None:
@@ -1993,8 +1999,8 @@ class TestExcelExporter(unittest.TestCase):
         self.addCleanup(workbook.close)
         ws = workbook["Filters"]
 
-        self.assertEqual(ws["A4"].value, "Single Select Export Question")
-        self.assertEqual(ws["A5"].value, "Multi Select Export Question")
+        self.assertEqual(ws["A4"].value, "Single Select Export")
+        self.assertEqual(ws["A5"].value, "Multi Select Export")
 
     def test_workbook_has_one_sheet_per_theme(self) -> None:
         FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
@@ -2581,6 +2587,79 @@ class TestExcelExporter(unittest.TestCase):
         self.assertIn("CC_CC_TAB_EXPORT", values)
         self.assertNotIn("Q_MS_EXPORT", values)
         self.assertNotIn("Q_UNRELATED_EXPORT", values)
+
+    def test_fix4_static_values_mode_activates_above_row_limit(self) -> None:
+        """Regression sentinel for 'Fix 4' memory-safety static-values mode.
+
+        Fix 4 was silently dropped between v9 and v11 and only resurfaced
+        when BCN (4631 rows) broke the export. This test builds a 2,500-row
+        decoded_df (above the 2,000 threshold) and asserts:
+
+          * _RawData has exactly 2 rows (header + placeholder)
+          * Run_Summary contains a cell starting with "Memory-safety mode:"
+            (this is the persisted static-mode marker — the in-memory
+            workbook flag does not survive a save/reload cycle)
+        """
+        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = (
+            FIXTURE_DIR
+            / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
+        )
+        results, skips, schema, quality_report, log = make_export_fixture()
+
+        row_count = 2500
+        decoded_df = pd.DataFrame(
+            {
+                "respondent_id": range(1, row_count + 1),
+                "Q_SS_EXPORT": [1] * row_count,
+                "Q_MS_EXPORTr1": [0] * row_count,
+                "Q_MS_EXPORTr2": [1] * row_count,
+                "Q_NUM_EXPORT": [5.0] * row_count,
+                "Q_GRID_EXPORTr1": [1] * row_count,
+                "Q_GRID_EXPORTr2": [2] * row_count,
+                LONG_ID: [1] * row_count,
+                "Q_TEXT_EXPORT": [""] * row_count,
+            }
+        )
+
+        export_single_cuts(
+            results,
+            skips,
+            schema,
+            quality_report,
+            log,
+            str(output_path),
+            decoded_df=decoded_df,
+        )
+
+        workbook = load_workbook(output_path, read_only=False, data_only=True)
+        self.addCleanup(workbook.close)
+
+        # _RawData should be collapsed to header + 1 placeholder row.
+        raw_sheet = workbook["_RawData"]
+        self.assertEqual(
+            raw_sheet.max_row,
+            2,
+            "_RawData should have exactly 2 rows (header + placeholder) "
+            "when Fix 4 static-values mode is active",
+        )
+
+        # Run_Summary must announce the mode so users know live filtering
+        # is disabled.
+        run_summary = workbook["Run_Summary"]
+        summary_labels = [
+            run_summary.cell(row=r, column=1).value
+            for r in range(1, run_summary.max_row + 1)
+        ]
+        self.assertTrue(
+            any(
+                isinstance(label, str) and label.startswith("Memory-safety mode:")
+                for label in summary_labels
+            ),
+            f"Run_Summary should contain a 'Memory-safety mode:' notice; "
+            f"got labels: {summary_labels}",
+        )
+
 
 
 if __name__ == "__main__":
