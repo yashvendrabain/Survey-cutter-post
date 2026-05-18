@@ -1,0 +1,42 @@
+Apply Prompt 2.1 (BCN c1/c2 grid group detection) to the Survey Analysis Engine.
+Files to replace from Codex:
+
+src/question_classifier.py — adds _expand_grid_c_columns that detects Q36r1c1/Q36r1c2 patterns in raw_data and expands sub_columns accordingly. Adds _grid_base_sub_column_id helper.
+src/excel_exporter.py — _grid_group_label falls back to "Winner - All" (c1) / "Other considered vendor" (c2) / "Group N" (c3+) when option_map doesn't have group labels.
+tests/test_question_classifier.py — adds BCN-style expansion regression
+tests/test_excel_exporter.py — updates/adds rated-grid rendering tests including the fallback-to-"All" path
+
+What this iteration ships:
+
+BCN's Q36 (and Q30) will now render as a single block per parent question with Winner / Other vendor / Delta column groups, each with Mean | Median sub-columns. Matches the goal file layout exactly.
+Generic detection: any survey with the Decipher Survey r<N>c<N> column convention will be detected and grouped correctly.
+
+Heads-up on Codex's recurring regressions — pre-empt before tests:
+
+parents[1] / "artifacts" / "survey-insight-engine" / "app.py" → parents[1] / "app.py"
+Stale AI-label assertions ("...Export Question" → "...Export")
+LONG_ID exact match → startswith prefix
+
+Run after replacing:
+
+Apply Codex's known regressions if present.
+pytest (full suite). Codex reported 398 passes. Confirm.
+Generate the small sample workbook (Rawdata_sample.xlsx + Datamap_sample.xlsx) → outputs/survey_prompt2_1_sample.xlsx. Verify it generates cleanly.
+Generate BCN workbook → outputs/survey_prompt2_1_bcn.xlsx. Use the standard streaming export path (BCN is below the 50,000-row threshold, so static mode should NOT trigger).
+Open the BCN workbook and verify:
+
+Q36 appears as a SINGLE block with one heading row, criteria Q36r1-Q36r15 as data rows, columns grouped as Winner - All | Other considered vendor | Delta, each with Mean | Median sub-columns.
+Q30 appears as a SINGLE block in the same format (19 criteria rows).
+Q26 appears as a SINGLE block in the categorical-grid format (stakeholder groups as rows, role values as columns, counts in cells).
+Q38 still renders correctly (binary-select path, untouched).
+Cross-tab on any block produces count-only 2D table with heatmap on count columns.
+
+
+
+Minor cosmetic note: Codex's synthetic fixture shows a floating-point artifact on Delta calculations (e.g., 2.000000000000001 instead of 2.0). Check whether BCN Delta values display correctly to one decimal place. If they show floating-point junk, add a one-line fix to round Delta to 1 decimal at display time.
+Report:
+
+Test count
+Pass/fail on each of the 5 verification items above
+Cosmetic note on Delta rounding
+One screenshot of Q36 on the BCN sheet (the most important verification)

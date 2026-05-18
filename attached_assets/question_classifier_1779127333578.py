@@ -399,19 +399,15 @@ def _grid_row_labels_for_spec(
     row_label_lookup = {
         sub_column_id: label for sub_column_id, label in question["sub_columns"]
     }
-    result: dict[str, str] = {}
-    for sub_column_id in raw_columns:
-        base = _grid_base_sub_column_id(sub_column_id)
-        if base in row_label_lookup:
-            result[sub_column_id] = row_label_lookup[base]
-        elif sub_column_id in row_label_lookup:
-            result[sub_column_id] = row_label_lookup[sub_column_id]
-    return result
+    return {
+        sub_column_id: row_label_lookup[_grid_base_sub_column_id(sub_column_id)]
+        for sub_column_id in raw_columns
+        if _grid_base_sub_column_id(sub_column_id) in row_label_lookup
+    }
 
 
 def _grid_base_sub_column_id(sub_column_id: str) -> str:
-    match = re.match(r"^(.+r\d+)c\d+$", sub_column_id)
-    return match.group(1) if match is not None else sub_column_id
+    return re.sub(r"c\d+$", "", sub_column_id)
 
 
 def _grid_subtype_for_question(question: ParsedQuestion) -> str:

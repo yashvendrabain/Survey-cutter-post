@@ -1594,7 +1594,7 @@ class TestExcelExporter(unittest.TestCase):
             if ws.cell(row=row_index, column=1).value
         ]
 
-        self.assertIn("Q_SS_EXPORT - Single Select Export", values)
+        self.assertIn("Q_SS_EXPORT - Single Select Export Question", values)
         self.assertFalse(any(str(value) in {"Yes", "No", "First", "Second"} for value in values))
 
     def test_all_questions_dropdown_contains_only_eligible_single_select_questions(self) -> None:
@@ -1613,8 +1613,8 @@ class TestExcelExporter(unittest.TestCase):
 
         self.assertEqual(len(values), len(eligible_questions) + 1)
         self.assertEqual(values[0], "(None)")
-        self.assertIn("Q_SS_EXPORT - Single Select Export", values)
-        self.assertIn(f"{LONG_ID} - Long Name Export", values)
+        self.assertIn("Q_SS_EXPORT - Single Select Export Question", values)
+        self.assertIn(f"{LONG_ID} - Long Sheet Name Export Question", values)
         self.assertNotIn("Yes", values)
         self.assertNotIn("No", values)
         self.assertNotIn("Version 2", values)
@@ -2442,8 +2442,8 @@ class TestExcelExporter(unittest.TestCase):
         self.addCleanup(workbook.close)
         ws = workbook["Filters"]
 
-        self.assertEqual(ws["A4"].value, "Single Select Export")
-        self.assertEqual(ws["A5"].value, "Multi Select Export")
+        self.assertEqual(ws["A4"].value, "Single Select Export Question")
+        self.assertEqual(ws["A5"].value, "Multi Select Export Question")
 
     def test_workbook_has_one_sheet_per_theme(self) -> None:
         FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
@@ -2705,7 +2705,10 @@ class TestExcelExporter(unittest.TestCase):
 
     def test_grid_single_select_ui_format(self) -> None:
         app_path = (
-            Path(__file__).resolve().parents[1] / "app.py"
+            Path(__file__).resolve().parents[1]
+            / "artifacts"
+            / "survey-insight-engine"
+            / "app.py"
         )
         spec = importlib.util.spec_from_file_location("survey_insight_app", app_path)
         self.assertIsNotNone(spec)

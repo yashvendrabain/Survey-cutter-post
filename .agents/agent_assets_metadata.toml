@@ -60,3 +60,15 @@ id = "DPoRjvgxpQqWfnoUUK1FJ"
 uri = "file://artifacts/survey-insight-engine/outputs/survey_prompt1_sample.xlsx"
 type = "table"
 title = "survey_prompt1_sample.xlsx (XLOOKUP fix, 5.04 MiB)"
+
+[[outputs]]
+id = "wuzURQFQDxDDpMvlDHfzh"
+uri = "file://artifacts/survey-insight-engine/outputs/survey_prompt2_1_sample.xlsx"
+type = "table"
+title = "survey_prompt2_1_sample.xlsx (5.48 MiB)"
+
+[[outputs]]
+id = "VApGnhMtMobB5TUJ9cnUJ"
+uri = "file://artifacts/survey-insight-engine/outputs/survey_prompt2_1_bcn.xlsx"
+type = "table"
+title = "survey_prompt2_1_bcn.xlsx (38.77 MiB, streaming)"
