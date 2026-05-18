@@ -50,6 +50,7 @@ ACCEPTED_DATAMAP_EXTENSIONS = (".xlsx",)
 # cached value instead of a live formula. The workbook still shows correct
 # numbers but loses live filter interactivity. Configure as needed.
 RAW_DATA_SHEET_ROW_LIMIT = 50000
+CROSS_TAB_MAX_GROUPS = 12
 
 # ---------- AI insight layer (Stage A) ----------
 PORTKEY_BASE_URL = "https://portkey.bain.dev/v1"

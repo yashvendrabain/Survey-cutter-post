@@ -1,0 +1,40 @@
+Apply Prompt 1 fixes (Bugs 2, 3, 4) to the Survey Analysis Engine.
+Files to replace from Codex:
+
+src/excel_exporter.py — full replacement (6,633 lines)
+config.py — adds CROSS_TAB_MAX_GROUPS = 12
+tests/test_excel_exporter.py — adds regression tests
+
+What this iteration ships:
+
+Per-question filter Value dropdown now writes data validation unconditionally for every question block, not just 4 of ~40. Wired at line 1820-1825.
+Cross-tab "Cross-tab by" dropdown now produces a real 2D table: column groups with # of resp / % of resp side-by-side per cross-tab value, Total column on the right, single "Total respondents" row at the bottom. Capped at 12 column groups (11 + "Other") via CROSS_TAB_MAX_GROUPS. F2F2F2 header banding.
+Question heading red bar now shows full original question text (matches goal file format "Q35. Which 5 factors do you expect..."). Hover Comment removed (text is visible directly). Short labels continue to be used in filter UI elements only.
+
+Heads-up on Codex's recurring regressions — pre-emptively check before running tests:
+
+parents[1] / "artifacts" / "survey-insight-engine" / "app.py" in any test (should be parents[1] / "app.py")
+Stale AI-label assertions ("Single/Multi/Numeric Export Question" → trimmed to "Single/Multi/Numeric Export")
+
+Run after replacing:
+
+Apply Codex's known regressions if present.
+pytest (full suite). Codex reported 388 passes. Confirm the exact count and report.
+Smoke-test the small sample workbook through the Streamlit app. Confirm:
+
+Open the workbook in Excel
+On any theme sheet, click the "Filter Q" dropdown on a per-question filter row → pick any question → click the adjacent "Value" cell → dropdown should now show that question's actual option values (not empty, not stale)
+Same check on the Cross-tab row: pick a question in the "Cross-tab by" dropdown → the question block's table should reorganize into a 2D layout with column groups
+Question heading red bar should show full question text (e.g., "Q14 - Approximately how old is the organization, including all predecessor companies and acquired entities?")
+
+
+BCN smoke-test (optional but recommended): generate a BCN workbook via the same pickled-load + workflow approach. Open it and confirm the same three checks pass on a real-data sheet.
+
+Report:
+
+Final test count after applying Codex's regressions.
+Three checks on the small sample: pass/fail.
+BCN smoke-test result if you ran it.
+Screenshot of one cross-tab table in the resulting workbook (to verify the 2D layout visually).
+
+Then we move to closing the BCN UI issues (in-app filter selector not updating, Download button disabled) per Sequence A. Don't tackle those in this iteration — keep this PR focused on Codex's Prompt 1 work.

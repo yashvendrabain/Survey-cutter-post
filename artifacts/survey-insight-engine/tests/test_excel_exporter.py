@@ -564,6 +564,13 @@ def table_header_row(ws, question_id: str, header: str = "Option") -> int:
     raise AssertionError(f"{header!r} table header for {question_id!r} not found")
 
 
+def cell_has_data_validation(ws, coordinate: str) -> bool:
+    for validation in ws.data_validations.dataValidation:
+        if coordinate in validation.cells:
+            return True
+    return False
+
+
 class TestExcelExporter(unittest.TestCase):
     def test_wrapped_formula_preserves_bare_commas(self) -> None:
         formula = _wrapped_formula("F_Q14")
@@ -863,6 +870,50 @@ class TestExcelExporter(unittest.TestCase):
         )
         return output_path
 
+    def export_mixed_eight_block_workbook(self) -> Path:
+        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = (
+            FIXTURE_DIR
+            / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
+        )
+        results, skips, schema, quality_report, log = make_export_fixture()
+        extra_results: list[SingleSelectResult] = []
+        extra_questions: list[QuestionSpec] = []
+        for index in range(3):
+            qid = f"Q_EXTRA_{index + 1}"
+            extra_results.append(
+                SingleSelectResult(
+                    question_id=qid,
+                    question_type=QuestionType.SINGLE_SELECT,
+                    valid_n=10,
+                    missing_n=0,
+                    denominator_policy=DenominatorPolicy.VALID_RESPONSES,
+                    distribution={
+                        1: {"label": f"Extra {index + 1} A", "count": 6, "rate": 0.6},
+                        2: {"label": f"Extra {index + 1} B", "count": 4, "rate": 0.4},
+                    },
+                )
+            )
+            extra_questions.append(
+                QuestionSpec(
+                    question_id=f"[{qid}]",
+                    canonical_id=qid,
+                    question_text=f"Extra mixed block question {index + 1}",
+                    question_type=QuestionType.SINGLE_SELECT,
+                    raw_columns=(qid,),
+                    option_map={1: f"Extra {index + 1} A", 2: f"Extra {index + 1} B"},
+                )
+            )
+        export_single_cuts(
+            [*results, *extra_results],
+            skips,
+            replace(schema, questions=(*schema.questions, *extra_questions)),
+            quality_report,
+            log,
+            str(output_path),
+        )
+        return output_path
+
     def export_workbook_with_cross_cuts(self) -> Path:
         FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
@@ -983,7 +1034,7 @@ class TestExcelExporter(unittest.TestCase):
         data_row = header_row + 1
         self.assertEqual(
             ws.cell(row=question_header_row(ws, "Q_SS_EXPORT"), column=1).value,
-            "Q_SS_EXPORT - Single Select Export",
+            "Q_SS_EXPORT - Single select export question",
         )
         self.assertEqual(
             [ws.cell(header_row, col).value for col in range(1, 5)],
@@ -1006,7 +1057,7 @@ class TestExcelExporter(unittest.TestCase):
         data_row = header_row + 1
         self.assertEqual(
             ws.cell(row=question_header_row(ws, "Q_MS_EXPORT"), column=1).value,
-            "Q_MS_EXPORT - Multi Select Export",
+            "Q_MS_EXPORT - Multi select export question",
         )
         self.assertEqual(ws.cell(header_row, 1).value, "Option")
         self.assertEqual(ws.cell(header_row, 2).value, "Count")
@@ -1023,7 +1074,7 @@ class TestExcelExporter(unittest.TestCase):
         header_row = table_header_row(ws, "Q_NUM_EXPORT", header="Metric")
         self.assertEqual(
             ws.cell(row=question_header_row(ws, "Q_NUM_EXPORT"), column=1).value,
-            "Q_NUM_EXPORT - Numeric Export",
+            "Q_NUM_EXPORT - Numeric export question",
         )
         self.assertEqual(ws.cell(header_row, 1).value, "Metric")
         self.assertEqual(ws.cell(header_row + 1, 1).value, "Mean")
@@ -1169,7 +1220,7 @@ class TestExcelExporter(unittest.TestCase):
         self.assertNotEqual(ws["A3"].value, "DEMOGRAPHIC FILTERS")
         self.assertEqual(
             ws.cell(question_header_row(ws, "Q_SS_EXPORT"), 1).value,
-            "Q_SS_EXPORT - Single Select Export",
+            "Q_SS_EXPORT - Single select export question",
         )
 
     def test_subset_denominator_note_appears_when_denominator_is_small(self) -> None:
@@ -1810,18 +1861,14 @@ class TestExcelExporter(unittest.TestCase):
         self.assertIn("No", workbook["Filters"]["D4"].value)
         self.assertIn("Yes", workbook["Demographics"]["E5"].value)
 
-    def test_question_title_has_cell_comment_with_full_text(self) -> None:
+    def test_question_heading_has_no_comment_when_full_text_is_visible(self) -> None:
         output_path = self.export_workbook()
         workbook = load_workbook(output_path, read_only=False, data_only=True)
         self.addCleanup(workbook.close)
         ws = workbook["All Questions"]
         title_row = question_header_row(ws, "Q_SS_EXPORT")
 
-        self.assertIsNotNone(ws.cell(title_row, 1).comment)
-        self.assertEqual(
-            ws.cell(title_row, 1).comment.text,
-            "Single select export question",
-        )
+        self.assertIsNone(ws.cell(title_row, 1).comment)
 
     def test_theme_question_heading_restores_question_number_prefix(self) -> None:
         output_path = self.export_workbook()
@@ -1830,10 +1877,10 @@ class TestExcelExporter(unittest.TestCase):
         ws = workbook["All Questions"]
         heading = ws.cell(question_header_row(ws, "Q_SS_EXPORT"), 1).value
 
-        self.assertEqual(heading, "Q_SS_EXPORT - Single Select Export")
+        self.assertEqual(heading, "Q_SS_EXPORT - Single select export question")
         self.assertRegex(str(heading), r"^Q\w+\s*[-:]?\s*")
 
-    def test_short_labels_replace_visible_question_title_only(self) -> None:
+    def test_short_labels_stay_in_filter_ui_not_question_heading(self) -> None:
         FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
             FIXTURE_DIR
@@ -1855,8 +1902,10 @@ class TestExcelExporter(unittest.TestCase):
 
         self.assertEqual(
             ws.cell(question_header_row(ws, "Q_SS_EXPORT"), 1).value,
-            "Q_SS_EXPORT - Short Revenue Label",
+            "Q_SS_EXPORT - Single select export question",
         )
+        filter_values = defined_range_values(workbook, "All_Questions")
+        self.assertIn("Q_SS_EXPORT - Short Revenue Label", filter_values)
 
     def test_question_heading_row_uses_bain_red_style(self) -> None:
         output_path = self.export_workbook()
@@ -1872,7 +1921,7 @@ class TestExcelExporter(unittest.TestCase):
         for column in range(1, 5):
             self.assertEqual(ws.cell(heading_row, column).fill.fgColor.rgb, "FFCC0000")
 
-    def test_question_heading_uses_short_label_with_full_text_comment(self) -> None:
+    def test_question_heading_uses_full_text_without_comment(self) -> None:
         FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
             FIXTURE_DIR
@@ -1935,10 +1984,11 @@ class TestExcelExporter(unittest.TestCase):
         heading_cell = ws.cell(question_header_row(ws, "Q7"), 1)
 
         self.assertRegex(str(heading_cell.value), r"^Q\d+[a-z]*\s*-\s*.+")
-        self.assertEqual(heading_cell.value, "Q7 - Seniority")
-        self.assertIsNotNone(heading_cell.comment)
-        self.assertIn(full_text, heading_cell.comment.text)
-        self.assertGreater(len(heading_cell.comment.text), len(str(heading_cell.value)))
+        self.assertEqual(heading_cell.value, full_text)
+        self.assertGreater(len(str(heading_cell.value)), 30)
+        self.assertIsNone(heading_cell.comment)
+        filter_values = defined_range_values(workbook, "All_Questions")
+        self.assertIn("Q7 - Seniority", filter_values)
 
     def test_per_question_filter_named_cells_scoped_per_theme(self) -> None:
         FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
@@ -2075,12 +2125,81 @@ class TestExcelExporter(unittest.TestCase):
         self.assertIn("All_Questions_Q_SS_EXPORT_F_Q", workbook.defined_names)
         self.assertIn("All_Questions_Q_SS_EXPORT_F_V", workbook.defined_names)
 
+    def test_per_question_filter_value_dropdown_on_every_question_block(self) -> None:
+        output_path = self.export_mixed_eight_block_workbook()
+        workbook = load_workbook(output_path, read_only=False, data_only=False)
+        self.addCleanup(workbook.close)
+        ws = workbook["All Questions"]
+
+        filter_rows = [
+            row_index
+            for row_index in range(1, ws.max_row + 1)
+            if ws.cell(row=row_index, column=1).value == "Per-question filter"
+        ]
+        self.assertGreaterEqual(len(filter_rows), 8)
+        value_cells = [f"E{row_index}" for row_index in filter_rows]
+
+        for row_index in filter_rows:
+            self.assertTrue(cell_has_data_validation(ws, f"C{row_index}"))
+            self.assertTrue(cell_has_data_validation(ws, f"E{row_index}"))
+        value_validations = [
+            validation
+            for validation in ws.data_validations.dataValidation
+            if any(cell in validation.cells for cell in value_cells)
+        ]
+        self.assertEqual(len(value_validations), len(value_cells))
+        for validation in value_validations:
+            self.assertIn("INDIRECT(XLOOKUP", validation.formula1)
+
     def test_cross_tab_named_cell_exists(self) -> None:
         output_path = self.export_workbook()
         workbook = load_workbook(output_path, read_only=False, data_only=True)
         self.addCleanup(workbook.close)
 
         self.assertIn("All_Questions_Q_SS_EXPORT_CT", workbook.defined_names)
+
+    def test_cross_tab_table_has_2d_count_percent_layout(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=False, data_only=False)
+        self.addCleanup(workbook.close)
+        ws = workbook["All Questions"]
+        header_row = table_header_row(ws, "Q_SS_EXPORT")
+        cross_tab_first_col = 6
+        max_groups = 12
+        total_col = cross_tab_first_col + max_groups * 2 + 1
+
+        self.assertEqual(ws.cell(header_row, cross_tab_first_col).value, "Option")
+        self.assertEqual(ws.cell(header_row, total_col).value, "Total")
+        subheaders = [
+            ws.cell(header_row + 1, column).value
+            for column in range(cross_tab_first_col + 1, total_col + 1)
+        ]
+        self.assertEqual(subheaders.count("# of resp"), max_groups + 1)
+        self.assertEqual(subheaders.count("% of resp"), max_groups)
+        first_count = ws.cell(header_row + 2, cross_tab_first_col + 1).value
+        first_pct = ws.cell(header_row + 2, cross_tab_first_col + 2).value
+        self.assertIn("COUNTIFS", first_count)
+        self.assertIn("COUNTIFS", first_pct)
+        self.assertNotIn("Denominator", subheaders)
+        total_rows = [
+            row_index
+            for row_index in range(header_row, header_row + 5)
+            if ws.cell(row_index, cross_tab_first_col).value == "Total respondents"
+        ]
+        self.assertEqual(total_rows, [header_row + 4])
+
+    def test_cross_tab_cap_uses_other_group_for_large_dimensions(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=False, data_only=False)
+        self.addCleanup(workbook.close)
+        ws = workbook["All Questions"]
+        header_row = table_header_row(ws, "Q_SS_EXPORT")
+        cross_tab_first_col = 6
+        last_group_col = cross_tab_first_col + 1 + ((12 - 1) * 2)
+        formula = ws.cell(header_row, last_group_col).value
+
+        self.assertIn(',"Other"', formula)
+        self.assertIn("-1>11", formula)
 
     def test_priority_demographic_ordering(self) -> None:
         FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
@@ -2321,8 +2440,8 @@ class TestExcelExporter(unittest.TestCase):
         ws = workbook["All Questions"]
         header_row = table_header_row(ws, "Q_SS_EXPORT")
 
-        self.assertEqual(ws.cell(row=header_row, column=6).value, "Option \\ Cross-tab")
-        self.assertTrue(ws.cell(row=header_row, column=7).value.startswith("=IFERROR(INDEX"))
+        self.assertEqual(ws.cell(row=header_row, column=6).value, "Option")
+        self.assertIn("INDEX(INDIRECT", ws.cell(row=header_row, column=7).value)
         self.assertIn("_options", ws.cell(row=header_row, column=7).value)
 
     def test_cross_tab_sheet_includes_chart(self) -> None:
@@ -2428,7 +2547,7 @@ class TestExcelExporter(unittest.TestCase):
         ws = workbook["All Questions"]
         header_row = table_header_row(ws, "Q_SS_EXPORT")
 
-        self.assertEqual(ws.cell(header_row, 6).value, "Option \\ Cross-tab")
+        self.assertEqual(ws.cell(header_row, 6).value, "Option")
         self.assertIn("Q_SS_EXPORT_CT", ws.cell(header_row, 7).value)
 
     def test_segment_profile_sheet_includes_filter_and_target_labels(self) -> None:
@@ -2459,8 +2578,8 @@ class TestExcelExporter(unittest.TestCase):
         ws = workbook["All Questions"]
         header_row = table_header_row(ws, "Q_SS_EXPORT")
 
-        self.assertEqual(ws.cell(header_row, 6).value, "Option \\ Cross-tab")
-        self.assertEqual(ws.cell(header_row + 1, 6).value, "Yes")
+        self.assertEqual(ws.cell(header_row, 6).value, "Option")
+        self.assertEqual(ws.cell(header_row + 2, 6).value, "Yes")
 
     def test_cross_tab_sheet_renders_only_counts_in_counts_mode(self) -> None:
         *_base, cross_results, _cross_skips = make_cross_cut_export_fixture()
