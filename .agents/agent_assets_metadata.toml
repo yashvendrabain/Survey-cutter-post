@@ -54,3 +54,9 @@ id = "Y83Pq5SZzwxbBI3XJK6Zy"
 uri = "file://artifacts/survey-insight-engine/outputs/BCN_v8_1000rows.xlsx"
 type = "table"
 title = "BCN — v8 NA-fix verification (1000-row subsample)"
+
+[[outputs]]
+id = "DPoRjvgxpQqWfnoUUK1FJ"
+uri = "file://artifacts/survey-insight-engine/outputs/survey_prompt1_sample.xlsx"
+type = "table"
+title = "survey_prompt1_sample.xlsx (5.63 MiB)"
