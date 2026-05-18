@@ -3737,6 +3737,29 @@ def _section_downloads() -> None:
     if app.session_state.get("filtered_workbook_signature") != fsc_signature:
         app.session_state["filtered_workbook_bytes"] = None
 
+    # --- TEMP DEBUG (remove after diagnosing BCN download/filter bugs) ---
+    app.write({
+        "DEBUG_run_complete": app.session_state.get("run_complete"),
+        "DEBUG_results_count": len(app.session_state.get("results", []) or []),
+        "DEBUG_skips_count": len(app.session_state.get("skips", []) or []),
+        "DEBUG_active_df_shape": getattr(app.session_state.get("active_df"), "shape", None),
+        "DEBUG_decoded_df_shape": getattr(app.session_state.get("decoded_df"), "shape", None),
+        "DEBUG_schema_present": app.session_state.get("schema") is not None,
+        "DEBUG_output_path": app.session_state.get("output_path"),
+        "DEBUG_output_path_exists": (
+            os.path.exists(app.session_state.get("output_path"))
+            if app.session_state.get("output_path") else False
+        ),
+        "DEBUG_output_path_size_mib": (
+            round(os.path.getsize(app.session_state.get("output_path")) / (1024 * 1024), 2)
+            if app.session_state.get("output_path")
+            and os.path.exists(app.session_state.get("output_path"))
+            else None
+        ),
+        "DEBUG_global_filter_state": str(app.session_state.get("global_filter_state")),
+    })
+    # --- END TEMP DEBUG ---
+
     col_full, col_cc, col_fsc = app.columns(3)
 
     with col_full:
