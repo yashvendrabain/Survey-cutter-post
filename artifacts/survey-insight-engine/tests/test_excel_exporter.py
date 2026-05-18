@@ -1616,7 +1616,7 @@ class TestExcelExporter(unittest.TestCase):
         self.assertEqual(len(values), len(eligible_questions) + 1)
         self.assertEqual(values[0], "(None)")
         self.assertIn("Q_SS_EXPORT - Single Select Export", values)
-        self.assertTrue(any(str(value).startswith(f"{LONG_ID} - Long") for value in values))
+        self.assertTrue(any(str(v).startswith(f"{LONG_ID} - Long") for v in values))
         self.assertNotIn("Yes", values)
         self.assertNotIn("No", values)
         self.assertNotIn("Version 2", values)
@@ -2578,14 +2578,15 @@ class TestExcelExporter(unittest.TestCase):
         header_row = table_header_row(ws, "Q_RATED", header="Sub-question ID")
         values = [
             ws.cell(header_row, col).value
-            for col in range(1, 9)
+            for col in range(1, 13)
         ]
 
+        self.assertEqual(values[:4], ["Sub-question ID", "Sub-question", "# of respondents", "% of respondents"])
         self.assertIn("Winner - All", values)
         self.assertIn("Other considered vendor", values)
         self.assertIn("Delta", values)
-        self.assertEqual(ws.cell(header_row + 1, 3).value, "Mean")
-        self.assertEqual(ws.cell(header_row + 1, 4).value, "Median")
+        self.assertEqual(ws.cell(header_row + 1, 6).value, "Mean")
+        self.assertEqual(ws.cell(header_row + 1, 7).value, "Median")
         self.assertTrue(ws.merged_cells.ranges)
         self.assertEqual(ws.cell(header_row + 2, 1).value, "Q_RATEDr1")
         self.assertEqual(ws.cell(header_row + 2, 2).value, "Implementation speed")
@@ -2652,7 +2653,7 @@ class TestExcelExporter(unittest.TestCase):
         header_row = table_header_row(ws, "Q_RATED_DIRECT", header="Sub-question ID")
         nearby_values = [
             ws.cell(header_row, col).value
-            for col in range(1, 8)
+            for col in range(1, 10)
         ]
 
         self.assertIn("All", nearby_values)
@@ -2750,7 +2751,7 @@ class TestExcelExporter(unittest.TestCase):
         ]
         self.assertEqual(len(heading_rows), 1)
         header_row = table_header_row(ws, "Q1", header="Sub-question ID")
-        headers = [ws.cell(header_row, col).value for col in range(1, 9)]
+        headers = [ws.cell(header_row, col).value for col in range(1, 13)]
         delta_col = headers.index("Delta") + 1
 
         self.assertIn("Winner - All", headers)
@@ -2762,6 +2763,35 @@ class TestExcelExporter(unittest.TestCase):
         self.assertTrue(str(ws.cell(header_row + 2, delta_col).value).startswith("=ROUND("))
         delta_value = float(values_ws.cell(header_row + 2, delta_col).value)
         self.assertEqual(delta_value, round(delta_value, 1))
+
+    def test_grid_rated_dual_block_has_left_response_table_and_heatmaps(self) -> None:
+        result, schema = rated_grid_export_fixture()
+        output_path = self.export_custom_workbook([result], schema)
+        workbook = load_workbook(output_path, read_only=False, data_only=False)
+        self.addCleanup(workbook.close)
+        ws = workbook["All Questions"]
+        header_row = table_header_row(ws, "Q_RATED", header="Sub-question ID")
+        data_start = header_row + 2
+        data_end = data_start + 2
+
+        self.assertEqual(ws.cell(header_row, 3).value, "# of respondents")
+        self.assertEqual(ws.cell(header_row, 4).value, "% of respondents")
+        self.assertEqual(ws.cell(header_row, 6).value, "Winner - All")
+        self.assertEqual(ws.cell(header_row + 1, 6).value, "Mean")
+        self.assertTrue(
+            any(
+                str(formatting.sqref) == f"D{data_start}:D{data_end}"
+                and any(rule.type == "colorScale" for rule in formatting.rules)
+                for formatting in ws.conditional_formatting
+            )
+        )
+        self.assertTrue(
+            any(
+                str(formatting.sqref) == f"F{data_start}:F{data_end}"
+                and any(rule.type == "colorScale" for rule in formatting.rules)
+                for formatting in ws.conditional_formatting
+            )
+        )
 
     def test_grid_categorical_parent_renders_single_count_matrix(self) -> None:
         result, schema = categorical_grid_export_fixture()
@@ -2778,14 +2808,38 @@ class TestExcelExporter(unittest.TestCase):
         ]
         self.assertEqual(len(heading_rows), 1)
         header_row = table_header_row(ws, "Q_CATGRID", header="Sub-question ID")
-        headers = [ws.cell(header_row, col).value for col in range(1, 6)]
+        headers = [ws.cell(header_row, col).value for col in range(1, 9)]
 
         self.assertEqual(headers[:2], ["Sub-question ID", "Sub-question"])
         self.assertIn("Decision maker", headers)
         self.assertIn("Influencer", headers)
         self.assertIn("Not involved", headers)
         self.assertEqual(ws.cell(header_row + 1, 3).value, "Count")
+        self.assertEqual(ws.cell(header_row + 1, 4).value, "%")
         self.assertEqual(ws.cell(header_row + 2, 1).value, "Q_CATGRIDr1")
+
+    def test_grid_categorical_footer_has_total_responses_and_percent_heatmap(self) -> None:
+        result, schema = categorical_grid_export_fixture()
+        output_path = self.export_custom_workbook([result], schema)
+        workbook = load_workbook(output_path, read_only=False, data_only=False)
+        self.addCleanup(workbook.close)
+        ws = workbook["All Questions"]
+        header_row = table_header_row(ws, "Q_CATGRID", header="Sub-question ID")
+        data_start = header_row + 2
+        data_end = data_start + 2
+        total_respondents_row = data_end + 1
+        total_responses_row = total_respondents_row + 1
+
+        self.assertEqual(ws.cell(total_respondents_row, 1).value, "Total respondents")
+        self.assertEqual(ws.cell(total_responses_row, 1).value, "Total responses")
+        self.assertEqual(ws.cell(total_responses_row, 2).value, 30)
+        self.assertTrue(
+            any(
+                str(formatting.sqref) == f"D{data_start}:D{data_end}"
+                and any(rule.type == "colorScale" for rule in formatting.rules)
+                for formatting in ws.conditional_formatting
+            )
+        )
 
     def test_grid_binary_select_keeps_existing_compact_selected_count_rendering(self) -> None:
         result, schema = self.grid_single_select_format_fixture()
@@ -2810,11 +2864,40 @@ class TestExcelExporter(unittest.TestCase):
         )
         self.assertEqual(ws.cell(header_row + 1, 1).value, "Option A")
 
-    def test_grid_single_select_ui_format(self) -> None:
-        app_path = (
-            Path(__file__).resolve().parents[1]
-            / "app.py"
+    def test_grid_binary_select_footer_has_total_responses(self) -> None:
+        result, schema = self.grid_single_select_format_fixture()
+        schema = replace(
+            schema,
+            questions=tuple(
+                replace(question, possible_role="GRID_BINARY_SELECT")
+                if question.canonical_id == "Q_GRID_FORMAT"
+                else question
+                for question in schema.questions
+            ),
         )
+        output_path = self.export_custom_workbook([result], schema)
+        workbook = load_workbook(output_path, read_only=True, data_only=False)
+        self.addCleanup(workbook.close)
+        ws = workbook["All Questions"]
+        values = [cell for row in ws.iter_rows(values_only=True) for cell in row if cell is not None]
+
+        self.assertIn("Total responses", values)
+        self.assertIn(80, values)
+
+    def test_multi_select_footer_has_total_responses_but_single_select_does_not(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=True, data_only=False)
+        self.addCleanup(workbook.close)
+        ws = workbook["All Questions"]
+        ms_header = table_header_row(ws, "Q_MS_EXPORT")
+        ss_header = table_header_row(ws, "Q_SS_EXPORT")
+
+        self.assertEqual(ws.cell(ms_header + 4, 1).value, "Total responses")
+        self.assertEqual(ws.cell(ms_header + 4, 2).value, 7)
+        self.assertNotEqual(ws.cell(ss_header + 4, 1).value, "Total responses")
+
+    def test_grid_single_select_ui_format(self) -> None:
+        app_path = Path(__file__).resolve().parents[1] / "app.py"
         spec = importlib.util.spec_from_file_location("survey_insight_app", app_path)
         self.assertIsNotNone(spec)
         self.assertIsNotNone(spec.loader)

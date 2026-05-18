@@ -62,7 +62,7 @@ _SIBLING_GRID_ID_PATTERN = re.compile(
     r"^(?P<parent>[A-Za-z_]+\d+)r(?P<row>\d+)(?:[a-z]\d+)?$",
     re.IGNORECASE,
 )
-_QUESTION_TEXT_SEPARATOR_PATTERN = re.compile(r"\s*[-\u2013\u2014]\s*")
+_QUESTION_TEXT_SEPARATOR_PATTERN = re.compile(r"\s+[-\u2013\u2014]\s+")
 _LEADING_QUESTION_PREFIX_PATTERN = re.compile(
     r"^\s*\[?[A-Za-z_]+\d+r\d+(?:[a-z]\d+)?\]?\s*[-:]?\s*",
     re.IGNORECASE,
@@ -279,9 +279,7 @@ def _merge_sibling_group(
     raw_columns: list[str] = []
     grid_row_labels: dict[str, str] = {}
     for member in ordered_members:
-        criterion_label, _root_text = _split_sibling_question_text(
-            member.question_text
-        )
+        criterion_label = _sibling_criterion_label(member)
         member_columns = _expanded_member_raw_columns(member, raw_column_set)
         for column in member_columns:
             raw_columns.append(column)
@@ -292,7 +290,7 @@ def _merge_sibling_group(
     analysis_eligible = any(member.analysis_eligible for member in ordered_members) or any(
         column in raw_column_set for column in raw_columns
     )
-    root_text = _split_sibling_question_text(ordered_members[0].question_text)[1]
+    root_text = _sibling_question_root_text(ordered_members)
 
     return QuestionSpec(
         question_id=f"[{parent_id}]",
@@ -317,22 +315,16 @@ def _merge_sibling_group(
 
 def _sibling_group_is_mergeable(members: list[QuestionSpec]) -> bool:
     first = members[0]
-    first_split = _split_sibling_question_text(first.question_text)
-    if first_split is None:
-        return False
-    _first_label, first_root = first_split
-    first_root_key = _normalise_sibling_root_text(first_root)
+    first_role = _sibling_grid_role([first])
 
     for member in members:
         if member.question_type is not first.question_type:
             return False
         if member.option_map != first.option_map:
             return False
-        split_text = _split_sibling_question_text(member.question_text)
-        if split_text is None:
+        if member.value_range != first.value_range:
             return False
-        _label, root_text = split_text
-        if _normalise_sibling_root_text(root_text) != first_root_key:
+        if _sibling_grid_role([member]) != first_role:
             return False
     return True
 
@@ -385,6 +377,39 @@ def _split_sibling_question_text(question_text: str) -> tuple[str, str] | None:
     if not criterion_label or not root_text:
         return None
     return criterion_label, root_text
+
+
+def _sibling_question_root_text(members: list[QuestionSpec]) -> str:
+    roots: dict[str, str] = {}
+    for member in members:
+        split_text = _split_sibling_question_text(member.question_text)
+        root_text = split_text[1] if split_text is not None else member.question_text
+        roots.setdefault(_normalise_sibling_root_text(root_text), root_text.strip())
+    if not roots:
+        return members[0].question_text
+    _root_key, root_text = max(
+        roots.items(),
+        key=lambda item: sum(
+            1
+            for member in members
+            if _normalise_sibling_root_text(
+                (
+                    _split_sibling_question_text(member.question_text)[1]
+                    if _split_sibling_question_text(member.question_text) is not None
+                    else member.question_text
+                )
+            )
+            == item[0]
+        ),
+    )
+    return root_text
+
+
+def _sibling_criterion_label(member: QuestionSpec) -> str:
+    split_text = _split_sibling_question_text(member.question_text)
+    if split_text is not None:
+        return split_text[0]
+    return member.canonical_id
 
 
 def _normalise_sibling_root_text(question_text: str) -> str:
@@ -635,7 +660,7 @@ def _grid_options_look_binary_select(
     lowered = " ".join(label.strip().lower() for label in labels)
     if any(prefix.strip().lower() in lowered for prefix in _REJECTION_PREFIXES):
         return True
-    if any(token in lowered for token in ("selected", "checked", "unchecked")):
+    if any(token in lowered for token in ("checked", "unchecked")):
         return True
     return value_range == (0, 1)
 
@@ -649,9 +674,16 @@ def _grid_options_look_rated(
     low, high = value_range
     if low < 0 or high > 10 or high <= low:
         return False
+    if high - low >= 6:
+        return True
     if not labels:
         return True
     numeric_labels = sum(1 for label in labels if _is_numeric_label(label))
+    numeric_labels += sum(
+        1
+        for label in labels
+        if not _is_numeric_label(label) and _starts_with_numeric_label(label)
+    )
     return (numeric_labels / len(labels)) >= 0.8
 
 
@@ -661,6 +693,10 @@ def _is_numeric_label(label: str) -> bool:
     except (TypeError, ValueError):
         return False
     return True
+
+
+def _starts_with_numeric_label(label: str) -> bool:
+    return re.match(r"^\s*-?\d+(?:\.\d+)?\b", str(label)) is not None
 
 
 def _option_other_code(question: ParsedQuestion) -> int | str | None:

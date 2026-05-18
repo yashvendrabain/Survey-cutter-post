@@ -1,0 +1,51 @@
+Apply Prompt 2.3 (grid accuracy fixes) to the Survey Analysis Engine and verify against the real BCN file.
+Files to replace from Codex:
+
+src/question_classifier.py — sibling merge now uses structural rule (parent ID + identical option_map + identical value_range + identical possible_role) instead of fragile text matching. Narrows binary-grid detection so non-0/1 ranges don't get wrongly classified as binary.
+src/excel_exporter.py — GRID_RATED renders dual-block (left: # of respondents/%, right: Winner/Other/Delta × Mean/Median). GRID_CATEGORICAL renders Count + % side-by-side per category. Adds Total responses footer row for multi-select / categorical / binary grid blocks. Delta rounded to 1 decimal.
+tests/test_excel_exporter.py + tests/test_question_classifier.py — updated regressions.
+
+Verified on synthetic fixture:
+
+Q26: 1 heading, categorical layout with Count+% per category, Total respondents + Total responses footer ✓
+Q30: 1 heading, dual-block layout (left response count/%, right rated grid Winner/Other/Delta) ✓
+Q36: 1 heading, rated grid layout ✓
+Q41: 1 heading, categorical layout ✓
+
+Heads-up on Codex's recurring regressions — pre-empt before tests:
+
+parents[1] / "artifacts" / "survey-insight-engine" / "app.py" → parents[1] / "app.py"
+Stale AI-label assertions ("...Export Question" → "...Export")
+LONG_ID exact match → startswith prefix
+
+Run after replacing:
+
+Apply Codex regressions if present.
+pytest full suite. Codex reported 409 passes. Confirm exact count.
+Generate small sample workbook (outputs/survey_prompt2_3_sample.xlsx). Verify it generates cleanly.
+Generate BCN workbook (outputs/survey_prompt2_3_bcn.xlsx) via the standard streaming-export workflow path. Use the same pickled-load + workflow approach as previous BCN runs.
+
+CRITICAL verification on the BCN workbook — this is what the previous iteration got wrong:
+
+Open BCN workbook. Count red heading rows per parent question across all theme sheets. Report this exact dict:
+Q26: <N> heading(s)
+Q30: <N> heading(s)
+Q36: <N> heading(s)
+Q38: <N> heading(s)
+Q41: <N> heading(s)
+Target: Q26=1, Q30=1, Q36=1, Q41=1. Q38 stays >1 (binary-select, unmerged).
+If any of Q26/Q30/Q36/Q41 has more than 1 heading, the sibling merge is still failing on BCN. Do not patch — report the failure first. I need to see what went wrong before fixing.
+For Q30 specifically, screenshot the block. Verify both tables are present (left # of resp/%, right Winner/Other/Delta × Mean/Median).
+For Q36, screenshot the block. Verify Winner/Other/Delta × Mean/Median.
+For Q26, screenshot the block. Verify Count + % side-by-side per role-value (Blocked Vendors, Scored Vendors, Recommended, Restricted, Others).
+Total responses footer row present for Q26 and Q41. Total respondents only for Q30/Q36 (rated grids).
+Regression: Q38 still renders as multiple separate blocks with count/% (untouched binary-select path).
+
+Report:
+
+Test count
+The heading-count dict for Q26/Q30/Q36/Q38/Q41 on BCN
+3 screenshots (Q30, Q36, Q26)
+Cross-tab regression check: pick any block, set Cross-tab by to a real question, confirm 2D table still produces count-only with heatmap
+
+If anything fails — paste the relevant section, do not patch silently.
