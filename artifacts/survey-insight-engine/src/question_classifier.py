@@ -58,6 +58,15 @@ DEMOGRAPHIC_KEYWORDS = (
     "market",
 )
 _PIPE_PATTERN = re.compile(r"\[(pipe|pn):\s*([^\]]+)\]", re.IGNORECASE)
+_SIBLING_GRID_ID_PATTERN = re.compile(
+    r"^(?P<parent>[A-Za-z_]+\d+)r(?P<row>\d+)(?:[a-z]\d+)?$",
+    re.IGNORECASE,
+)
+_QUESTION_TEXT_SEPARATOR_PATTERN = re.compile(r"\s*[-\u2013\u2014]\s*")
+_LEADING_QUESTION_PREFIX_PATTERN = re.compile(
+    r"^\s*\[?[A-Za-z_]+\d+r\d+(?:[a-z]\d+)?\]?\s*[-:]?\s*",
+    re.IGNORECASE,
+)
 _TRAILING_PUNCTUATION = ".,;:!?- "
 GRID_RATED = "GRID_RATED"
 GRID_CATEGORICAL = "GRID_CATEGORICAL"
@@ -112,6 +121,7 @@ def classify_questions(
         )
         for question in data_map["questions"]
     )
+    question_specs = _merge_grid_siblings(question_specs, raw_column_set)
 
     return SurveySchema(
         questions=question_specs,
@@ -199,6 +209,186 @@ def _build_question_spec(
         spec,
         is_demographic=_is_demographic_question(spec, raw_column_set),
     )
+
+
+def _merge_grid_siblings(
+    question_specs: tuple[QuestionSpec, ...],
+    raw_column_set: set[str] | None = None,
+) -> tuple[QuestionSpec, ...]:
+    """Merge row-sibling specs such as Q26r1..Q26r21 into one grid parent."""
+
+    raw_column_set = raw_column_set or set()
+    parent_groups: dict[str, list[QuestionSpec]] = {}
+    for spec in question_specs:
+        parent_id = _sibling_parent_id(spec.canonical_id)
+        if parent_id is None:
+            continue
+        if spec.question_type not in {
+            QuestionType.SINGLE_SELECT,
+            QuestionType.GRID_SINGLE_SELECT,
+        }:
+            continue
+        parent_groups.setdefault(parent_id, []).append(spec)
+
+    existing_parent_ids = {
+        spec.canonical_id
+        for spec in question_specs
+        if _sibling_parent_id(spec.canonical_id) is None
+    }
+    merged_by_first_child: dict[str, QuestionSpec] = {}
+    merged_child_ids: set[str] = set()
+    for parent_id, members in parent_groups.items():
+        if parent_id in existing_parent_ids or len(members) < 2:
+            continue
+        merged = _merge_sibling_group(parent_id, members, raw_column_set)
+        if merged is None:
+            continue
+        ordered_members = _sort_sibling_members(members)
+        merged_by_first_child[ordered_members[0].canonical_id] = merged
+        merged_child_ids.update(member.canonical_id for member in ordered_members)
+
+    if not merged_child_ids:
+        return question_specs
+
+    output: list[QuestionSpec] = []
+    for spec in question_specs:
+        if spec.canonical_id in merged_by_first_child:
+            output.append(merged_by_first_child[spec.canonical_id])
+        elif spec.canonical_id in merged_child_ids:
+            continue
+        else:
+            output.append(spec)
+    return tuple(output)
+
+
+def _merge_sibling_group(
+    parent_id: str,
+    members: list[QuestionSpec],
+    raw_column_set: set[str],
+) -> QuestionSpec | None:
+    ordered_members = _sort_sibling_members(members)
+    if not _sibling_group_is_mergeable(ordered_members):
+        return None
+
+    option_map = dict(ordered_members[0].option_map)
+    value_range = ordered_members[0].value_range
+    possible_role = _sibling_grid_role(ordered_members)
+    if possible_role == GRID_BINARY_SELECT:
+        return None
+
+    raw_columns: list[str] = []
+    grid_row_labels: dict[str, str] = {}
+    for member in ordered_members:
+        criterion_label, _root_text = _split_sibling_question_text(
+            member.question_text
+        )
+        member_columns = _expanded_member_raw_columns(member, raw_column_set)
+        for column in member_columns:
+            raw_columns.append(column)
+            grid_row_labels[column] = criterion_label
+
+    conditional_values = {member.conditional_on for member in ordered_members}
+    conditional_on = conditional_values.pop() if len(conditional_values) == 1 else None
+    analysis_eligible = any(member.analysis_eligible for member in ordered_members) or any(
+        column in raw_column_set for column in raw_columns
+    )
+    root_text = _split_sibling_question_text(ordered_members[0].question_text)[1]
+
+    return QuestionSpec(
+        question_id=f"[{parent_id}]",
+        canonical_id=parent_id,
+        question_text=root_text,
+        question_type=QuestionType.GRID_SINGLE_SELECT,
+        raw_columns=tuple(raw_columns),
+        option_map=option_map,
+        value_range=value_range,
+        denominator_policy=ordered_members[0].denominator_policy,
+        theme_tags=ordered_members[0].theme_tags,
+        possible_role=possible_role,
+        analysis_eligible=analysis_eligible,
+        exclusion_reason=None if analysis_eligible else "raw column not found in data",
+        parent_question_id=None,
+        grid_row_labels=grid_row_labels,
+        option_other_code=ordered_members[0].option_other_code,
+        is_demographic=False,
+        conditional_on=conditional_on,
+    )
+
+
+def _sibling_group_is_mergeable(members: list[QuestionSpec]) -> bool:
+    first = members[0]
+    first_split = _split_sibling_question_text(first.question_text)
+    if first_split is None:
+        return False
+    _first_label, first_root = first_split
+    first_root_key = _normalise_sibling_root_text(first_root)
+
+    for member in members:
+        if member.question_type is not first.question_type:
+            return False
+        if member.option_map != first.option_map:
+            return False
+        split_text = _split_sibling_question_text(member.question_text)
+        if split_text is None:
+            return False
+        _label, root_text = split_text
+        if _normalise_sibling_root_text(root_text) != first_root_key:
+            return False
+    return True
+
+
+def _sibling_grid_role(members: list[QuestionSpec]) -> str:
+    explicit_roles = {
+        member.possible_role for member in members if member.possible_role is not None
+    }
+    if len(explicit_roles) == 1:
+        return explicit_roles.pop() or GRID_CATEGORICAL
+    labels = [str(label) for label in members[0].option_map.values()]
+    return _grid_subtype_from_parts(members[0].value_range, labels)
+
+
+def _expanded_member_raw_columns(
+    member: QuestionSpec,
+    raw_column_set: set[str],
+) -> tuple[str, ...]:
+    c_columns = _matching_grid_c_columns(member.canonical_id, raw_column_set)
+    if len(c_columns) >= 2:
+        return tuple(c_columns)
+    present = tuple(column for column in member.raw_columns if column in raw_column_set)
+    return present or member.raw_columns
+
+
+def _sibling_parent_id(canonical_id: str) -> str | None:
+    match = _SIBLING_GRID_ID_PATTERN.match(canonical_id)
+    if match is None:
+        return None
+    return match.group("parent")
+
+
+def _sort_sibling_members(members: list[QuestionSpec]) -> list[QuestionSpec]:
+    return sorted(members, key=lambda member: _sibling_sort_key(member.canonical_id))
+
+
+def _sibling_sort_key(canonical_id: str) -> tuple[int, str]:
+    match = _SIBLING_GRID_ID_PATTERN.match(canonical_id)
+    if match is None:
+        return (10**9, canonical_id)
+    return (int(match.group("row")), canonical_id)
+
+
+def _split_sibling_question_text(question_text: str) -> tuple[str, str] | None:
+    parts = _QUESTION_TEXT_SEPARATOR_PATTERN.split(question_text, maxsplit=1)
+    if len(parts) != 2:
+        return None
+    criterion_label = _LEADING_QUESTION_PREFIX_PATTERN.sub("", parts[0]).strip()
+    root_text = parts[1].strip()
+    if not criterion_label or not root_text:
+        return None
+    return criterion_label, root_text
+
+
+def _normalise_sibling_root_text(question_text: str) -> str:
+    return re.sub(r"\s+", " ", question_text).strip().casefold()
 
 
 def _classify_question(
@@ -401,17 +591,17 @@ def _grid_row_labels_for_spec(
     }
     result: dict[str, str] = {}
     for sub_column_id in raw_columns:
+        if sub_column_id in row_label_lookup:
+            result[sub_column_id] = row_label_lookup[sub_column_id]
+            continue
         base = _grid_base_sub_column_id(sub_column_id)
         if base in row_label_lookup:
             result[sub_column_id] = row_label_lookup[base]
-        elif sub_column_id in row_label_lookup:
-            result[sub_column_id] = row_label_lookup[sub_column_id]
     return result
 
 
 def _grid_base_sub_column_id(sub_column_id: str) -> str:
-    match = re.match(r"^(.+r\d+)c\d+$", sub_column_id)
-    return match.group(1) if match is not None else sub_column_id
+    return re.sub(r"^(.+r\d+)c\d+$", r"\1", sub_column_id)
 
 
 def _grid_subtype_for_question(question: ParsedQuestion) -> str:
@@ -424,9 +614,16 @@ def _grid_subtype_for_question(question: ParsedQuestion) -> str:
     """
 
     labels = [label for _code, label in question["options"]]
-    if _grid_options_look_binary_select(question["value_range"], labels):
+    return _grid_subtype_from_parts(question["value_range"], labels)
+
+
+def _grid_subtype_from_parts(
+    value_range: tuple[int, int] | None,
+    labels: list[str],
+) -> str:
+    if _grid_options_look_binary_select(value_range, labels):
         return GRID_BINARY_SELECT
-    if _grid_options_look_rated(question["value_range"], labels):
+    if _grid_options_look_rated(value_range, labels):
         return GRID_RATED
     return GRID_CATEGORICAL
 

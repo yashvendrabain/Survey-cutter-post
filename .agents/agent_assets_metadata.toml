@@ -72,3 +72,15 @@ id = "VApGnhMtMobB5TUJ9cnUJ"
 uri = "file://artifacts/survey-insight-engine/outputs/survey_prompt2_1_bcn.xlsx"
 type = "table"
 title = "survey_prompt2_1_bcn.xlsx (38.77 MiB, streaming)"
+
+[[outputs]]
+id = "5fdDD1dXA1dXFJrTWhVSb"
+uri = "file://artifacts/survey-insight-engine/outputs/survey_prompt2_2_sample.xlsx"
+type = "table"
+title = "survey_prompt2_2_sample.xlsx (1.97 MiB)"
+
+[[outputs]]
+id = "F29r-8Bqw5jt5xsPNoLaN"
+uri = "file://artifacts/survey-insight-engine/outputs/survey_prompt2_2_bcn.xlsx"
+type = "table"
+title = "survey_prompt2_2_bcn.xlsx (27.04 MiB)"

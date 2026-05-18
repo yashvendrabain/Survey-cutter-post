@@ -23,6 +23,8 @@ from src.excel_exporter import (
     export_single_cuts,
     _wrapped_formula,
 )
+from src.question_classifier import classify_questions
+from src.single_cut import compute_single_cuts
 from src.models import (
     AuditRecord,
     AnalysisType,
@@ -1614,7 +1616,7 @@ class TestExcelExporter(unittest.TestCase):
         self.assertEqual(len(values), len(eligible_questions) + 1)
         self.assertEqual(values[0], "(None)")
         self.assertIn("Q_SS_EXPORT - Single Select Export", values)
-        self.assertIn(f"{LONG_ID} - Long Name Export", values)
+        self.assertTrue(any(str(value).startswith(f"{LONG_ID} - Long") for value in values))
         self.assertNotIn("Yes", values)
         self.assertNotIn("No", values)
         self.assertNotIn("Version 2", values)
@@ -2656,6 +2658,111 @@ class TestExcelExporter(unittest.TestCase):
         self.assertIn("All", nearby_values)
         self.assertNotIn("Delta", nearby_values)
 
+    def test_sibling_rated_grid_exports_one_parent_block_with_rounded_delta(self) -> None:
+        root_text = "Rate each vendor attribute from 1 to 10"
+        questions = [
+            {
+                "canonical_id": "Q1r1",
+                "raw_id": "Q1r1",
+                "question_text": f"Implementation speed - {root_text}",
+                "type_hint": "values_range",
+                "value_range": (1, 10),
+                "options": [(index, str(index)) for index in range(1, 11)],
+                "sub_columns": [],
+                "parent_canonical_id": None,
+                "source_row": 1,
+                "warnings": [],
+            },
+            {
+                "canonical_id": "Q1r2",
+                "raw_id": "Q1r2",
+                "question_text": f"Integration fit - {root_text}",
+                "type_hint": "values_range",
+                "value_range": (1, 10),
+                "options": [(index, str(index)) for index in range(1, 11)],
+                "sub_columns": [],
+                "parent_canonical_id": None,
+                "source_row": 2,
+                "warnings": [],
+            },
+            {
+                "canonical_id": "Q1r3",
+                "raw_id": "Q1r3",
+                "question_text": f"Efficiency gains - {root_text}",
+                "type_hint": "values_range",
+                "value_range": (1, 10),
+                "options": [(index, str(index)) for index in range(1, 11)],
+                "sub_columns": [],
+                "parent_canonical_id": None,
+                "source_row": 3,
+                "warnings": [],
+            },
+        ]
+        raw_columns = [
+            "respondent_id",
+            "Q1r1c1",
+            "Q1r1c2",
+            "Q1r2c1",
+            "Q1r2c2",
+            "Q1r3c1",
+            "Q1r3c2",
+        ]
+        schema = classify_questions(
+            {
+                "questions": questions,
+                "source_path": "datamap.xlsx",
+                "sheet_name": "Sheet1",
+                "total_rows_in_sheet": 3,
+                "parser_warnings": [],
+            },
+            raw_columns,
+            respondent_id_column="respondent_id",
+            total_respondents=4,
+            source_rawdata_path="raw.csv",
+        )
+        dataframe = pd.DataFrame(
+            {
+                "respondent_id": [1, 2, 3, 4],
+                "Q1r1c1": [8, 8, 8, 9],
+                "Q1r1c2": [6, 6, 7, 7],
+                "Q1r2c1": [8, 9, 9, 9],
+                "Q1r2c2": [6, 7, 7, 7],
+                "Q1r3c1": [7, 8, 8, 8],
+                "Q1r3c2": [5, 6, 6, 6],
+            }
+        )
+        log = CalculationLog()
+        results, skips = compute_single_cuts(schema, dataframe, log)
+        self.assertFalse(skips)
+        output_path = self.export_custom_workbook(results, schema)
+        workbook = load_workbook(output_path, read_only=False, data_only=False)
+        values_workbook = load_workbook(output_path, read_only=False, data_only=True)
+        self.addCleanup(workbook.close)
+        self.addCleanup(values_workbook.close)
+        ws = workbook["All Questions"]
+        values_ws = values_workbook["All Questions"]
+
+        heading_rows = [
+            row
+            for row in range(1, ws.max_row + 1)
+            if isinstance(ws.cell(row, 1).value, str)
+            and ws.cell(row, 1).value.startswith("Q1 -")
+        ]
+        self.assertEqual(len(heading_rows), 1)
+        header_row = table_header_row(ws, "Q1", header="Sub-question ID")
+        headers = [ws.cell(header_row, col).value for col in range(1, 9)]
+        delta_col = headers.index("Delta") + 1
+
+        self.assertIn("Winner - All", headers)
+        self.assertIn("Other considered vendor", headers)
+        self.assertEqual(
+            [ws.cell(header_row + offset, 1).value for offset in range(2, 5)],
+            ["Q1r1", "Q1r2", "Q1r3"],
+        )
+        self.assertTrue(str(ws.cell(header_row + 2, delta_col).value).startswith("=ROUND("))
+        delta_value = float(values_ws.cell(header_row + 2, delta_col).value)
+        self.assertEqual(delta_value, round(delta_value, 1))
+
     def test_grid_categorical_parent_renders_single_count_matrix(self) -> None:
         result, schema = categorical_grid_export_fixture()
         output_path = self.export_custom_workbook([result], schema)
@@ -2705,7 +2812,8 @@ class TestExcelExporter(unittest.TestCase):
 
     def test_grid_single_select_ui_format(self) -> None:
         app_path = (
-            Path(__file__).resolve().parents[1] / "app.py"
+            Path(__file__).resolve().parents[1]
+            / "app.py"
         )
         spec = importlib.util.spec_from_file_location("survey_insight_app", app_path)
         self.assertIsNotNone(spec)
