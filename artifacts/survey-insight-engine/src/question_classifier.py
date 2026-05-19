@@ -626,7 +626,8 @@ def _grid_row_labels_for_spec(
 
 
 def _grid_base_sub_column_id(sub_column_id: str) -> str:
-    return re.sub(r"^(.+r\d+)c\d+$", r"\1", sub_column_id)
+    match = re.match(r"^(.+r\d+)c\d+$", sub_column_id)
+    return match.group(1) if match else sub_column_id
 
 
 def _grid_subtype_for_question(question: ParsedQuestion) -> str:
@@ -672,31 +673,31 @@ def _grid_options_look_rated(
     if value_range is None:
         return False
     low, high = value_range
-    if low < 0 or high > 10 or high <= low:
+    if low < 0 or high > 10 or high - low < 2:
         return False
-    if high - low >= 6:
-        return True
     if not labels:
         return True
-    numeric_labels = sum(1 for label in labels if _is_numeric_label(label))
-    numeric_labels += sum(
+    numeric_labels = sum(
         1
         for label in labels
-        if not _is_numeric_label(label) and _starts_with_numeric_label(label)
+        if (value := _numeric_label_value(label)) is not None
+        and low <= value <= high
     )
     return (numeric_labels / len(labels)) >= 0.8
 
 
 def _is_numeric_label(label: str) -> bool:
+    return _numeric_label_value(label) is not None
+
+
+def _numeric_label_value(label: str) -> float | None:
+    match = re.match(r"^\s*(-?\d+(?:\.\d+)?)", str(label))
+    if match is None:
+        return None
     try:
-        float(str(label).strip())
+        return float(match.group(1))
     except (TypeError, ValueError):
-        return False
-    return True
-
-
-def _starts_with_numeric_label(label: str) -> bool:
-    return re.match(r"^\s*-?\d+(?:\.\d+)?\b", str(label)) is not None
+        return None
 
 
 def _option_other_code(question: ParsedQuestion) -> int | str | None:
