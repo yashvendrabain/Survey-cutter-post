@@ -4941,9 +4941,17 @@ def _wizard_apply_overrides() -> None:
 
 def _wizard_pipeline_overrides(schema: Any, themes: dict) -> tuple[Any, dict]:
     app = _require_streamlit()
+    override_themes = app.session_state.get("wiz_theme_override")
+    import logging
+    logging.warning(
+        "WIZ_OVERRIDE_READ: theme_override=%s assignments=%s schema_override=%s",
+        override_themes if override_themes else None,
+        bool(app.session_state.get("wiz_category_assignments")),
+        bool(app.session_state.get("wiz_schema_override")),
+    )
     return (
         app.session_state.get("wiz_schema_override") or schema,
-        app.session_state.get("wiz_theme_override") or themes,
+        override_themes or themes,
     )
 
 
