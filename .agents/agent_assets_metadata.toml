@@ -120,3 +120,9 @@ id = "FeOHUZaTbRwKzvmlquZEJ"
 uri = "file://artifacts/survey-insight-engine/outputs/survey_prompt2_5_bcn.xlsx"
 type = "table"
 title = "survey_prompt2_5_bcn.xlsx (18.67 MiB)"
+
+[[outputs]]
+id = "n5_xkHOFaJ3ZH-_QgJCVu"
+uri = "file://attached_assets/clean_app.py.txt"
+type = "text"
+title = "clean_app.py (4585 lines, no wizard, sha256: a9d0e8ff...)"
