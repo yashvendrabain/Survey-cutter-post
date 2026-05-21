@@ -4775,6 +4775,17 @@ def _render_wizard_step_categories() -> None:
     app = _require_streamlit()
     from src.ui.wizard import question_display_text, question_type_label
 
+    app.markdown(
+        """
+<style>
+.wiz-cat-sidebar-item { display: block; padding: 10px 14px; margin-bottom: 6px; border-radius: 4px; border: 1px solid #E5E5E5; background: #FFFFFF; color: #1A1A1A; font-family: Arial, sans-serif; font-size: 13px; cursor: pointer; }
+.wiz-cat-sidebar-item-active { background: #CC0000; color: #FFFFFF; font-weight: 700; border-color: #CC0000; }
+.wiz-cat-sidebar-badge { float: right; font-size: 11px; opacity: 0.7; }
+.wiz-cat-questions-heading { font-size: 16px; font-weight: 700; color: #1A1A1A; margin-bottom: 16px; }
+</style>
+""",
+        unsafe_allow_html=True,
+    )
     app.markdown("### Review & edit categories")
     pending = app.session_state.get("wiz_pending_remove")
     if pending:
@@ -4784,73 +4795,139 @@ def _render_wizard_step_categories() -> None:
         yes, no, _ = app.columns([1, 1, 4])
         if yes.button("Confirm remove", key="wiz_confirm_remove", type="primary"):
             assignments = dict(app.session_state.get("wiz_category_assignments") or {})
+            removed_category = assignments.get(pending)
             assignments.pop(pending, None)
             app.session_state["wiz_category_assignments"] = assignments
             app.session_state["wiz_pending_remove"] = None
+            grouped_after_remove = _wizard_questions_by_category()
+            selected_after_remove = app.session_state.get("wiz_selected_category")
+            if selected_after_remove == removed_category and selected_after_remove not in grouped_after_remove:
+                app.session_state["wiz_selected_category"] = next(iter(grouped_after_remove), None)
             _wizard_rerun(app)
         if no.button("Cancel", key="wiz_cancel_remove"):
             app.session_state["wiz_pending_remove"] = None
             _wizard_rerun(app)
 
+    if "wiz_selected_category" not in app.session_state:
+        app.session_state["wiz_selected_category"] = None
+
     grouped = _wizard_questions_by_category()
     categories = list(grouped)
-    for category_index, category in enumerate(categories):
-        left, right = app.columns([1, 4])
-        with left:
-            app.markdown(f"<div class='wiz-category-cell'>{html.escape(category)}</div>", unsafe_allow_html=True)
-            renamed = app.text_input("Rename", value=category, key=f"wiz_rename_{category_index}_{category}", label_visibility="collapsed")
-            renamed = renamed.strip()
-            if renamed and renamed != category:
-                assignments = dict(app.session_state.get("wiz_category_assignments") or {})
-                app.session_state["wiz_category_assignments"] = {
-                    question_id: (renamed if assigned == category else assigned)
-                    for question_id, assigned in assignments.items()
-                }
-                app.session_state["wiz_empty_categories"] = [
-                    renamed if item == category else item
-                    for item in app.session_state.get("wiz_empty_categories", [])
-                ]
-                _wizard_rerun(app)
-        with right:
-            questions = grouped.get(category, [])
-            if not questions:
-                app.caption("No questions in this category yet.")
-            for row_start in range(0, len(questions), 3):
-                cols = app.columns(3)
-                for card_col, question in zip(cols, questions[row_start : row_start + 3]):
-                    with card_col:
-                        app.markdown(
-                            "<div class='wiz-card'>"
-                            f"<div class='wiz-card-id'>{html.escape(question.canonical_id)}</div>"
-                            f"<div class='wiz-card-text' title='{html.escape(question.question_text)}'>{html.escape(question_display_text(question, 40))}</div>"
-                            f"<div class='wiz-card-type'>{html.escape(question_type_label(question))}</div>"
-                            "</div>",
-                            unsafe_allow_html=True,
-                        )
-                        move_options = ["Stay"] + [item for item in categories if item != category]
-                        move_to = app.selectbox("Move to", move_options, key=f"wiz_move_{question.canonical_id}", label_visibility="collapsed")
-                        if move_to != "Stay":
-                            assignments = dict(app.session_state.get("wiz_category_assignments") or {})
-                            assignments[question.canonical_id] = move_to
-                            app.session_state["wiz_category_assignments"] = assignments
-                            _wizard_rerun(app)
-                        if app.button("Remove", key=f"wiz_remove_{question.canonical_id}"):
-                            app.session_state["wiz_pending_remove"] = question.canonical_id
-                            _wizard_rerun(app)
-        app.markdown("<div class='wiz-divider'></div>", unsafe_allow_html=True)
+    selected_category = app.session_state.get("wiz_selected_category")
+    if selected_category not in grouped:
+        selected_category = categories[0] if categories else None
+        app.session_state["wiz_selected_category"] = selected_category
 
-    if app.button("+ Add category", key="wiz_show_add_category"):
-        app.session_state["wiz_show_add_category_input"] = True
-    if app.session_state.get("wiz_show_add_category_input"):
-        new_category = app.text_input("Category name", key="wiz_new_category_name")
-        if app.button("Create", key="wiz_create_category", type="primary"):
-            name = new_category.strip()
-            if name:
-                app.session_state.setdefault("wiz_empty_categories", [])
-                if name not in app.session_state["wiz_empty_categories"]:
-                    app.session_state["wiz_empty_categories"].append(name)
-            app.session_state["wiz_show_add_category_input"] = False
+    sidebar_col, questions_col = app.columns([1, 3])
+    with sidebar_col:
+        app.markdown("#### Categories")
+        for category_index, category in enumerate(categories):
+            count = len(grouped.get(category, []))
+            active_class = " wiz-cat-sidebar-item-active" if category == selected_category else ""
+            app.markdown(
+                f"<div class='wiz-cat-sidebar-item{active_class}'>"
+                f"{html.escape(category)}"
+                f"<span class='wiz-cat-sidebar-badge'>{count}</span>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+            if app.button(
+                f"{category} ({count})",
+                key=f"wiz_select_category_{category_index}_{category}",
+                type="primary" if category == selected_category else "secondary",
+                use_container_width=True,
+            ):
+                app.session_state["wiz_selected_category"] = category
+                _wizard_rerun(app)
+
+        app.markdown("<div class='wiz-divider'></div>", unsafe_allow_html=True)
+        if app.button("+ Add category", key="wiz_show_add_category"):
+            app.session_state["wiz_show_add_category_input"] = True
+        if app.session_state.get("wiz_show_add_category_input"):
+            new_category = app.text_input("Category name", key="wiz_new_category_name")
+            if app.button("Create", key="wiz_create_category", type="primary"):
+                name = new_category.strip()
+                if name:
+                    app.session_state.setdefault("wiz_empty_categories", [])
+                    if name not in app.session_state["wiz_empty_categories"]:
+                        app.session_state["wiz_empty_categories"].append(name)
+                    app.session_state["wiz_selected_category"] = name
+                app.session_state["wiz_show_add_category_input"] = False
+                _wizard_rerun(app)
+
+    with questions_col:
+        if selected_category is None:
+            app.caption("No categories yet. Add a category to begin.")
+            return
+
+        heading_col, rename_col = app.columns([2, 3])
+        heading_col.markdown(
+            f"<div class='wiz-cat-questions-heading'>{html.escape(selected_category)}</div>",
+            unsafe_allow_html=True,
+        )
+        renamed = rename_col.text_input(
+            "Rename category",
+            value=selected_category,
+            key=f"wiz_rename_selected_{selected_category}",
+            label_visibility="collapsed",
+        ).strip()
+        if renamed and renamed != selected_category:
+            assignments = dict(app.session_state.get("wiz_category_assignments") or {})
+            app.session_state["wiz_category_assignments"] = {
+                question_id: (renamed if assigned == selected_category else assigned)
+                for question_id, assigned in assignments.items()
+            }
+            app.session_state["wiz_empty_categories"] = [
+                renamed if item == selected_category else item
+                for item in app.session_state.get("wiz_empty_categories", [])
+            ]
+            if renamed not in app.session_state.get("wiz_empty_categories", []) and not any(
+                assigned == renamed for assigned in app.session_state["wiz_category_assignments"].values()
+            ):
+                app.session_state.setdefault("wiz_empty_categories", []).append(renamed)
+            app.session_state["wiz_selected_category"] = renamed
             _wizard_rerun(app)
+
+        questions = grouped.get(selected_category, [])
+        if not questions:
+            app.caption("No questions in this category yet.")
+            return
+
+        for row_start in range(0, len(questions), 3):
+            cols = app.columns(3)
+            for card_col, question in zip(cols, questions[row_start : row_start + 3]):
+                with card_col:
+                    app.markdown(
+                        "<div class='wiz-card'>"
+                        f"<div class='wiz-card-id'>{html.escape(question.canonical_id)}</div>"
+                        f"<div class='wiz-card-text' title='{html.escape(question.question_text)}'>{html.escape(question_display_text(question, 40))}</div>"
+                        f"<div class='wiz-card-type'>{html.escape(question_type_label(question))}</div>"
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
+                    move_options = ["Stay"] + [item for item in categories if item != selected_category]
+                    move_to = app.selectbox(
+                        "Move to",
+                        move_options,
+                        key=f"wiz_move_{question.canonical_id}",
+                        label_visibility="collapsed",
+                    )
+                    if move_to != "Stay":
+                        assignments = dict(app.session_state.get("wiz_category_assignments") or {})
+                        assignments[question.canonical_id] = move_to
+                        app.session_state["wiz_category_assignments"] = assignments
+                        if not any(
+                            assigned == selected_category
+                            for qid, assigned in assignments.items()
+                            if qid != question.canonical_id
+                        ):
+                            app.session_state.setdefault("wiz_empty_categories", [])
+                            if selected_category not in app.session_state["wiz_empty_categories"]:
+                                app.session_state["wiz_empty_categories"].append(selected_category)
+                        _wizard_rerun(app)
+                    if app.button("Remove", key=f"wiz_remove_{question.canonical_id}"):
+                        app.session_state["wiz_pending_remove"] = question.canonical_id
+                        _wizard_rerun(app)
 
 
 def _render_wizard_step_demographics() -> None:
