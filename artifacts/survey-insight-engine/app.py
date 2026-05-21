@@ -2820,6 +2820,8 @@ def _section_upload() -> None:
         )
 
     if run_clicked:
+        import logging
+        logging.warning("RUN_CLICKED uploaded=%s docx_only=%s", bool(uploaded_files), docx_only)
         from src.io import load_survey_inputs
 
         app.session_state["run_complete"] = False
