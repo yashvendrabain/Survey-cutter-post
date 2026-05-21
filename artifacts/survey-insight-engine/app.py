@@ -2818,25 +2818,26 @@ def _section_upload() -> None:
         )
 
     # -- Setup wizard (appears after upload, before Run Analysis) --
-    if uploaded_files and not app.session_state.get("wiz_complete") and not app.session_state.get("run_complete"):
+    wizard_active = bool(uploaded_files) and not app.session_state.get("wiz_complete") and not app.session_state.get("run_complete")
+    if wizard_active:
         _render_setup_wizard(uploaded_files)
 
     ready = bool(uploaded_files) and not docx_only
-    centre_left, centre_mid, centre_right = app.columns([2, 3, 2])
-    with centre_mid:
-        run_clicked = app.button(
-            "Run analysis",
-            type="primary",
-            disabled=not ready,
-            use_container_width=True,
-        )
+    run_clicked = False
+    if not wizard_active:
+        centre_left, centre_mid, centre_right = app.columns([2, 3, 2])
+        with centre_mid:
+            run_clicked = app.button(
+                "Run analysis",
+                type="primary",
+                disabled=not ready,
+                use_container_width=True,
+            )
 
     if app.session_state.pop("_wizard_run_requested", False):
         run_clicked = True
 
     if run_clicked:
-        import logging
-        logging.warning("RUN_CLICKED uploaded=%s docx_only=%s", bool(uploaded_files), docx_only)
         from src.io import load_survey_inputs
 
         app.session_state["run_complete"] = False
@@ -4739,7 +4740,7 @@ def _render_wizard_nav(location: str) -> None:
         if next_col.button("Next", type="primary", key=f"wiz_next_{location}"):
             app.session_state["wiz_step"] = min(5, step + 1)
             _wizard_rerun(app)
-    elif next_col.button("Run Analysis ?", type="primary", key=f"wiz_run_{location}"):
+    elif location == "bottom" and next_col.button("Run Analysis →", type="primary", key=f"wiz_run_{location}"):
         _wizard_apply_overrides()
         app.session_state["wiz_complete"] = True
         app.session_state["_wizard_run_requested"] = True
@@ -4926,13 +4927,6 @@ def _render_wizard_step_crosscut() -> None:
 
 
 def _wizard_apply_overrides() -> None:
-    import logging
-    app_dbg = _require_streamlit()
-    logging.warning(
-        "WIZ_APPLY_CALLED: wiz_schema_present=%s assignments_present=%s",
-        app_dbg.session_state.get("wiz_schema") is not None,
-        bool(app_dbg.session_state.get("wiz_category_assignments")),
-    )
     app = _require_streamlit()
     schema = app.session_state.get("wiz_schema")
     if schema is None:
@@ -4948,17 +4942,9 @@ def _wizard_apply_overrides() -> None:
 
 def _wizard_pipeline_overrides(schema: Any, themes: dict) -> tuple[Any, dict]:
     app = _require_streamlit()
-    override_themes = app.session_state.get("wiz_theme_override")
-    import logging
-    logging.warning(
-        "WIZ_OVERRIDE_READ: theme_override=%s assignments=%s schema_override=%s",
-        override_themes if override_themes else None,
-        bool(app.session_state.get("wiz_category_assignments")),
-        bool(app.session_state.get("wiz_schema_override")),
-    )
     return (
         app.session_state.get("wiz_schema_override") or schema,
-        override_themes or themes,
+        app.session_state.get("wiz_theme_override") or themes,
     )
 
 
