@@ -1,0 +1,186 @@
+Task: Add a 5-step setup wizard to app.py. Add only. Do not regenerate, do not refactor, do not restyle anything that currently exists. The wizard appears between the existing upload section and the existing Run Analysis button.
+
+Hard scope rules (violating any of these = iteration rejected)
+
+Output format MUST be a unified diff against the current app.py, NOT a replacement file. Use the format produced by git diff --no-color. If your changes would require regenerating more than 250 lines, STOP and report the conflict — do not silently regenerate.
+Read-only protected list. Do NOT modify, refactor, rename, restyle, or move any of these (they already exist in app.py):
+
+_render_header() function (Bain red header bar)
+The horizontal nav strip (Upload / Filter / Single cuts / Cross cuts / AI analysis / Downloads)
+The with st.sidebar: block (branding, getting-started checklist, help dropdown)
+The st.file_uploader widget with key unified_upload and its multi-file accept
+The _detect_scenario integration via src.io
+The "Apply a global filter (optional)" section / _section_global_filter() or equivalent
+The Run Analysis button styling, key, position, and click handler
+All _section_* functions (single cuts, cross cuts, AI analysis, downloads)
+The question navigator sidebar that appears after run_complete is True
+Single-cut tables, bar charts, Count/% toggle, outlier badges, Copy TSV button
+Cross-cut builder UI
+Download workbook button and download logic
+All CSS classes already defined (including the .stButton > button styling)
+All st.session_state keys NOT prefixed with wiz_
+
+
+Single insertion point. The wizard renders as ONE new section between two existing render calls in the page flow:
+
+AFTER the upload section completes (files uploaded + parsed + classified)
+BEFORE the existing Run Analysis button is rendered
+
+
+Session state additions — all prefixed wiz_:
+
+wiz_step (int, 1-5, default 1)
+wiz_complete (bool, default False) — when True, the wizard is hidden and the existing Run Analysis button area renders normally
+wiz_category_assignments (dict: canonical_id → category_name)
+wiz_selected_demographics (list of canonical_ids)
+wiz_num_custom_filters (int, default 2)
+wiz_num_per_question_filters (int, default 1)
+wiz_crosscut_consolidation (str: "one_sheet" or "separate_sheets", default "one_sheet")
+
+
+Wizard visibility rule:
+python# Pseudocode for the gating
+if uploaded_files and schema_classified and not st.session_state.get("wiz_complete") and not st.session_state.get("run_complete"):
+    _render_setup_wizard()  # the new function
+When wiz_complete = True OR run_complete = True, the wizard is hidden and existing flow takes over.
+Step 5's "Run Analysis →" button: sets wiz_complete = True and either triggers the same handler the existing Run Analysis button uses, OR sets a flag that causes the next rerun to render the existing Run Analysis button (which the user clicks normally). Pick whichever is less invasive. Do NOT duplicate the engine call logic.
+New files allowed: src/ui/wizard.py (pure helpers, no Streamlit imports), tests/test_ui_wizard.py. That's it.
+Do not delete or comment out ANY existing code. Add only.
+
+
+The wizard itself
+Progress stepper at top of wizard area: horizontal row of 5 numbered circles + labels. Implementation via st.columns(5) + st.markdown(unsafe_allow_html=True) rendering custom HTML circles.
+
+Completed steps: red #CC0000 filled circle with white checkmark
+Current step: red outlined circle, bold label below
+Upcoming steps: grey #999999 outlined circle, muted label
+
+Navigation buttons: Back / Next pair rendered BOTH at top and bottom of each step's body. Both use the same session state and trigger the same step change.
+
+Step 1 — Review & edit categories (tabular row-per-category layout)
+User asked specifically for this layout. NOT a kanban with side-by-side columns.
+Per category row, two zones:
+
+Left zone (~20% width): category name in a cell with red #CC0000 background, white bold text, 14px. Click the cell to enable inline rename (text input that saves on blur).
+Right zone (~80% width): horizontal row of question cards. Cards have fixed width (~200px). Cards wrap to next visual row inside the same right zone if they exceed available width.
+
+Each question card contains (top to bottom):
+
+Canonical ID — small grey #666666, 11px
+Question text truncated to 40 chars (full text on hover via title attribute), 13px
+Question type label (Single-select / Grid / Multi-select / Numeric) — italic grey, 11px
+Bottom-left of card: "Move to" dropdown (~70% of card width) listing all categories except current
+Bottom-right of card: "Remove" button (~30% of card width) — triggers a confirmation dialog before removing the question from analysis
+
+Below all category rows:
+
+"+ Add category" button. Clicking opens an inline text input + "Create" submit.
+
+Confirmation dialog for Remove: use st.dialog or a session-state-based modal. Message: "Remove [question text] from the analysis? It will not appear in the output workbook." Confirm / Cancel buttons.
+Persistence: when user moves a question or removes one or renames a category, update wiz_category_assignments immediately and trigger a rerun.
+
+Step 2 — Confirm demographic filters
+Layout: vertical list of demographic candidates with checkboxes.
+Auto-detected demographics (where is_demographic == True on QuestionSpec) appear pre-checked. Each row shows:
+
+Checkbox (left)
+Canonical ID + truncated question text
+Small grey caption: "5 distinct values: USA, Canada, UK, ..."
+
+Below the list:
+
+"+ Add another question as a filter" — dropdown listing single-select / categorical questions not currently in the demographic list. Selecting one adds it (pre-checked).
+
+Persistence: wiz_selected_demographics = list of currently-checked canonical_ids.
+
+Step 3 — Custom workbook filters
+Content:
+
+H2: "Custom workbook filters"
+Body: "Custom filters let partners set arbitrary filters on the entire workbook in addition to demographic ones. How many would you like?"
+st.number_input(min_value=0, max_value=5, value=2, step=1) → bound to wiz_num_custom_filters
+Caption: "Setting saved — will be wired to the exporter in the next iteration."
+
+
+Step 4 — Per-question local filters
+Content: same pattern as Step 3.
+
+H2: "Per-question filters"
+Body: "How many filter rows should appear under each question block?"
+st.number_input(min_value=0, max_value=3, value=1, step=1) → wiz_num_per_question_filters
+Same "saved for next iteration" caption.
+
+
+Step 5 — Cross-cut output format
+Content:
+
+H2: "Cross-cut output format"
+Body: "When you generate cross-cuts from the dashboard, where should they live?"
+st.radio with two options:
+
+"One consolidated sheet" (default)
+"Separate sheet per cross-cut"
+
+
+Bind to wiz_crosscut_consolidation
+Same "saved for next iteration" caption.
+
+The Step 5 final button reads "Run Analysis →" in Bain red. Clicking it:
+
+Sets wiz_complete = True
+Sets run_clicked = True (or triggers the same handler the existing Run Analysis button uses)
+Triggers a rerun
+
+
+Engine integration (minimal)
+Only Steps 1 and 2 actually affect the workbook output in this iteration. Steps 3/4/5 store values in session state but don't wire to the exporter yet (that's a follow-up iteration).
+For Step 1 (category assignments):
+Find the call site where the exporter is invoked with theme/category data. BEFORE the call, wrap the existing theme dict with the user's overrides from wiz_category_assignments. Convert assignments → exporter-compatible theme structure via a helper in src/ui/wizard.py called themes_from_wizard_assignments(schema, assignments) -> dict. Pass the wrapped dict to the existing exporter call.
+For Step 2 (selected demographics):
+BEFORE the exporter call, wrap the schema so that QuestionSpec.is_demographic reflects the user's choice (set True only for canonical_ids in wiz_selected_demographics, False for all others). Use dataclasses.replace. Pass the wrapped schema to the existing exporter call.
+DO NOT modify the exporter signature or any exporter internal code. All adaptation happens at the app.py call site.
+
+Styling (minimal, consultant-grade, NOT generic Streamlit)
+Add a new CSS block scoped to the wizard area only. Existing CSS untouched.
+Required visual treatment:
+
+White background
+Bain red #CC0000 for active state, completed steps, Step 5 Run Analysis button, category cell backgrounds
+Text: #1A1A1A for body, #666666 for secondary, #FFFFFF on red backgrounds
+Font family: Arial, sans-serif (matches existing styling)
+Generous padding: 24px between major sections, 16px between cards
+1px solid #E5E5E5 dividers between category rows
+Flat — no shadows, no gradients
+
+Do NOT use emojis. Do NOT use Streamlit's default button colors anywhere in the wizard area — use custom HTML buttons via st.markdown where needed, with clear visual hierarchy.
+
+Constraints
+
+All 416 existing tests must still pass
+Add 5-8 tests in tests/test_ui_wizard.py for the pure helpers in src/ui/wizard.py (category assignment merging, theme conversion, demographic detection, distinct-value preview, normalize counts)
+
+Codex recurring regressions to pre-empt:
+
+parents[1] / "artifacts" / "survey-insight-engine" / "app.py" → parents[1] / "app.py"
+Stale AI-label assertions ("Single Select Export Question" → "Single Select Export")
+LONG_ID exact match → startswith prefix
+_grid_base_sub_column_id regex tightened version (only if classifier is touched — should NOT be touched this iteration)
+
+
+Deliverable
+
+Unified diff against the current app.py (use git diff format)
+New file: src/ui/wizard.py with helpers (no Streamlit imports)
+New file: tests/test_ui_wizard.py with 5-8 helper tests
+New file: src/ui/__init__.py (empty package marker)
+Report including:
+
+Lines added to app.py
+Lines DELETED from app.py (target: 0)
+List of every existing function or session state key you touched (target: empty)
+Confirmation that protected list items 1-10 are unmodified
+Test count
+
+
+
+If any constraint forces you to violate the read-only protected list, STOP and report the specific conflict. Do not silently regenerate or refactor.
