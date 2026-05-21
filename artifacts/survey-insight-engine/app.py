@@ -4926,6 +4926,13 @@ def _render_wizard_step_crosscut() -> None:
 
 
 def _wizard_apply_overrides() -> None:
+    import logging
+    app_dbg = _require_streamlit()
+    logging.warning(
+        "WIZ_APPLY_CALLED: wiz_schema_present=%s assignments_present=%s",
+        app_dbg.session_state.get("wiz_schema") is not None,
+        bool(app_dbg.session_state.get("wiz_category_assignments")),
+    )
     app = _require_streamlit()
     schema = app.session_state.get("wiz_schema")
     if schema is None:
