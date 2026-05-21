@@ -1,0 +1,62 @@
+Apply the wizard delivery to the clean baseline.
+Files to apply:
+
+app.py — 4,957 lines (was 4,585, +372 lines added, 0 deleted). Replaces artifacts/survey-insight-engine/app.py.
+src/ui/__init__.py — empty file at artifacts/survey-insight-engine/src/ui/__init__.py
+src/ui/wizard.py — pure helpers, no Streamlit imports. Goes at artifacts/survey-insight-engine/src/ui/wizard.py
+tests/test_ui_wizard.py — 7 helper tests. Goes at artifacts/survey-insight-engine/tests/test_ui_wizard.py
+
+What this iteration ships:
+
+5-step setup wizard between upload and Run Analysis button
+Step 1: row-per-category tabular layout with red category cells, question cards, Move/Remove controls
+Step 2: demographic filter checkboxes + add-question dropdown
+Step 3-5: custom filter count, per-question filter count, cross-cut consolidation
+Step 5 final button "Run Analysis →" triggers the existing handler via _wizard_run_requested flag (no duplicate engine logic)
+All wizard state under wiz_* keys
+Wizard category and demographic choices flow into the existing exporter via overrides applied before _run_pipeline
+Zero existing UI elements modified (header, sidebar, nav, single cuts, cross cuts, filters, downloads all preserved)
+
+Heads-up — Codex recurring regressions, pre-empt:
+
+parents[1] / "artifacts" / "survey-insight-engine" / "app.py" → parents[1] / "app.py"
+Stale AI-label assertions
+LONG_ID startswith match
+
+Run after applying:
+
+pytest full suite. Codex reported 424 + 7 wizard tests = 431. Confirm exact count.
+CRITICAL — test the wizard end-to-end at the bare deployment URL in incognito:
+
+Upload Rawdata_sample.xlsx + Datamap_sample.xlsx
+Wait for parse/classify (should complete in ~5 sec)
+Verify wizard appears between upload section and Run Analysis button
+Walk through all 5 steps:
+
+Step 1: row-per-category layout, can rename categories, can move questions, can remove with confirmation
+Step 2: demographics pre-checked, can add/remove, "+ Add question" dropdown works
+Step 3-5: number inputs and radio work
+
+
+Click "Run Analysis →" on Step 5
+Verify analysis completes (single-cut tables appear)
+Verify category overrides are honored (a question moved from Demographics → Pricing appears under Pricing in the output)
+Download workbook button works
+
+
+CRITICAL — verify nothing else regressed:
+
+Red Bain header bar present
+Sidebar question navigator appears after Run Analysis
+Cross-cut builder accessible
+Filters work
+Global filter section still there
+
+
+
+Report:
+
+Test count
+Each verification item pass/fail
+1 screenshot of the wizard's Step 1 (Categories view)
+Any architectural snags

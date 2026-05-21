@@ -487,8 +487,7 @@ def _inject_global_css() -> None:
 def _inject_theme_css() -> None:
     """Backwards-compatible alias retained for any internal callers."""
     _inject_global_css()
-
-
+    
 def _section_header(
     num: str, title: str, anchor: str | None = None, meta: str = ""
 ) -> None:
