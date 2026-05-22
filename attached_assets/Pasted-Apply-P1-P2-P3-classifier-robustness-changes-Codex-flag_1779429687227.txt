@@ -1,0 +1,71 @@
+Apply P1/P2/P3/classifier-robustness changes. Codex flagged a path snag — verify before applying.
+Codex's snag: Codex says artifacts/survey-insight-engine/src/ only contains ui/, and the app imports classifier/exporter/models from root src/ via sys.path injection. Codex patched root src/.
+Verify first:
+bashls artifacts/survey-insight-engine/src/
+ls src/
+grep -rn "sys.path" artifacts/survey-insight-engine/app.py | head -5
+python3 -c "import sys; sys.path.insert(0, 'artifacts/survey-insight-engine'); from src.question_classifier import classify_grid_subtype; print('imported from:', __import__('src.question_classifier').question_classifier.__file__)"
+Confirm which path the running app actually imports from. If Codex is right (root src/), proceed with their files. If not, the patches need to go to artifacts/survey-insight-engine/src/.
+Files to apply (place at whichever location verification confirms):
+
+src/question_classifier.py (944 lines) — multi-signal classifier, post-merge reclassification, confidence scoring
+src/excel_exporter.py (7,484 lines) — Q26 c-column pivot in GRID_CATEGORICAL, % formatting, Total responses footer, low-confidence Warnings rows
+src/models.py (922 lines) — adds classification_confidence_low: bool = False to QuestionSpec
+Updated tests/test_question_classifier.py and tests/test_excel_exporter.py
+
+What this iteration ships:
+
+Q30/Q36 in BCN: should NOW render as GRID_RATED dual-block (left # of resp/%, right Winner/Other/Delta × Mean/Median) — fixed by post-merge reclassification
+Q26 in BCN: should NOW pivot c-columns into category columns (rows = stakeholder groups, cols = role categories)
+% formatting: grid cells show 39.8% not 0.398
+Total responses footer: appears for all multi-select/categorical/binary grid blocks
+Multi-signal classifier with confidence scoring
+Low-confidence questions surfaced in Warnings sheet
+
+Codex recurring regressions — pre-empt:
+
+parents[1] / "artifacts" / "survey-insight-engine" / "app.py" → parents[1] / "app.py"
+Stale AI-label assertions
+LONG_ID startswith match
+_grid_base_sub_column_id regex tightened (r"^(.+r\d+)c\d+$")
+_grid_row_labels_for_spec fallback preserved
+
+Codex confirmed example confidence scores from their synthetic tests:
+
+Q30-style: GRID_RATED, 0.667
+Q36-style: GRID_RATED, 0.667
+Q26-style: GRID_CATEGORICAL, 0.889
+Q38-style: GRID_BINARY_SELECT, 0.833
+
+Run after replacing:
+
+pytest — Codex reported 432. Confirm.
+Generate small sample workbook → outputs/survey_prompt2_6_sample.xlsx. Confirm clean generation.
+Generate BCN workbook → outputs/survey_prompt2_6_bcn.xlsx. Standard streaming workflow.
+
+CRITICAL BCN verification:
+
+Heading-count dict (expected unchanged from 2.5):
+Q26: 1, Q30: 1, Q36: 1, Q38: >1, Q41: 0 or 1
+
+Q30 layout (most important check) — does the block now show dual-block format?
+
+Left table: # of respondents | % of respondents per criterion
+Right table: column groups Winner - All | Other considered vendor | Delta × Mean | Median
+Paste the first 5 data rows of the Q30 block so I can verify the actual layout
+
+
+Q36 layout — same check as Q30
+Q26 layout (P2 check) — c-column pivot:
+
+Rows = stakeholder groups (one per r-number)
+Columns = role categories (one per c-column, count + % side-by-side)
+Paste the first 5 data rows of the Q26 block
+
+
+% formatting — open the workbook in Excel briefly, confirm % cells show "39.8%" not "0.398"
+Total responses footer — confirm Q26, Q41, multi-select blocks show BOTH "Total respondents" and "Total responses" rows. Single-select and rated grids show ONLY "Total respondents".
+Warnings sheet — confirm low-confidence questions section exists. Paste first 5 rows if any low-confidence questions exist.
+Q38 regression — still binary-select, unchanged
+
+If any of items 2/3/4 are wrong, paste the actual block content so we can diagnose. Do not patch silently.
