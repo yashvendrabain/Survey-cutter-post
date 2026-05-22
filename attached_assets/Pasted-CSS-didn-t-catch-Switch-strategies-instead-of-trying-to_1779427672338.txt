@@ -1,0 +1,69 @@
+CSS didn't catch. Switch strategies — instead of trying to hide the duplicate button, REMOVE the styled HTML div entirely and just style the Streamlit button itself.
+The cleaner fix: only render the Streamlit button per category (which captures clicks reliably), and style THAT button to look like our designed sidebar item via CSS.
+In _render_wizard_step_categories(), find this block (~line 4818-4830):
+pythonfor category_index, category in enumerate(categories):
+    count = len(grouped.get(category, []))
+    active_class = " wiz-cat-sidebar-item-active" if category == selected_category else ""
+    app.markdown(
+        f"<div class='wiz-cat-sidebar-item{active_class}'>"
+        f"{html.escape(category)}"
+        f"<span class='wiz-cat-sidebar-badge'>{count}</span>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    if app.button(
+        f"{category} ({count})",
+        key=f"wiz_select_category_{category_index}_{category}",
+        type="primary" if category == selected_category else "secondary",
+        use_container_width=True,
+    ):
+        app.session_state["wiz_selected_category"] = category
+        _wizard_rerun(app)
+Replace with:
+pythonfor category_index, category in enumerate(categories):
+    count = len(grouped.get(category, []))
+    is_active = category == selected_category
+    # Render as a single Streamlit button styled to look like our sidebar item via CSS
+    button_label = f"{category}  ·  {count}"
+    if app.button(
+        button_label,
+        key=f"wiz_select_category_{category_index}_{category}",
+        type="primary" if is_active else "secondary",
+        use_container_width=True,
+    ):
+        app.session_state["wiz_selected_category"] = category
+        _wizard_rerun(app)
+Notice: the app.markdown(...) rendering the HTML div is removed entirely. Now only the Streamlit button shows per category.
+Then update the CSS block (around line 4774-4785) to style the buttons themselves:
+css/* Wizard category sidebar buttons — style Streamlit buttons to look like sidebar items */
+.stButton > button[kind="secondary"][data-testid*="wiz_select_category"] {
+    background: #FFFFFF !important;
+    color: #1A1A1A !important;
+    border: 1px solid #E5E5E5 !important;
+    text-align: left !important;
+    font-family: Arial, sans-serif !important;
+    font-size: 13px !important;
+    font-weight: 400 !important;
+    padding: 10px 14px !important;
+    justify-content: flex-start !important;
+}
+.stButton > button[kind="primary"][data-testid*="wiz_select_category"] {
+    background: #CC0000 !important;
+    color: #FFFFFF !important;
+    border: 1px solid #CC0000 !important;
+    text-align: left !important;
+    font-family: Arial, sans-serif !important;
+    font-size: 13px !important;
+    font-weight: 700 !important;
+    padding: 10px 14px !important;
+    justify-content: flex-start !important;
+}
+If the data-testid*="wiz_select_category" selector doesn't work (Streamlit may not expose the key in data-testid), use a simpler version that styles ALL buttons in the sidebar column. The wizard's right column doesn't have buttons of the same type so collateral risk is low.
+Use CRLF-preserving Python patch. Restart Streamlit. Verify in incognito that:
+
+Only ONE element per category appears in the sidebar
+Selected category has red background, white text
+Unselected categories have white background, dark text, grey border
+Count appears next to the name
+
+Report what it looks like.

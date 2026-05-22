@@ -4778,14 +4778,13 @@ def _render_wizard_step_categories() -> None:
     app.markdown(
         """
 <style>
-.wiz-cat-sidebar-item { display: block; padding: 10px 14px; margin-bottom: 6px; border-radius: 4px; border: 1px solid #E5E5E5; background: #FFFFFF; color: #1A1A1A; font-family: Arial, sans-serif; font-size: 13px; cursor: pointer; position: relative; }
-.wiz-cat-sidebar-item-active { background: #CC0000; color: #FFFFFF; font-weight: 700; border-color: #CC0000; }
-.wiz-cat-sidebar-badge { float: right; font-size: 11px; opacity: 0.7; }
 .wiz-cat-questions-heading { font-size: 16px; font-weight: 700; color: #1A1A1A; margin-bottom: 16px; }
-/* Collapse the duplicate Streamlit button that sits under each sidebar item div; keep it clickable as a transparent overlay above the styled div. */
-.wiz-cat-sidebar-item + div { margin-top: -44px; margin-bottom: 6px; position: relative; z-index: 2; }
-.wiz-cat-sidebar-item + div .stButton > button { opacity: 0 !important; height: 44px !important; min-height: 44px !important; padding: 0 !important; border: none !important; background: transparent !important; box-shadow: none !important; color: transparent !important; cursor: pointer !important; }
-.wiz-cat-sidebar-item + div .stButton > button:hover, .wiz-cat-sidebar-item + div .stButton > button:focus { background: transparent !important; border: none !important; box-shadow: none !important; }
+/* Hidden marker: anchors CSS that restyles the next stButton as a sidebar pill. */
+.wiz-cat-btn-marker { display: none; }
+.wiz-cat-btn-marker + div .stButton > button { background: #FFFFFF !important; color: #1A1A1A !important; border: 1px solid #E5E5E5 !important; text-align: left !important; justify-content: flex-start !important; padding: 10px 14px !important; margin-bottom: 6px !important; font-family: Arial, sans-serif !important; font-size: 13px !important; font-weight: 400 !important; border-radius: 4px !important; box-shadow: none !important; }
+.wiz-cat-btn-marker + div .stButton > button[kind="primary"] { background: #CC0000 !important; color: #FFFFFF !important; border: 1px solid #CC0000 !important; font-weight: 700 !important; }
+.wiz-cat-btn-marker + div .stButton > button:hover { background: #F5F5F5 !important; border-color: #CCCCCC !important; color: #1A1A1A !important; }
+.wiz-cat-btn-marker + div .stButton > button[kind="primary"]:hover { background: #B30000 !important; border-color: #B30000 !important; color: #FFFFFF !important; }
 </style>
 """,
         unsafe_allow_html=True,
@@ -4827,18 +4826,12 @@ def _render_wizard_step_categories() -> None:
         app.markdown("#### Categories")
         for category_index, category in enumerate(categories):
             count = len(grouped.get(category, []))
-            active_class = " wiz-cat-sidebar-item-active" if category == selected_category else ""
-            app.markdown(
-                f"<div class='wiz-cat-sidebar-item{active_class}'>"
-                f"{html.escape(category)}"
-                f"<span class='wiz-cat-sidebar-badge'>{count}</span>"
-                "</div>",
-                unsafe_allow_html=True,
-            )
+            is_active = category == selected_category
+            app.markdown("<div class='wiz-cat-btn-marker'></div>", unsafe_allow_html=True)
             if app.button(
                 f"{category} ({count})",
                 key=f"wiz_select_category_{category_index}_{category}",
-                type="primary" if category == selected_category else "secondary",
+                type="primary" if is_active else "secondary",
                 use_container_width=True,
             ):
                 app.session_state["wiz_selected_category"] = category
