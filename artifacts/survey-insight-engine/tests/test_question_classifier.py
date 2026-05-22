@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 from src.models import QuestionType
-from src.question_classifier import classify_questions
+from src.question_classifier import classify_grid_subtype, classify_questions
 
 
 CLASSIFIER_DATA_MAP = {
@@ -1110,6 +1110,130 @@ class TestQuestionClassifier(unittest.TestCase):
         question = schema.get_question("Q404")
         self.assertIsNotNone(question)
         self.assertEqual(question.question_text, "Follow-up for prior selection")
+
+    def test_ambiguous_grid_sets_low_confidence_flag(self) -> None:
+        schema = classify_with_extra_questions(
+            [
+                {
+                    "canonical_id": "QAmbiguous",
+                    "raw_id": "QAmbiguous",
+                    "question_text": "Rate stakeholder role category",
+                    "type_hint": "values_range",
+                    "value_range": (1, 4),
+                    "options": [(1, "1"), (2, "Two"), (3, "3"), (4, "Four")],
+                    "sub_columns": [("QAmbiguousr1", "Ease"), ("QAmbiguousr2", "Fit")],
+                    "parent_canonical_id": None,
+                    "source_row": 90,
+                    "warnings": [],
+                },
+            ],
+            ["QAmbiguousr1", "QAmbiguousr2"],
+        )
+        question = schema.get_question("QAmbiguous")
+
+        self.assertIsNotNone(question)
+        self.assertTrue(question.classification_confidence_low)
+
+    def test_grid_subtype_non_numeric_likert_is_categorical(self) -> None:
+        question = {
+            "canonical_id": "QLikert",
+            "raw_id": "QLikert",
+            "question_text": "Agreement scale",
+            "type_hint": "values_range",
+            "value_range": (1, 5),
+            "options": [
+                (1, "Strongly disagree"),
+                (2, "Disagree"),
+                (3, "Neutral"),
+                (4, "Agree"),
+                (5, "Strongly agree"),
+            ],
+            "sub_columns": [("QLikertr1", "Ease"), ("QLikertr2", "Fit")],
+            "parent_canonical_id": None,
+            "source_row": 90,
+            "warnings": [],
+        }
+
+        subtype, confidence = classify_grid_subtype(question, {"QLikertr1", "QLikertr2"})
+
+        self.assertEqual(subtype, "GRID_CATEGORICAL")
+        self.assertGreaterEqual(confidence, 0.4)
+
+    def test_grid_subtype_scores_q26_style_binary_encoded_roles_as_categorical(self) -> None:
+        question = {
+            "canonical_id": "Q26r1",
+            "raw_id": "Q26r1",
+            "question_text": "IT / Technical - What role did each stakeholder play",
+            "type_hint": "values_range",
+            "value_range": (0, 1),
+            "options": [
+                (1, "Blocked Vendors"),
+                (2, "Scored Vendors"),
+                (3, "Recommended for or against"),
+                (4, "Restricted number to be considered"),
+                (5, "Other"),
+            ],
+            "sub_columns": [],
+            "parent_canonical_id": None,
+            "source_row": 90,
+            "warnings": [],
+        }
+
+        subtype, confidence = classify_grid_subtype(question, {"Q26r1c1", "Q26r1c2"})
+
+        self.assertEqual(subtype, "GRID_CATEGORICAL")
+        self.assertGreaterEqual(confidence, 0.5)
+
+    def test_grid_subtype_scores_q30_style_rating_labels_as_rated(self) -> None:
+        question = {
+            "canonical_id": "Q30r1",
+            "raw_id": "Q30r1",
+            "question_text": "Pre-purchase familiarity - Please rate from 0-10",
+            "type_hint": "values_range",
+            "value_range": (1, 12),
+            "options": [
+                (1, "0 (extremely low)"),
+                (2, "1"),
+                (3, "2"),
+                (4, "3"),
+                (5, "4"),
+                (6, "5"),
+                (7, "6"),
+                (8, "7"),
+                (9, "8"),
+                (10, "9"),
+                (11, "10 (extremely high)"),
+                (12, "Don't know"),
+            ],
+            "sub_columns": [],
+            "parent_canonical_id": None,
+            "source_row": 90,
+            "warnings": [],
+        }
+
+        subtype, confidence = classify_grid_subtype(question, {"Q30r1c1", "Q30r1c2"})
+
+        self.assertEqual(subtype, "GRID_RATED")
+        self.assertGreaterEqual(confidence, 0.5)
+
+    def test_grid_subtype_scores_rejection_prefixes_as_binary_select(self) -> None:
+        question = {
+            "canonical_id": "Q38",
+            "raw_id": "Q38",
+            "question_text": "Please select all that apply",
+            "type_hint": "values_range",
+            "value_range": (0, 1),
+            "options": [(1, "Yes"), (2, "NO TO: Yes")],
+            "sub_columns": [("Q38r1", "Discount"), ("Q38r2", "Support")],
+            "parent_canonical_id": None,
+            "source_row": 90,
+            "warnings": [],
+        }
+
+        subtype, confidence = classify_grid_subtype(question, {"Q38r1", "Q38r2"})
+
+        self.assertEqual(subtype, "GRID_BINARY_SELECT")
+        self.assertGreaterEqual(confidence, 0.6)
 
 
 if __name__ == "__main__":

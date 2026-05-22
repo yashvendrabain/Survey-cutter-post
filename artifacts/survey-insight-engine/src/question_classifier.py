@@ -71,6 +71,13 @@ _TRAILING_PUNCTUATION = ".,;:!?- "
 GRID_RATED = "GRID_RATED"
 GRID_CATEGORICAL = "GRID_CATEGORICAL"
 GRID_BINARY_SELECT = "GRID_BINARY_SELECT"
+_GRID_SUBTYPES = (GRID_RATED, GRID_CATEGORICAL, GRID_BINARY_SELECT)
+_GRID_CONFIDENCE_LOW_THRESHOLD = 0.4
+_LABEL_SIGNAL_WEIGHT = 0.4
+_VALUE_RANGE_SIGNAL_WEIGHT = 0.2
+_SUB_COLUMN_SIGNAL_WEIGHT = 0.2
+_REJECTION_SIGNAL_WEIGHT = 0.3
+_TEXT_SIGNAL_WEIGHT = 0.1
 _REJECTION_PREFIXES = (
     "NO TO: ",
     "NOT: ",
@@ -184,6 +191,12 @@ def _build_question_spec(
         missing = tuple(column for column in expected_columns if column not in raw_column_set)
         exclusion_reason = "missing grid raw columns: " + ", ".join(missing)
 
+    possible_role: str | None = None
+    classification_confidence_low = False
+    if question_type is QuestionType.GRID_SINGLE_SELECT:
+        possible_role, confidence = classify_grid_subtype(question, raw_column_set)
+        classification_confidence_low = confidence < _GRID_CONFIDENCE_LOW_THRESHOLD
+
     spec = QuestionSpec(
         question_id=question["raw_id"],
         canonical_id=question["canonical_id"],
@@ -199,11 +212,8 @@ def _build_question_spec(
         grid_row_labels=grid_row_labels,
         option_other_code=_option_other_code(question),
         conditional_on=conditional_on,
-        possible_role=(
-            _grid_subtype_for_question(question)
-            if question_type is QuestionType.GRID_SINGLE_SELECT
-            else None
-        ),
+        possible_role=possible_role,
+        classification_confidence_low=classification_confidence_low,
     )
     return replace(
         spec,
@@ -290,7 +300,7 @@ def _merge_sibling_group(
     )
     root_text = _sibling_question_root_text(ordered_members)
 
-    return QuestionSpec(
+    merged_spec = QuestionSpec(
         question_id=f"[{parent_id}]",
         canonical_id=parent_id,
         question_text=root_text,
@@ -308,6 +318,12 @@ def _merge_sibling_group(
         option_other_code=ordered_members[0].option_other_code,
         is_demographic=False,
         conditional_on=conditional_on,
+    )
+    merged_role, confidence = classify_grid_subtype(merged_spec, raw_column_set)
+    return replace(
+        merged_spec,
+        possible_role=merged_role,
+        classification_confidence_low=confidence < _GRID_CONFIDENCE_LOW_THRESHOLD,
     )
 
 
@@ -654,19 +670,186 @@ def _grid_subtype_for_question(question: ParsedQuestion) -> str:
     binary grids; everything else is a categorical grid.
     """
 
-    labels = [label for _code, label in question["options"]]
-    return _grid_subtype_from_parts(question["value_range"], labels)
+    subtype, _confidence = classify_grid_subtype(question, set())
+    return subtype
+
+
+def classify_grid_subtype(
+    question: ParsedQuestion | QuestionSpec,
+    raw_column_set: set[str] | None = None,
+) -> tuple[str, float]:
+    """Classify a grid subtype using several weak and strong signals."""
+
+    labels = _grid_option_labels(question)
+    value_range = _grid_value_range(question)
+    raw_columns = _grid_signal_columns(question, raw_column_set or set())
+    question_text = _grid_question_text(question)
+    scores = {subtype: 0.0 for subtype in _GRID_SUBTYPES}
+    max_possible = 0.0
+
+    if labels:
+        max_possible += _LABEL_SIGNAL_WEIGHT
+        numeric_values = [
+            value for label in labels if (value := _numeric_label_value(label)) is not None
+        ]
+        numeric_ratio = len(numeric_values) / len(labels)
+        if _labels_have_rejection_prefix(labels):
+            scores[GRID_BINARY_SELECT] += _LABEL_SIGNAL_WEIGHT
+        elif _labels_are_binary_select(labels):
+            scores[GRID_BINARY_SELECT] += _LABEL_SIGNAL_WEIGHT
+        elif numeric_ratio >= 0.8 and _numeric_values_form_rating_scale(numeric_values):
+            scores[GRID_RATED] += _LABEL_SIGNAL_WEIGHT
+        elif numeric_ratio >= 0.8 and _numeric_values_are_binary(numeric_values):
+            scores[GRID_BINARY_SELECT] += _LABEL_SIGNAL_WEIGHT
+        elif numeric_ratio < 0.5:
+            scores[GRID_CATEGORICAL] += _LABEL_SIGNAL_WEIGHT
+
+    if value_range is not None:
+        max_possible += _VALUE_RANGE_SIGNAL_WEIGHT
+        low, high = value_range
+        if (low, high) == (0, 1) and len(labels) <= 2:
+            scores[GRID_BINARY_SELECT] += _VALUE_RANGE_SIGNAL_WEIGHT
+        elif (low, high) == (0, 1) and len(labels) > 2:
+            scores[GRID_CATEGORICAL] += _VALUE_RANGE_SIGNAL_WEIGHT
+        elif labels:
+            numeric_values = [
+                value for label in labels if (value := _numeric_label_value(label)) is not None
+            ]
+            if _numeric_values_form_rating_scale(numeric_values):
+                scores[GRID_RATED] += _VALUE_RANGE_SIGNAL_WEIGHT
+
+    if raw_columns:
+        max_possible += _SUB_COLUMN_SIGNAL_WEIGHT
+        has_rc = any(re.match(r"^.+r\d+c\d+$", column) for column in raw_columns)
+        has_r = any(re.match(r"^.+r\d+$", column) for column in raw_columns)
+        has_c = any(re.match(r"^.+c\d+$", column) for column in raw_columns)
+        if has_rc:
+            scores[GRID_RATED] += _SUB_COLUMN_SIGNAL_WEIGHT * 0.35
+            scores[GRID_CATEGORICAL] += _SUB_COLUMN_SIGNAL_WEIGHT * 0.65
+        elif has_r:
+            scores[GRID_CATEGORICAL] += _SUB_COLUMN_SIGNAL_WEIGHT * 0.5
+        elif has_c:
+            scores[GRID_CATEGORICAL] += _SUB_COLUMN_SIGNAL_WEIGHT * 0.5
+
+    if _labels_have_rejection_prefix(labels):
+        max_possible += _REJECTION_SIGNAL_WEIGHT
+        scores[GRID_BINARY_SELECT] += _REJECTION_SIGNAL_WEIGHT
+
+    text_lower = question_text.lower()
+    if any(token in text_lower for token in ("rate", "score", "rating", "1-10", "scale of")):
+        max_possible += _TEXT_SIGNAL_WEIGHT
+        scores[GRID_RATED] += _TEXT_SIGNAL_WEIGHT
+    if any(token in text_lower for token in ("select all that apply", "which of the following")):
+        max_possible += _TEXT_SIGNAL_WEIGHT
+        scores[GRID_BINARY_SELECT] += _TEXT_SIGNAL_WEIGHT
+    if any(token in text_lower for token in ("role", "category", "type", "stakeholder")):
+        max_possible += _TEXT_SIGNAL_WEIGHT
+        scores[GRID_CATEGORICAL] += _TEXT_SIGNAL_WEIGHT
+
+    ordered_scores = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    winning_subtype, winning_score = ordered_scores[0]
+    second_score = ordered_scores[1][1]
+    if max_possible <= 0:
+        return GRID_CATEGORICAL, 0.0
+    confidence = max(0.0, min(1.0, (winning_score - second_score) / max_possible))
+    return winning_subtype, confidence
+
+
+class _GridSubtypeParts:
+    def __init__(self, value_range: tuple[int, int] | None, labels: list[str]) -> None:
+        self.value_range = value_range
+        self.labels = labels
+        self.question_text = ""
+        self.raw_columns: tuple[str, ...] = tuple()
+
+
+def _grid_option_labels(question: ParsedQuestion | QuestionSpec | _GridSubtypeParts) -> list[str]:
+    if isinstance(question, dict):
+        return [str(label) for _code, label in question["options"]]
+    if isinstance(question, _GridSubtypeParts):
+        return [str(label) for label in question.labels]
+    return [str(label) for label in question.option_map.values()]
+
+
+def _grid_value_range(question: ParsedQuestion | QuestionSpec | _GridSubtypeParts) -> tuple[int, int] | None:
+    if isinstance(question, dict):
+        return question["value_range"]
+    return question.value_range
+
+
+def _grid_question_text(question: ParsedQuestion | QuestionSpec | _GridSubtypeParts) -> str:
+    if isinstance(question, dict):
+        return str(question.get("question_text", ""))
+    return str(question.question_text)
+
+
+def _grid_signal_columns(
+    question: ParsedQuestion | QuestionSpec | _GridSubtypeParts,
+    raw_column_set: set[str],
+) -> tuple[str, ...]:
+    if isinstance(question, dict):
+        expected_columns = _expected_columns(question)
+        if raw_column_set:
+            expected_columns = _expand_grid_c_columns(
+                question,
+                expected_columns,
+                raw_column_set,
+            )
+        return expected_columns
+    return tuple(getattr(question, "raw_columns", tuple()))
+
+
+def _labels_have_rejection_prefix(labels: list[str]) -> bool:
+    return any(
+        str(label).strip().lower().startswith(prefix.strip().lower())
+        for label in labels
+        for prefix in _REJECTION_PREFIXES
+    )
+
+
+def _labels_are_binary_select(labels: list[str]) -> bool:
+    label_set = {str(label).strip().lower() for label in labels if str(label).strip()}
+    return bool(
+        label_set
+        and label_set <= {
+            "selected",
+            "not selected",
+            "unselected",
+            "checked",
+            "unchecked",
+            "yes",
+            "no",
+            "true",
+            "false",
+            "1",
+            "0",
+        }
+        and label_set
+        & {"selected", "checked", "yes", "true", "1"}
+    )
+
+
+def _numeric_values_are_binary(values: list[float]) -> bool:
+    return bool(values) and set(values) <= {0.0, 1.0}
+
+
+def _numeric_values_form_rating_scale(values: list[float]) -> bool:
+    if not values:
+        return False
+    scale_min = min(values)
+    scale_max = max(values)
+    return scale_min >= 0 and scale_max <= 10 and scale_max - scale_min >= 2
 
 
 def _grid_subtype_from_parts(
     value_range: tuple[int, int] | None,
     labels: list[str],
 ) -> str:
-    if _grid_options_look_binary_select(value_range, labels):
-        return GRID_BINARY_SELECT
-    if _grid_options_look_rated(value_range, labels):
-        return GRID_RATED
-    return GRID_CATEGORICAL
+    subtype, _confidence = classify_grid_subtype(
+        _GridSubtypeParts(value_range=value_range, labels=labels),
+        set(),
+    )
+    return subtype
 
 
 def _grid_options_look_binary_select(

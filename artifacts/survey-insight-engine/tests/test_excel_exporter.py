@@ -699,6 +699,65 @@ def cell_has_data_validation(ws, coordinate: str) -> bool:
     return False
 
 
+def categorical_c_grid_export_fixture() -> tuple[GridSingleSelectResult, SurveySchema]:
+    row_specs = (
+        ("Q26r1c1", "IT / Technical", "Blocked Vendors", 2),
+        ("Q26r1c2", "IT / Technical", "Scored Vendors", 4),
+        ("Q26r1c3", "IT / Technical", "Recommended for or against", 3),
+        ("Q26r2c1", "Finance", "Blocked Vendors", 1),
+        ("Q26r2c2", "Finance", "Scored Vendors", 5),
+        ("Q26r2c3", "Finance", "Recommended for or against", 2),
+    )
+    rows = {
+        column_id: SingleSelectResult(
+            question_id=column_id,
+            question_type=QuestionType.SINGLE_SELECT,
+            valid_n=6,
+            missing_n=0,
+            denominator_policy=DenominatorPolicy.VALID_RESPONSES,
+            distribution={1: {"label": "Selected", "count": count, "rate": count / 6}},
+        )
+        for column_id, _row_label, _category, count in row_specs
+    }
+    result = GridSingleSelectResult(
+        question_id="Q26",
+        question_type=QuestionType.GRID_SINGLE_SELECT,
+        valid_n=6,
+        missing_n=0,
+        denominator_policy=DenominatorPolicy.VALID_RESPONSES,
+        rows=rows,
+        overall_valid_n=6,
+    )
+    schema = SurveySchema(
+        questions=(
+            QuestionSpec(
+                question_id="[Q26]",
+                canonical_id="Q26",
+                question_text="Q26 - What role did each stakeholder play",
+                question_type=QuestionType.GRID_SINGLE_SELECT,
+                raw_columns=tuple(column_id for column_id, _row_label, _category, _count in row_specs),
+                option_map={
+                    1: "Blocked Vendors",
+                    2: "Scored Vendors",
+                    3: "Recommended for or against",
+                },
+                value_range=(0, 1),
+                grid_row_labels={
+                    column_id: row_label
+                    for column_id, row_label, _category, _count in row_specs
+                },
+                possible_role="GRID_CATEGORICAL",
+            ),
+        ),
+        respondent_id_column="respondent_id",
+        total_respondents=6,
+        source_datamap_path="datamap.xlsx",
+        source_rawdata_path="raw.csv",
+        parsed_at=UTC_NOW,
+    )
+    return result, schema
+
+
 class TestExcelExporter(unittest.TestCase):
     def test_wrapped_formula_preserves_bare_commas(self) -> None:
         formula = _wrapped_formula("F_Q14")
@@ -3367,6 +3426,158 @@ class TestExcelExporter(unittest.TestCase):
         self.assertIn("CC_CC_TAB_EXPORT", values)
         self.assertNotIn("Q_MS_EXPORT", values)
         self.assertNotIn("Q_UNRELATED_EXPORT", values)
+
+    def test_all_empty_grid_question_is_skipped_and_not_rendered(self) -> None:
+        data_map = {
+            "questions": [
+                {
+                    "canonical_id": "Q1",
+                    "raw_id": "Q1",
+                    "question_text": "Q1 - Purchase decision",
+                    "type_hint": "values_range",
+                    "value_range": (1, 2),
+                    "options": [(1, "Yes"), (2, "No")],
+                    "sub_columns": [],
+                    "parent_canonical_id": None,
+                    "source_row": 1,
+                    "warnings": [],
+                },
+                {
+                    "canonical_id": "Q26r1",
+                    "raw_id": "Q26r1",
+                    "question_text": "IT / Technical - What role did each stakeholder play",
+                    "type_hint": "values_range",
+                    "value_range": (1, 3),
+                    "options": [
+                        (1, "Decision maker"),
+                        (2, "Influencer"),
+                        (3, "Not involved"),
+                    ],
+                    "sub_columns": [],
+                    "parent_canonical_id": None,
+                    "source_row": 2,
+                    "warnings": [],
+                },
+                {
+                    "canonical_id": "Q26r2",
+                    "raw_id": "Q26r2",
+                    "question_text": "Finance - What role did each stakeholder play",
+                    "type_hint": "values_range",
+                    "value_range": (1, 3),
+                    "options": [
+                        (1, "Decision maker"),
+                        (2, "Influencer"),
+                        (3, "Not involved"),
+                    ],
+                    "sub_columns": [],
+                    "parent_canonical_id": None,
+                    "source_row": 3,
+                    "warnings": [],
+                },
+            ],
+            "source_path": "datamap.xlsx",
+            "sheet_name": "Sheet1",
+            "total_rows_in_sheet": 3,
+            "parser_warnings": [],
+        }
+        dataframe = pd.DataFrame(
+            {
+                "respondent_id": [1, 2, 3],
+                "Q1": [1, 2, 1],
+                "Q26r1": [pd.NA, pd.NA, pd.NA],
+                "Q26r2": [pd.NA, pd.NA, pd.NA],
+            }
+        )
+        schema = classify_questions(
+            data_map,
+            ["respondent_id", "Q1", "Q26r1", "Q26r2"],
+            respondent_id_column="respondent_id",
+            total_respondents=3,
+            source_rawdata_path="raw.csv",
+        )
+        log = CalculationLog()
+        results, skips = compute_single_cuts(schema, dataframe, log)
+        self.assertEqual([result.question_id for result in results], ["Q1"])
+        self.assertEqual(skips[0].canonical_id, "Q26")
+        self.assertEqual(skips[0].skip_reason, "all raw columns empty in dataset")
+
+        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = (
+            FIXTURE_DIR
+            / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
+        )
+        quality_report = DataQualityReport(
+            total_rows=3,
+            total_columns=4,
+            columns_in_datamap=3,
+            columns_not_in_datamap=(),
+            per_column_missing_pct={},
+            per_column_out_of_range_pct={},
+            coercion_log=(),
+            warnings=(),
+        )
+        export_single_cuts(results, skips, schema, quality_report, log, str(output_path))
+        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        self.addCleanup(workbook.close)
+
+        all_values = [
+            value
+            for worksheet in workbook.worksheets
+            for row in worksheet.iter_rows(values_only=True)
+            for value in row
+            if value is not None
+        ]
+        self.assertTrue(any(str(value).startswith("Q1 -") for value in all_values))
+        self.assertFalse(any(str(value).startswith("Q26 -") for value in all_values))
+        self.assertIn("all raw columns empty in dataset", all_values)
+
+    def test_grid_categorical_c_column_percent_cells_are_formatted(self) -> None:
+        result, schema = categorical_c_grid_export_fixture()
+        output_path = self.export_custom_workbook([result], schema)
+        workbook = load_workbook(output_path, read_only=False, data_only=False)
+        self.addCleanup(workbook.close)
+        ws = workbook["All Questions"]
+        header_row = table_header_row(ws, "Q26", header="Sub-question ID")
+
+        self.assertEqual(ws.cell(header_row + 2, 4).number_format, "0.0%")
+        self.assertEqual(ws.cell(header_row + 2, 6).number_format, "0.0%")
+        values = [cell for row in ws.iter_rows(values_only=True) for cell in row if cell is not None]
+        self.assertIn("Total respondents", values)
+        self.assertIn("Total responses", values)
+
+    def test_grid_categorical_c_columns_pivot_to_category_columns(self) -> None:
+        result, schema = categorical_c_grid_export_fixture()
+        output_path = self.export_custom_workbook([result], schema)
+        workbook = load_workbook(output_path, read_only=False, data_only=False)
+        self.addCleanup(workbook.close)
+        ws = workbook["All Questions"]
+        header_row = table_header_row(ws, "Q26", header="Sub-question ID")
+
+        self.assertEqual(ws.cell(header_row, 3).value, "Blocked Vendors")
+        self.assertEqual(ws.cell(header_row, 5).value, "Scored Vendors")
+        self.assertEqual(ws.cell(header_row + 1, 3).value, "Count")
+        self.assertEqual(ws.cell(header_row + 1, 4).value, "%")
+        self.assertEqual(ws.cell(header_row + 2, 1).value, "Q26r1")
+        self.assertEqual(ws.cell(header_row + 2, 2).value, "IT / Technical")
+        self.assertEqual(ws.cell(header_row + 3, 1).value, "Q26r2")
+        self.assertNotEqual(ws.cell(header_row + 3, 1).value, "Q26r1c2")
+
+    def test_warnings_sheet_lists_low_confidence_grid_classifications(self) -> None:
+        result, schema = categorical_grid_export_fixture()
+        schema = replace(
+            schema,
+            questions=tuple(
+                replace(question, classification_confidence_low=True)
+                if question.canonical_id == "Q_CATGRID"
+                else question
+                for question in schema.questions
+            ),
+        )
+        output_path = self.export_custom_workbook([result], schema)
+        values = sheet_values(output_path, "Warnings")
+
+        self.assertIn("Q_CATGRID", values)
+        self.assertIn("low classification confidence", values)
 
 
 if __name__ == "__main__":

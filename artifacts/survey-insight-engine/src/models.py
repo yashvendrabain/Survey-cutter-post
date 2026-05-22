@@ -95,6 +95,7 @@ class QuestionSpec:
     )
     theme_tags: tuple[str, ...] = field(default_factory=tuple)
     possible_role: str | None = None
+    classification_confidence_low: bool = False
     analysis_eligible: bool = True
     exclusion_reason: str | None = None
     parent_question_id: str | None = None

@@ -216,6 +216,7 @@ def export_single_cuts(
     with export_memory.memory_step("build_warnings_sheet"):
         _live_write_warnings(
             workbook,
+            schema,
             quality_report,
             results,
             skips,
@@ -1492,6 +1493,7 @@ def _live_write_filter_log(
 
 def _live_write_warnings(
     workbook: Any,
+    schema: SurveySchema,
     quality_report: DataQualityReport,
     results: list[SingleCutResult],
     skips: list[SkipRecord],
@@ -1519,6 +1521,28 @@ def _live_write_warnings(
         if skip.details:
             worksheet.cell(row=row_index, column=1, value=f"skip:{skip.question_id}")
             worksheet.cell(row=row_index, column=2, value=skip.details)
+            row_index += 1
+    low_confidence_questions = [
+        question
+        for question in schema.questions
+        if getattr(question, "classification_confidence_low", False)
+    ]
+    if low_confidence_questions:
+        row_index += 1
+        headers = ["Question ID", "Question Text", "Type", "Possible Role", "Reason"]
+        for col_index, header in enumerate(headers, start=1):
+            worksheet.cell(row=row_index, column=col_index, value=header).font = _live_font(bold=True)
+        row_index += 1
+        for question in low_confidence_questions:
+            values = [
+                question.canonical_id,
+                question.question_text,
+                question.question_type.value,
+                question.possible_role or "",
+                "low classification confidence",
+            ]
+            for col_index, value in enumerate(values, start=1):
+                worksheet.cell(row=row_index, column=col_index, value=value)
             row_index += 1
     _live_autofit(worksheet)
 
@@ -2146,6 +2170,21 @@ def _live_write_grid_categorical_table(
     fv_name: str,
     theme_prefix: str,
 ) -> int:
+    pivot_entries, pivot_categories = _grid_categorical_c_column_entries(result, question)
+    if pivot_entries:
+        return _live_write_grid_categorical_c_column_table(
+            worksheet,
+            start_row,
+            pivot_entries,
+            pivot_categories,
+            context,
+            sheet_filters,
+            fq_name,
+            fv_name,
+            theme_prefix,
+            result.valid_n,
+        )
+
     categories = _grid_categorical_categories(result)
     header_row = start_row
     subheader_row = start_row + 1
@@ -2236,6 +2275,98 @@ def _live_write_grid_categorical_table(
         worksheet,
         total_responses_row,
         _grid_total_responses(result, categories),
+        last_col,
+    )
+    return total_responses_row
+
+
+def _live_write_grid_categorical_c_column_table(
+    worksheet: Any,
+    start_row: int,
+    row_entries: list[dict[str, Any]],
+    categories: list[str],
+    context: _LiveWorkbookContext,
+    sheet_filters: list[dict[str, str]],
+    fq_name: str,
+    fv_name: str,
+    theme_prefix: str,
+    total_respondents: int,
+) -> int:
+    header_row = start_row
+    subheader_row = start_row + 1
+    worksheet.cell(row=header_row, column=1, value="Sub-question ID").font = _live_font(bold=True)
+    worksheet.cell(row=header_row, column=2, value="Sub-question").font = _live_font(bold=True)
+    worksheet.cell(row=subheader_row, column=1, value="")
+    worksheet.cell(row=subheader_row, column=2, value="")
+    category_columns: list[tuple[int, int]] = []
+    col_index = 3
+    for category in categories:
+        worksheet.cell(row=header_row, column=col_index, value=category).font = _live_font(bold=True)
+        worksheet.merge_cells(
+            start_row=header_row,
+            start_column=col_index,
+            end_row=header_row,
+            end_column=col_index + 1,
+        )
+        worksheet.cell(row=subheader_row, column=col_index, value="Count").font = _live_font(bold=True)
+        worksheet.cell(row=subheader_row, column=col_index + 1, value="%").font = _live_font(bold=True)
+        category_columns.append((col_index, col_index + 1))
+        col_index += 2
+    last_col = max(4, col_index - 1)
+    for row in (header_row, subheader_row):
+        for col in range(1, last_col + 1):
+            worksheet.cell(row=row, column=col).fill = _live_fill("F2F2F2")
+
+    data_start = start_row + 2
+    for offset, entry in enumerate(row_entries):
+        excel_row = data_start + offset
+        worksheet.cell(row=excel_row, column=1, value=entry["row_id"]).font = _live_font(color="808080")
+        worksheet.cell(row=excel_row, column=2, value=entry["label"])
+        row_total = max(1, int(entry.get("respondent_total", 0)))
+        for category, (count_col, percent_col) in zip(categories, category_columns):
+            sources = entry["categories"].get(category, [])
+            cached_count = sum(int(source.get("count", 0)) for source in sources)
+            formula = _grid_categorical_source_sum_formula(
+                sources,
+                context,
+                sheet_filters,
+                fq_name,
+                fv_name,
+                theme_prefix,
+            )
+            _live_formula(
+                worksheet,
+                excel_row,
+                count_col,
+                formula,
+                cached_count,
+            )
+            count_ref = f"{_openpyxl_column_letter(count_col)}{excel_row}"
+            _live_formula(
+                worksheet,
+                excel_row,
+                percent_col,
+                f'=IFERROR({count_ref}/{row_total},0)',
+                cached_count / row_total if row_total else 0,
+            ).number_format = "0.0%"
+
+    data_end = data_start + len(row_entries) - 1
+    if row_entries:
+        for count_col, percent_col in category_columns:
+            _apply_color_scale_range(worksheet, data_start, count_col, data_end, count_col)
+            _apply_color_scale_range(worksheet, data_start, percent_col, data_end, percent_col)
+    total_row = max(data_start, data_end + 1)
+    _write_total_respondents_row(worksheet, total_row, total_respondents, last_col)
+    total_responses_row = total_row + 1
+    _write_total_responses_row(
+        worksheet,
+        total_responses_row,
+        sum(
+            int(source.get("count", 0))
+            for entry in row_entries
+            for sources in entry["categories"].values()
+            for source in sources
+        ),
         last_col,
     )
     return total_responses_row
@@ -2834,7 +2965,12 @@ def _numeric_distribution_value(code: Any, payload: dict[str, Any]) -> float | N
         try:
             return float(str(candidate).strip())
         except (TypeError, ValueError):
-            continue
+            match = re.match(r"^\s*(-?\d+(?:\.\d+)?)", str(candidate))
+            if match is not None:
+                try:
+                    return float(match.group(1))
+                except (TypeError, ValueError):
+                    continue
     return None
 
 
@@ -2856,6 +2992,129 @@ def _grid_categorical_categories(result: GridSingleSelectResult) -> list[str]:
     if len(sorted_labels) <= 8:
         return sorted_labels
     return [*sorted_labels[:7], "Other"]
+
+
+def _grid_categorical_c_column_entries(
+    result: GridSingleSelectResult,
+    question: Any,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    row_labels = getattr(question, "grid_row_labels", None) or {}
+    grouped: dict[str, dict[str, Any]] = {}
+    category_totals: dict[str, int] = defaultdict(int)
+    category_order: list[str] = []
+    saw_c_column = False
+    for sub_column_id, row_result in result.rows.items():
+        base_row_id, group_key = _grid_row_and_group_ids(sub_column_id)
+        if group_key is None:
+            continue
+        saw_c_column = True
+        category = _grid_group_label(question, group_key)
+        if category not in category_order:
+            category_order.append(category)
+        count = _grid_selected_response_count(row_result)
+        category_totals[category] += count
+        entry = grouped.setdefault(
+            base_row_id,
+            {
+                "row_id": base_row_id,
+                "label": _grid_base_row_label(
+                    row_labels.get(sub_column_id, base_row_id),
+                    category,
+                ),
+                "categories": defaultdict(list),
+                "respondent_total": 0,
+            },
+        )
+        entry["categories"][category].append(
+            {
+                "source_column": sub_column_id,
+                "row_result": row_result,
+                "count": count,
+            }
+        )
+        entry["respondent_total"] = max(
+            int(entry.get("respondent_total", 0)),
+            int(row_result.valid_n),
+        )
+
+    if not saw_c_column:
+        return [], []
+
+    if len(category_order) > 8:
+        top_categories = [
+            category
+            for category, _count in sorted(
+                category_totals.items(),
+                key=lambda item: item[1],
+                reverse=True,
+            )
+        ][:7]
+        visible_categories = [*top_categories, "Other"]
+        other_categories = set(category_order) - set(top_categories)
+        for entry in grouped.values():
+            other_sources = []
+            for category in list(entry["categories"]):
+                if category in other_categories:
+                    other_sources.extend(entry["categories"].pop(category))
+            entry["categories"]["Other"].extend(other_sources)
+    else:
+        visible_categories = category_order
+    return list(grouped.values()), visible_categories
+
+
+def _grid_selected_response_count(row_result: SingleSelectResult) -> int:
+    return sum(int(payload.get("count", 0)) for payload in row_result.distribution.values())
+
+
+def _grid_categorical_source_sum_formula(
+    sources: list[dict[str, Any]],
+    context: _LiveWorkbookContext,
+    sheet_filters: list[dict[str, str]],
+    fq_name: str,
+    fv_name: str,
+    theme_prefix: str,
+) -> str:
+    formulas: list[str] = []
+    for source in sources:
+        column = context.column_by_key.get(str(source.get("source_column", "")))
+        row_result = source.get("row_result")
+        if column is None or row_result is None:
+            continue
+        criteria = _grid_selected_criteria(row_result)
+        if not criteria:
+            formulas.append(
+                _build_countifs_formula(
+                    column.data_name,
+                    "<>",
+                    sheet_filters,
+                    fq_name,
+                    fv_name,
+                    theme_prefix=theme_prefix,
+                ).lstrip("=")
+            )
+            continue
+        for criterion in criteria:
+            formulas.append(
+                _build_countifs_formula(
+                    column.data_name,
+                    criterion,
+                    sheet_filters,
+                    fq_name,
+                    fv_name,
+                    theme_prefix=theme_prefix,
+                ).lstrip("=")
+            )
+    if not formulas:
+        return "=0"
+    return "=" + "+".join(formulas)
+
+
+def _grid_selected_criteria(row_result: SingleSelectResult) -> list[Any]:
+    criteria: list[Any] = []
+    for code, payload in row_result.distribution.items():
+        label = payload.get("label") if isinstance(payload, dict) else None
+        criteria.append(label if label not in {None, ""} else code)
+    return criteria
 
 
 def _grid_category_count(
