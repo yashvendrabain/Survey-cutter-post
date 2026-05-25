@@ -1,0 +1,80 @@
+# Replit Diagnostic — Check conditional_on for piped questions
+
+Run this in Replit to figure out whether the datamap parser is populating `conditional_on` for the rank-order questions. The result tells us whether the next Codex round needs to fix just the calculators (small scope) or also fix the parser (medium scope).
+
+## Script
+
+```python
+from pathlib import Path
+from src.io import load_inputs
+from src.question_classifier import classify_questions
+
+# Adjust paths if your sample data lives elsewhere
+raw_path = Path('sample_data/BCN_LTB_raw_data.xlsx')
+map_path = Path('sample_data/BCN_LTB_datamap.xlsx')
+
+decoded_df, data_map, _report = load_inputs(raw_path, map_path)
+schema = classify_questions(data_map, set(decoded_df.columns))
+
+print("=" * 80)
+print("CONDITIONAL_ON DIAGNOSTIC")
+print("=" * 80)
+
+# Check the 9 spot-check questions + the 5 rank questions
+target_ids = ["Q22", "Q26", "Q30", "Q33", "Q34", "Q35", "Q36", "Q41", "Q43"]
+
+for qid in target_ids:
+    spec = schema.get_question(qid)
+    if spec is None:
+        print(f"  {qid:6} → NOT IN SCHEMA")
+        continue
+    
+    qtype = spec.question_type.value if hasattr(spec.question_type, 'value') else str(spec.question_type)
+    conditional = spec.conditional_on
+    qtext_short = (spec.question_text[:80] + "...") if len(spec.question_text) > 80 else spec.question_text
+    
+    print(f"  {qid:6} | type={qtype:25} | conditional_on={conditional!r}")
+    print(f"          text: {qtext_short}")
+    print()
+
+# Also check whether Q28 itself exists in the schema (it's the pipe source)
+q28 = schema.get_question("Q28")
+print("=" * 80)
+print(f"Q28 in schema: {q28 is not None}")
+if q28 is not None:
+    print(f"  Q28 type: {q28.question_type}")
+    print(f"  Q28 in raw data: {'Q28' in decoded_df.columns}")
+    if 'Q28' in decoded_df.columns:
+        non_null = decoded_df['Q28'].notna().sum()
+        print(f"  Q28 non-null count: {non_null} / {len(decoded_df)}")
+```
+
+## What I'm looking for
+
+For each target question, report back exactly what's in `conditional_on`. The two possible outcomes:
+
+**Outcome A — conditional_on is populated (e.g. `'Q28'`):**
+
+```
+Q22    | type=RANK_ORDER       | conditional_on='Q28'
+Q43    | type=RANK_ORDER       | conditional_on='Q28'
+```
+
+This means the parser is already extracting piping markers. The next Codex round is small: just apply the filter inside the rank_order and grid calculators.
+
+**Outcome B — conditional_on is None:**
+
+```
+Q22    | type=RANK_ORDER       | conditional_on=None
+Q43    | type=RANK_ORDER       | conditional_on=None
+```
+
+This means the parser isn't extracting piping markers. The next Codex round is bigger: teach the parser to recognize `[pipe: Q28]` and `[pipe Q28]` patterns in question_text and populate `conditional_on`, then have the calculators use it.
+
+**Outcome C — Mixed (some populated, some not):**
+
+Means the parser handles SOME piping patterns but not the ones in BCN. Most informative — paste the full output and we'll see exactly which pattern is and isn't recognized.
+
+## Paste back
+
+Just paste the full script output. Don't try to fix anything. The output decides which Codex prompt I write next.
