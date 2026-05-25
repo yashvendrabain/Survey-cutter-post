@@ -2,10 +2,26 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import unittest
 
-from src.models import QuestionType
-from src.question_classifier import classify_grid_subtype, classify_questions
+import pandas as pd
+
+from src.calculation_log import CalculationLog
+from src.models import (
+    DenominatorPolicy,
+    GridRatedResult,
+    QuestionSpec,
+    QuestionType,
+)
+from src.question_classifier import (
+    GRID_RATED,
+    _classify_question,
+    _merge_sibling_group,
+    classify_grid_subtype,
+    classify_questions,
+)
+from src.single_cut.engine import compute_single_cuts
 
 
 CLASSIFIER_DATA_MAP = {
@@ -369,9 +385,8 @@ class TestQuestionClassifier(unittest.TestCase):
 
     def test_grid_rated_subtype_detected_from_numeric_scale_labels(self) -> None:
         data_map = {
-            **CLASSIFIER_DATA_MAP,
+            "source_path": "datamap.xlsx",
             "questions": [
-                *CLASSIFIER_DATA_MAP["questions"],
                 {
                     "canonical_id": "QRated",
                     "raw_id": "QRated",
@@ -451,9 +466,8 @@ class TestQuestionClassifier(unittest.TestCase):
 
     def test_grid_rated_subtype_uses_label_scale_when_code_range_exceeds_ten(self) -> None:
         data_map = {
-            **CLASSIFIER_DATA_MAP,
+            "source_path": "datamap.xlsx",
             "questions": [
-                *CLASSIFIER_DATA_MAP["questions"],
                 {
                     "canonical_id": "Q30",
                     "raw_id": "Q30",
@@ -794,9 +808,8 @@ class TestQuestionClassifier(unittest.TestCase):
 
     def test_q38_style_single_parent_binary_select_stays_unmerged(self) -> None:
         data_map = {
-            **CLASSIFIER_DATA_MAP,
+            "source_path": "datamap.xlsx",
             "questions": [
-                *CLASSIFIER_DATA_MAP["questions"],
                 {
                     "canonical_id": "Q38",
                     "raw_id": "Q38",
@@ -932,6 +945,130 @@ class TestQuestionClassifier(unittest.TestCase):
         self.assertIsNotNone(question)
         self.assertIs(question.question_type, QuestionType.GRID_SINGLE_SELECT)
         self.assertEqual(question.possible_role, "GRID_BINARY_SELECT")
+
+    def test_grid_subtype_scores_q30_style_rating_labels_as_rated(self) -> None:
+        question = {
+            "canonical_id": "Q30r1",
+            "raw_id": "Q30r1",
+            "question_text": "Pre-purchase familiarity - Please rate from 0-10",
+            "type_hint": "values_range",
+            "value_range": (1, 12),
+            "options": [
+                (1, "0 (extremely low)"),
+                (2, "1"),
+                (3, "2"),
+                (4, "3"),
+                (5, "4"),
+                (6, "5"),
+                (7, "6"),
+                (8, "7"),
+                (9, "8"),
+                (10, "9"),
+                (11, "10 (extremely high)"),
+                (12, "Don't know"),
+            ],
+            "sub_columns": [],
+            "parent_canonical_id": None,
+            "source_row": 90,
+            "warnings": [],
+        }
+
+        subtype, confidence = classify_grid_subtype(question, {"Q30r1c1", "Q30r1c2"})
+
+        self.assertEqual(subtype, "GRID_RATED")
+        self.assertGreaterEqual(confidence, 0.5)
+
+    def test_grid_subtype_scores_q26_style_binary_encoded_roles_as_categorical(self) -> None:
+        question = {
+            "canonical_id": "Q26r1",
+            "raw_id": "Q26r1",
+            "question_text": "IT / Technical - What role did each stakeholder play",
+            "type_hint": "values_range",
+            "value_range": (0, 1),
+            "options": [
+                (1, "Blocked Vendors"),
+                (2, "Scored Vendors"),
+                (3, "Recommended for or against"),
+                (4, "Restricted number to be considered"),
+                (5, "Other"),
+            ],
+            "sub_columns": [],
+            "parent_canonical_id": None,
+            "source_row": 90,
+            "warnings": [],
+        }
+
+        subtype, confidence = classify_grid_subtype(question, {"Q26r1c1", "Q26r1c2"})
+
+        self.assertEqual(subtype, "GRID_CATEGORICAL")
+        self.assertGreaterEqual(confidence, 0.5)
+
+    def test_grid_subtype_scores_rejection_prefixes_as_binary_select(self) -> None:
+        question = {
+            "canonical_id": "Q38",
+            "raw_id": "Q38",
+            "question_text": "Please select all that apply",
+            "type_hint": "values_range",
+            "value_range": (0, 1),
+            "options": [(1, "Yes"), (2, "NO TO: Yes")],
+            "sub_columns": [("Q38r1", "Discount"), ("Q38r2", "Support")],
+            "parent_canonical_id": None,
+            "source_row": 90,
+            "warnings": [],
+        }
+
+        subtype, confidence = classify_grid_subtype(question, {"Q38r1", "Q38r2"})
+
+        self.assertEqual(subtype, "GRID_BINARY_SELECT")
+        self.assertGreaterEqual(confidence, 0.6)
+
+    def test_grid_subtype_non_numeric_likert_is_categorical(self) -> None:
+        question = {
+            "canonical_id": "QLikert",
+            "raw_id": "QLikert",
+            "question_text": "Agreement scale",
+            "type_hint": "values_range",
+            "value_range": (1, 5),
+            "options": [
+                (1, "Strongly disagree"),
+                (2, "Disagree"),
+                (3, "Neutral"),
+                (4, "Agree"),
+                (5, "Strongly agree"),
+            ],
+            "sub_columns": [("QLikertr1", "Ease"), ("QLikertr2", "Fit")],
+            "parent_canonical_id": None,
+            "source_row": 90,
+            "warnings": [],
+        }
+
+        subtype, confidence = classify_grid_subtype(question, {"QLikertr1", "QLikertr2"})
+
+        self.assertEqual(subtype, "GRID_CATEGORICAL")
+        self.assertGreaterEqual(confidence, 0.4)
+
+    def test_ambiguous_grid_sets_low_confidence_flag(self) -> None:
+        schema = classify_with_extra_questions(
+            [
+                {
+                    "canonical_id": "QAmbiguous",
+                    "raw_id": "QAmbiguous",
+                    "question_text": "Rate stakeholder role category",
+                    "type_hint": "values_range",
+                    "value_range": (1, 4),
+                    "options": [(1, "1"), (2, "Two"), (3, "3"), (4, "Four")],
+                    "sub_columns": [("QAmbiguousr1", "Ease"), ("QAmbiguousr2", "Fit")],
+                    "parent_canonical_id": None,
+                    "source_row": 90,
+                    "warnings": [],
+                },
+            ],
+            ["QAmbiguousr1", "QAmbiguousr2"],
+        )
+        question = schema.get_question("QAmbiguous")
+
+        self.assertIsNotNone(question)
+        self.assertTrue(question.classification_confidence_low)
 
     def test_option_other_code_detected(self) -> None:
         schema = classify_test_schema()
@@ -1111,129 +1248,362 @@ class TestQuestionClassifier(unittest.TestCase):
         self.assertIsNotNone(question)
         self.assertEqual(question.question_text, "Follow-up for prior selection")
 
-    def test_ambiguous_grid_sets_low_confidence_flag(self) -> None:
-        schema = classify_with_extra_questions(
-            [
+    def test_synthetic_parent_with_rated_children_classifies_as_grid_rated(self) -> None:
+        rating_labels = [
+            (
+                index,
+                f"{index}"
+                if 0 < index < 10
+                else ("0 (extremely low)" if index == 0 else "10 (extremely high)"),
+            )
+            for index in range(11)
+        ]
+        child_block = {
+            "canonical_id": "Q30r1",
+            "raw_id": "[Q30r1]",
+            "question_text": "Pre-purchase familiarity - Please rate the following",
+            "type_hint": "values_range",
+            "value_range": (1, 12),
+            "options": rating_labels,
+            "sub_columns": [("Q30r1c1", "Winner"), ("Q30r1c2", "Other vendor")],
+            "parent_canonical_id": None,
+            "source_row": 1,
+            "warnings": [],
+        }
+        child_2 = {
+            **child_block,
+            "canonical_id": "Q30r2",
+            "raw_id": "[Q30r2]",
+            "question_text": "Strength of validation - Please rate the following",
+            "sub_columns": [("Q30r2c1", "Winner"), ("Q30r2c2", "Other vendor")],
+        }
+        synthetic_parent = {
+            "canonical_id": "Q30",
+            "raw_id": "Q30",
+            "question_text": "Please rate the following",
+            "type_hint": "values_range",
+            "value_range": (1, 12),
+            "options": [],
+            "sub_columns": [
+                ("Q30r1c1", "Winner"),
+                ("Q30r1c2", "Other vendor"),
+                ("Q30r2c1", "Winner"),
+                ("Q30r2c2", "Other vendor"),
+            ],
+            "parent_canonical_id": None,
+            "source_row": 1,
+            "warnings": [],
+            "children": [child_block, child_2],
+        }
+
+        qtype = _classify_question(synthetic_parent, all_sub_columns=set())
+
+        self.assertIs(qtype, QuestionType.GRID_RATED)
+
+    def test_synthetic_parent_with_binary_children_classifies_as_grid_binary_select(self) -> None:
+        binary_labels = [(0, "Unchecked"), (1, "Checked")]
+        child = {
+            "canonical_id": "Q26r1",
+            "raw_id": "[Q26r1]",
+            "question_text": "Future users - What role did each stakeholder play",
+            "type_hint": "values_range",
+            "value_range": (0, 1),
+            "options": binary_labels,
+            "sub_columns": [
+                ("Q26r1c1", "Blocked vendors"),
+                ("Q26r1c2", "Scored vendors"),
+                ("Q26r1c3", "Recommended"),
+            ],
+            "parent_canonical_id": None,
+            "source_row": 1,
+            "warnings": [],
+        }
+        synthetic_parent = {
+            "canonical_id": "Q26",
+            "raw_id": "Q26",
+            "question_text": "What role did each stakeholder play",
+            "type_hint": "values_range",
+            "value_range": (0, 1),
+            "options": [],
+            "sub_columns": [
+                ("Q26r1c1", "Blocked"),
+                ("Q26r1c2", "Scored"),
+                ("Q26r1c3", "Recommended"),
+            ],
+            "parent_canonical_id": None,
+            "source_row": 1,
+            "warnings": [],
+            "children": [child],
+        }
+
+        qtype = _classify_question(synthetic_parent, all_sub_columns=set())
+
+        self.assertIs(qtype, QuestionType.GRID_BINARY_SELECT)
+
+    def test_merge_sibling_group_assigns_grid_rated_question_type(self) -> None:
+        spec_r1 = QuestionSpec(
+            question_id="[Q30r1]",
+            canonical_id="Q30r1",
+            question_text="Pre-purchase familiarity - Please rate",
+            question_type=QuestionType.GRID_RATED,
+            raw_columns=("Q30r1c1", "Q30r1c2"),
+            option_map={
+                0: "0 (extremely low)",
+                5: "5",
+                10: "10 (extremely high)",
+            },
+            value_range=(0, 10),
+            denominator_policy=DenominatorPolicy.VALID_RESPONSES,
+            possible_role=GRID_RATED,
+            analysis_eligible=True,
+            grid_row_labels={"Q30r1c1": "Winner", "Q30r1c2": "Other"},
+        )
+        spec_r2 = replace(
+            spec_r1,
+            question_id="[Q30r2]",
+            canonical_id="Q30r2",
+            raw_columns=("Q30r2c1", "Q30r2c2"),
+            grid_row_labels={"Q30r2c1": "Winner", "Q30r2c2": "Other"},
+        )
+        raw_column_set = {"Q30r1c1", "Q30r1c2", "Q30r2c1", "Q30r2c2"}
+
+        merged = _merge_sibling_group("Q30", [spec_r1, spec_r2], raw_column_set)
+
+        self.assertIsNotNone(merged)
+        self.assertIs(merged.question_type, QuestionType.GRID_RATED)
+        self.assertEqual(merged.canonical_id, "Q30")
+
+    def test_q30_synthetic_parent_dispatches_to_grid_rated_calculator(self) -> None:
+        rating_labels = [
+            (
+                index,
+                f"{index}"
+                if 0 < index < 10
+                else ("0 (extremely low)" if index == 0 else "10 (extremely high)"),
+            )
+            for index in range(11)
+        ]
+        child_1 = {
+            "canonical_id": "Q30r1",
+            "raw_id": "[Q30r1]",
+            "question_text": "Pre-purchase familiarity - Please rate the following",
+            "type_hint": "values_range",
+            "value_range": (1, 12),
+            "options": rating_labels,
+            "sub_columns": [("Q30r1c1", "Winner"), ("Q30r1c2", "Other vendor")],
+            "parent_canonical_id": None,
+            "source_row": 1,
+            "warnings": [],
+        }
+        child_2 = {
+            **child_1,
+            "canonical_id": "Q30r2",
+            "raw_id": "[Q30r2]",
+            "question_text": "Strength of validation - Please rate the following",
+            "sub_columns": [("Q30r2c1", "Winner"), ("Q30r2c2", "Other vendor")],
+        }
+        data_map = {
+            "source_path": "datamap.xlsx",
+            "questions": [
                 {
-                    "canonical_id": "QAmbiguous",
-                    "raw_id": "QAmbiguous",
-                    "question_text": "Rate stakeholder role category",
+                    "canonical_id": "Q30",
+                    "raw_id": "Q30",
+                    "question_text": "Please rate the following",
                     "type_hint": "values_range",
-                    "value_range": (1, 4),
-                    "options": [(1, "1"), (2, "Two"), (3, "3"), (4, "Four")],
-                    "sub_columns": [("QAmbiguousr1", "Ease"), ("QAmbiguousr2", "Fit")],
+                    "value_range": (1, 12),
+                    "options": [],
+                    "sub_columns": [
+                        ("Q30r1c1", "Winner"),
+                        ("Q30r1c2", "Other vendor"),
+                        ("Q30r2c1", "Winner"),
+                        ("Q30r2c2", "Other vendor"),
+                    ],
                     "parent_canonical_id": None,
-                    "source_row": 90,
+                    "source_row": 1,
+                    "warnings": [],
+                    "children": [child_1, child_2],
+                },
+            ],
+        }
+        dataframe = pd.DataFrame(
+            {
+                "record": [1, 2, 3],
+                "Q30r1c1": [8, 9, "10 (extremely high)"],
+                "Q30r1c2": [5, 6, 7],
+                "Q30r2c1": [7, 8, 9],
+                "Q30r2c2": [6, 6, 6],
+            }
+        )
+        schema = classify_questions(
+            data_map,
+            ["record", "Q30r1c1", "Q30r1c2", "Q30r2c1", "Q30r2c2"],
+            respondent_id_column="record",
+            total_respondents=3,
+            source_rawdata_path="raw.csv",
+        )
+
+        results, skips = compute_single_cuts(schema, dataframe, CalculationLog())
+
+        self.assertFalse(skips)
+        self.assertIsInstance(results[-1], GridRatedResult)
+        self.assertEqual(results[-1].question_id, "Q30")
+
+    def test_parser_merged_q30_style_question_classifies_as_grid_rated(self) -> None:
+        rating_labels = [
+            (
+                index,
+                f"{index}"
+                if 0 < index < 10
+                else ("0 (extremely low)" if index == 0 else "10 (extremely high)"),
+            )
+            for index in range(11)
+        ]
+        child_1 = sibling_grid_question(
+            "Q30r1",
+            "Pre-purchase familiarity",
+            "Please rate each vendor from 0 to 10",
+            options=rating_labels,
+            value_range=(1, 12),
+        )
+        child_1["sub_columns"] = [("Q30r1c1", "Winner"), ("Q30r1c2", "Other")]
+        child_2 = sibling_grid_question(
+            "Q30r2",
+            "Customer validation",
+            "Please rate each vendor from 0 to 10",
+            options=rating_labels,
+            value_range=(1, 12),
+        )
+        child_2["sub_columns"] = [("Q30r2c1", "Winner"), ("Q30r2c2", "Other")]
+        data_map = {
+            **CLASSIFIER_DATA_MAP,
+            "questions": [
+                *CLASSIFIER_DATA_MAP["questions"],
+                {
+                    "canonical_id": "Q30",
+                    "raw_id": "Q30",
+                    "question_text": "Please rate each vendor from 0 to 10",
+                    "type_hint": "values_range",
+                    "value_range": (1, 12),
+                    "options": [],
+                    "sub_columns": [
+                        ("Q30r1c1", "Winner"),
+                        ("Q30r1c2", "Other"),
+                        ("Q30r2c1", "Winner"),
+                        ("Q30r2c2", "Other"),
+                    ],
+                    "parent_canonical_id": None,
+                    "source_row": 100,
+                    "warnings": [],
+                    "children": [child_1, child_2],
+                },
+            ],
+        }
+
+        schema = classify_questions(
+            data_map,
+            [*RAW_COLUMNS, "Q30r1c1", "Q30r1c2", "Q30r2c1", "Q30r2c2"],
+            respondent_id_column="record",
+            total_respondents=20,
+            source_rawdata_path="raw.csv",
+        )
+        question = schema.get_question("Q30")
+
+        self.assertIsNotNone(question)
+        self.assertIs(question.question_type, QuestionType.GRID_RATED)
+        self.assertEqual(question.option_map, {"1": "Winner", "2": "Other"})
+        self.assertEqual(question.grid_row_labels["Q30r1c1"], "Pre-purchase familiarity")
+
+    def test_parser_merged_q26_style_question_classifies_as_grid_binary_select(self) -> None:
+        binary_labels = [(0, "Unchecked"), (1, "Checked")]
+        child_1 = sibling_grid_question(
+            "Q26r1",
+            "IT",
+            "What role did each stakeholder play",
+            options=binary_labels,
+            value_range=(0, 1),
+        )
+        child_1["sub_columns"] = [("Q26r1c1", "Blocked"), ("Q26r1c2", "Scored")]
+        child_2 = sibling_grid_question(
+            "Q26r2",
+            "Security",
+            "What role did each stakeholder play",
+            options=binary_labels,
+            value_range=(0, 1),
+        )
+        child_2["sub_columns"] = [("Q26r2c1", "Blocked"), ("Q26r2c2", "Scored")]
+        data_map = {
+            **CLASSIFIER_DATA_MAP,
+            "questions": [
+                *CLASSIFIER_DATA_MAP["questions"],
+                {
+                    "canonical_id": "Q26",
+                    "raw_id": "Q26",
+                    "question_text": "What role did each stakeholder play",
+                    "type_hint": "values_range",
+                    "value_range": (0, 1),
+                    "options": [],
+                    "sub_columns": [
+                        ("Q26r1c1", "Blocked"),
+                        ("Q26r1c2", "Scored"),
+                        ("Q26r2c1", "Blocked"),
+                        ("Q26r2c2", "Scored"),
+                    ],
+                    "parent_canonical_id": None,
+                    "source_row": 100,
+                    "warnings": [],
+                    "children": [child_1, child_2],
+                },
+            ],
+        }
+
+        schema = classify_questions(
+            data_map,
+            [*RAW_COLUMNS, "Q26r1c1", "Q26r1c2", "Q26r2c1", "Q26r2c2"],
+            respondent_id_column="record",
+            total_respondents=20,
+            source_rawdata_path="raw.csv",
+        )
+        question = schema.get_question("Q26")
+
+        self.assertIsNotNone(question)
+        self.assertIs(question.question_type, QuestionType.GRID_BINARY_SELECT)
+        self.assertEqual(question.option_map, {"1": "Blocked", "2": "Scored"})
+
+    def test_rank_order_parent_without_option_map_classifies_as_rank_order(self) -> None:
+        data_map = {
+            **CLASSIFIER_DATA_MAP,
+            "questions": [
+                *CLASSIFIER_DATA_MAP["questions"],
+                {
+                    "canonical_id": "Q22",
+                    "raw_id": "Q22",
+                    "question_text": "Rank the top three options",
+                    "type_hint": "values_range",
+                    "value_range": (1, 3),
+                    "options": [],
+                    "sub_columns": [
+                        ("Q22r1", "Option 1"),
+                        ("Q22r2", "Option 2"),
+                        ("Q22r3", "Option 3"),
+                    ],
+                    "parent_canonical_id": None,
+                    "source_row": 100,
                     "warnings": [],
                 },
             ],
-            ["QAmbiguousr1", "QAmbiguousr2"],
+        }
+
+        schema = classify_questions(
+            data_map,
+            [*RAW_COLUMNS, "Q22r1", "Q22r2", "Q22r3"],
+            respondent_id_column="record",
+            total_respondents=20,
+            source_rawdata_path="raw.csv",
         )
-        question = schema.get_question("QAmbiguous")
+        question = schema.get_question("Q22")
 
         self.assertIsNotNone(question)
-        self.assertTrue(question.classification_confidence_low)
-
-    def test_grid_subtype_non_numeric_likert_is_categorical(self) -> None:
-        question = {
-            "canonical_id": "QLikert",
-            "raw_id": "QLikert",
-            "question_text": "Agreement scale",
-            "type_hint": "values_range",
-            "value_range": (1, 5),
-            "options": [
-                (1, "Strongly disagree"),
-                (2, "Disagree"),
-                (3, "Neutral"),
-                (4, "Agree"),
-                (5, "Strongly agree"),
-            ],
-            "sub_columns": [("QLikertr1", "Ease"), ("QLikertr2", "Fit")],
-            "parent_canonical_id": None,
-            "source_row": 90,
-            "warnings": [],
-        }
-
-        subtype, confidence = classify_grid_subtype(question, {"QLikertr1", "QLikertr2"})
-
-        self.assertEqual(subtype, "GRID_CATEGORICAL")
-        self.assertGreaterEqual(confidence, 0.4)
-
-    def test_grid_subtype_scores_q26_style_binary_encoded_roles_as_categorical(self) -> None:
-        question = {
-            "canonical_id": "Q26r1",
-            "raw_id": "Q26r1",
-            "question_text": "IT / Technical - What role did each stakeholder play",
-            "type_hint": "values_range",
-            "value_range": (0, 1),
-            "options": [
-                (1, "Blocked Vendors"),
-                (2, "Scored Vendors"),
-                (3, "Recommended for or against"),
-                (4, "Restricted number to be considered"),
-                (5, "Other"),
-            ],
-            "sub_columns": [],
-            "parent_canonical_id": None,
-            "source_row": 90,
-            "warnings": [],
-        }
-
-        subtype, confidence = classify_grid_subtype(question, {"Q26r1c1", "Q26r1c2"})
-
-        self.assertEqual(subtype, "GRID_CATEGORICAL")
-        self.assertGreaterEqual(confidence, 0.5)
-
-    def test_grid_subtype_scores_q30_style_rating_labels_as_rated(self) -> None:
-        question = {
-            "canonical_id": "Q30r1",
-            "raw_id": "Q30r1",
-            "question_text": "Pre-purchase familiarity - Please rate from 0-10",
-            "type_hint": "values_range",
-            "value_range": (1, 12),
-            "options": [
-                (1, "0 (extremely low)"),
-                (2, "1"),
-                (3, "2"),
-                (4, "3"),
-                (5, "4"),
-                (6, "5"),
-                (7, "6"),
-                (8, "7"),
-                (9, "8"),
-                (10, "9"),
-                (11, "10 (extremely high)"),
-                (12, "Don't know"),
-            ],
-            "sub_columns": [],
-            "parent_canonical_id": None,
-            "source_row": 90,
-            "warnings": [],
-        }
-
-        subtype, confidence = classify_grid_subtype(question, {"Q30r1c1", "Q30r1c2"})
-
-        self.assertEqual(subtype, "GRID_RATED")
-        self.assertGreaterEqual(confidence, 0.5)
-
-    def test_grid_subtype_scores_rejection_prefixes_as_binary_select(self) -> None:
-        question = {
-            "canonical_id": "Q38",
-            "raw_id": "Q38",
-            "question_text": "Please select all that apply",
-            "type_hint": "values_range",
-            "value_range": (0, 1),
-            "options": [(1, "Yes"), (2, "NO TO: Yes")],
-            "sub_columns": [("Q38r1", "Discount"), ("Q38r2", "Support")],
-            "parent_canonical_id": None,
-            "source_row": 90,
-            "warnings": [],
-        }
-
-        subtype, confidence = classify_grid_subtype(question, {"Q38r1", "Q38r2"})
-
-        self.assertEqual(subtype, "GRID_BINARY_SELECT")
-        self.assertGreaterEqual(confidence, 0.6)
+        self.assertIs(question.question_type, QuestionType.RANK_ORDER)
 
 
 if __name__ == "__main__":

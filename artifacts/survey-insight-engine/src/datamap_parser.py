@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from enum import Enum
 import re
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 from openpyxl import load_workbook
 
@@ -49,6 +49,7 @@ class ParsedQuestion(TypedDict):
     parent_canonical_id: str | None
     source_row: int
     warnings: list[str]
+    children: NotRequired[list["ParsedQuestion"]]
 
 
 class DataMap(TypedDict):
@@ -206,7 +207,7 @@ def parse_datamap(path: str) -> DataMap:
             questions.append(_finalise_block(current_block))
 
         return {
-            "questions": questions,
+            "questions": _merge_per_row_children(questions),
             "source_path": path,
             "sheet_name": DATAMAP_SHEET_NAME,
             "total_rows_in_sheet": total_rows,
@@ -379,6 +380,166 @@ def _derive_parent_canonical_id(canonical_id: str) -> str | None:
         return oe_match.group(1)
 
     return None
+
+
+PER_ROW_CHILD_RE = re.compile(r"^(?P<parent>[A-Za-z_]*Q?\d+)r(?P<row>\d+)$")
+QUESTION_TEXT_SEPARATOR_RE = re.compile(r"\s+[-\u2013\u2014]\s+")
+
+
+def _merge_per_row_children(
+    questions: list[ParsedQuestion],
+) -> list[ParsedQuestion]:
+    """Collapse QNrM-style child blocks into one synthetic parent block.
+
+    The rest of the codebase consumes a flat ParsedQuestion list, so the
+    synthetic parent also carries the merged child raw columns in sub_columns.
+    The original children are retained under a ``children`` key for consumers
+    that need row labels and c-column labels separately.
+    """
+
+    by_id = {question["canonical_id"]: question for question in questions}
+    child_groups: dict[str, list[ParsedQuestion]] = {}
+    for question in questions:
+        parent_id = _per_row_parent_id(question["canonical_id"])
+        if parent_id is None:
+            continue
+        child_groups.setdefault(parent_id, []).append(question)
+
+    merge_children: dict[str, list[ParsedQuestion]] = {}
+    for parent_id, children in child_groups.items():
+        if len(children) < 2:
+            continue
+        existing_parent = by_id.get(parent_id)
+        if existing_parent is not None and existing_parent["options"]:
+            continue
+        merge_children[parent_id] = sorted(
+            children,
+            key=lambda child: _per_row_sort_key(child["canonical_id"]),
+        )
+
+    if not merge_children:
+        return questions
+
+    consumed_child_ids = {
+        child["canonical_id"]
+        for children in merge_children.values()
+        for child in children
+    }
+    emitted_synthetic: set[str] = set()
+    merged_questions: list[ParsedQuestion] = []
+
+    for question in questions:
+        canonical_id = question["canonical_id"]
+        if canonical_id in consumed_child_ids:
+            parent_id = _per_row_parent_id(canonical_id)
+            if parent_id is not None and parent_id not in emitted_synthetic:
+                merged_questions.append(
+                    _synthetic_parent_question(
+                        parent_id,
+                        merge_children[parent_id],
+                        by_id.get(parent_id),
+                    )
+                )
+                emitted_synthetic.add(parent_id)
+            continue
+        if canonical_id in merge_children:
+            if canonical_id not in emitted_synthetic:
+                merged_questions.append(
+                    _synthetic_parent_question(
+                        canonical_id,
+                        merge_children[canonical_id],
+                        question,
+                    )
+                )
+                emitted_synthetic.add(canonical_id)
+            continue
+        merged_questions.append(question)
+
+    return merged_questions
+
+
+def _per_row_parent_id(canonical_id: str) -> str | None:
+    match = PER_ROW_CHILD_RE.match(canonical_id)
+    if match is None:
+        return None
+    return match.group("parent")
+
+
+def _per_row_sort_key(canonical_id: str) -> tuple[int, str]:
+    match = PER_ROW_CHILD_RE.match(canonical_id)
+    if match is None:
+        return (10**9, canonical_id)
+    return (int(match.group("row")), canonical_id)
+
+
+def _synthetic_parent_question(
+    parent_id: str,
+    children: list[ParsedQuestion],
+    existing_parent: ParsedQuestion | None = None,
+) -> ParsedQuestion:
+    first_child = children[0]
+    row_label, root_text = _split_per_row_child_text(first_child)
+    del row_label
+    parent_text = (
+        existing_parent["question_text"]
+        if existing_parent is not None and existing_parent["question_text"]
+        else root_text
+    )
+    value_range = (
+        existing_parent["value_range"]
+        if existing_parent is not None and existing_parent["value_range"] is not None
+        else first_child["value_range"]
+    )
+    type_hint = (
+        existing_parent["type_hint"]
+        if existing_parent is not None and existing_parent["type_hint"] is not None
+        else first_child["type_hint"]
+    )
+    warnings = list(existing_parent["warnings"] if existing_parent is not None else [])
+    child_value_ranges = {child["value_range"] for child in children}
+    if len(child_value_ranges) > 1:
+        warnings.append("merged child blocks have mixed value ranges")
+
+    sub_columns: list[tuple[str, str]] = []
+    for child in children:
+        child_label, _child_root = _split_per_row_child_text(child)
+        if child["sub_columns"]:
+            sub_columns.extend(child["sub_columns"])
+        else:
+            sub_columns.append((child["canonical_id"], child_label))
+
+    parent: ParsedQuestion = {
+        "canonical_id": parent_id,
+        "raw_id": existing_parent["raw_id"] if existing_parent is not None else parent_id,
+        "question_text": parent_text,
+        "type_hint": type_hint,
+        "value_range": value_range,
+        "options": list(existing_parent["options"] if existing_parent is not None else []),
+        "sub_columns": sub_columns,
+        "parent_canonical_id": (
+            existing_parent["parent_canonical_id"]
+            if existing_parent is not None
+            else None
+        ),
+        "source_row": (
+            existing_parent["source_row"]
+            if existing_parent is not None
+            else first_child["source_row"]
+        ),
+        "warnings": warnings,
+    }
+    parent["children"] = children
+    return parent
+
+
+def _split_per_row_child_text(question: ParsedQuestion) -> tuple[str, str]:
+    parts = QUESTION_TEXT_SEPARATOR_RE.split(question["question_text"], maxsplit=1)
+    if len(parts) == 2:
+        row_label = parts[0].strip()
+        root_text = parts[1].strip()
+        if row_label and root_text:
+            return row_label, root_text
+    return question["canonical_id"], question["question_text"]
 
 
 def _row_preview(row: tuple[Any | None, ...]) -> str:

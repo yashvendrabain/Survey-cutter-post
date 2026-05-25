@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from src.datamap_parser import parse_datamap
+from src.datamap_parser import _merge_per_row_children, parse_datamap
 from tests.conftest import DATAMAP_FIXTURE_PATH, MISSING_SHEET_FIXTURE_PATH
 
 
@@ -217,6 +217,87 @@ class TestDataMapParser(unittest.TestCase):
             "[vQTIME_MINUTES]",
         )
 
+    def test_parse_merges_per_row_children_into_synthetic_parent(self) -> None:
+        parsed = {
+            "questions": _merge_per_row_children(
+                [
+                    _parsed_question(
+                        "Q30r1",
+                        "Pre-purchase familiarity - Please rate each vendor",
+                        (1, 12),
+                        [("Q30r1c1", "Winner"), ("Q30r1c2", "Other vendor")],
+                    ),
+                    _parsed_question(
+                        "Q30r2",
+                        "Customer validation - Please rate each vendor",
+                        (1, 12),
+                        [("Q30r2c1", "Winner"), ("Q30r2c2", "Other vendor")],
+                    ),
+                ]
+            )
+        }
+        parsed_ids = [question["canonical_id"] for question in parsed["questions"]]
+        q30 = question_by_id(parsed, "Q30")
+
+        self.assertIn("Q30", parsed_ids)
+        self.assertNotIn("Q30r1", parsed_ids)
+        self.assertEqual(q30["question_text"], "Please rate each vendor")
+        self.assertEqual(len(q30["children"]), 2)
+        self.assertEqual(
+            q30["sub_columns"],
+            [
+                ("Q30r1c1", "Winner"),
+                ("Q30r1c2", "Other vendor"),
+                ("Q30r2c1", "Winner"),
+                ("Q30r2c2", "Other vendor"),
+            ],
+        )
+
+    def test_parse_does_not_merge_open_text_suffixes(self) -> None:
+        parsed = {
+            "questions": _merge_per_row_children(
+                [
+                    _parsed_question(
+                        "Q5r1",
+                        "Option A - Select all that apply",
+                        (0, 1),
+                        [],
+                        options=[(0, "Unchecked"), (1, "Checked")],
+                    ),
+                    {
+                        **_parsed_question("Q5r901oe", "Other text", None, []),
+                        "type_hint": "open_text",
+                        "parent_canonical_id": "Q5",
+                    },
+                ]
+            )
+        }
+        parsed_ids = [question["canonical_id"] for question in parsed["questions"]]
+
+        self.assertIn("Q5r1", parsed_ids)
+        self.assertIn("Q5r901oe", parsed_ids)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _parsed_question(
+    canonical_id: str,
+    question_text: str,
+    value_range: tuple[int, int] | None,
+    sub_columns: list[tuple[str, str]],
+    options: list[tuple[int, str]] | None = None,
+) -> dict:
+    return {
+        "canonical_id": canonical_id,
+        "raw_id": canonical_id,
+        "question_text": question_text,
+        "type_hint": "values_range",
+        "value_range": value_range,
+        "options": options or [],
+        "sub_columns": sub_columns,
+        "parent_canonical_id": None,
+        "source_row": 1,
+        "warnings": [],
+    }

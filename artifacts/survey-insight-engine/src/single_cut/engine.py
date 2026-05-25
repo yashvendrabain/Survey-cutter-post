@@ -109,6 +109,9 @@ def _dispatch(
     filter_mask: pd.Series | None,
     filter_expr: str | None,
 ) -> SingleCutResult:
+    from src.single_cut.grid_binary_pivot import compute_grid_binary_pivot
+    from src.single_cut.grid_rated import compute_grid_rated
+    from src.single_cut.rank_order import compute_rank_order
     from src.single_cut._grid import compute_grid
     from src.single_cut._multi_select import compute_multi_select
     from src.single_cut._numeric import compute_numeric
@@ -118,11 +121,17 @@ def _dispatch(
         return compute_single_select(spec, df, log, filter_mask, filter_expr)
     if spec.question_type is QuestionType.MULTI_SELECT_BINARY:
         return compute_multi_select(spec, df, log, filter_mask, filter_expr)
+    if spec.question_type is QuestionType.RANK_ORDER:
+        return compute_rank_order(spec, df, log, filter_mask, filter_expr)
     if spec.question_type in (
         QuestionType.DIRECT_NUMERIC,
         QuestionType.NUMERIC_ALLOCATION,
     ):
         return compute_numeric(spec, df, log, filter_mask, filter_expr)
+    if spec.question_type is QuestionType.GRID_RATED:
+        return compute_grid_rated(spec, df, log, filter_mask, filter_expr)
+    if spec.question_type is QuestionType.GRID_BINARY_SELECT:
+        return compute_grid_binary_pivot(spec, df, log, filter_mask, filter_expr)
     if spec.question_type is QuestionType.GRID_SINGLE_SELECT:
         return compute_grid(spec, df, log, filter_mask, filter_expr)
     raise ValueError(f"unsupported question type: {spec.question_type}")

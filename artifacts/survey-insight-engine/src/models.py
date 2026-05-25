@@ -20,6 +20,9 @@ class QuestionType(str, Enum):
     SINGLE_SELECT = "SINGLE_SELECT"
     MULTI_SELECT_BINARY = "MULTI_SELECT_BINARY"
     GRID_SINGLE_SELECT = "GRID_SINGLE_SELECT"
+    RANK_ORDER = "RANK_ORDER"
+    GRID_RATED = "GRID_RATED"
+    GRID_BINARY_SELECT = "GRID_BINARY_SELECT"
     NUMERIC_ALLOCATION = "NUMERIC_ALLOCATION"
     DIRECT_NUMERIC = "DIRECT_NUMERIC"
     OPEN_TEXT = "OPEN_TEXT"
@@ -122,15 +125,19 @@ class QuestionSpec:
                 "exclusion_reason must be non-empty when analysis_eligible is False"
             )
 
-        if self.question_type is QuestionType.GRID_SINGLE_SELECT:
+        if self.question_type in {
+            QuestionType.GRID_SINGLE_SELECT,
+            QuestionType.GRID_RATED,
+            QuestionType.GRID_BINARY_SELECT,
+        }:
             if not self.grid_row_labels:
                 raise ValueError(
-                    "grid_row_labels must be non-empty for GRID_SINGLE_SELECT"
+                    "grid_row_labels must be non-empty for grid question types"
                 )
             if len(self.grid_row_labels) != len(self.raw_columns):
                 raise ValueError(
                     "grid_row_labels length must match raw_columns length for "
-                    "GRID_SINGLE_SELECT"
+                    "grid question types"
                 )
 
         if self.question_type is QuestionType.MULTI_SELECT_BINARY:
@@ -411,6 +418,153 @@ class GridSingleSelectResult(SingleCutResult):
 
 
 @dataclass(frozen=True, slots=True)
+class RankOrderRow:
+    """Counts and percentages for one option across rank positions."""
+
+    option_id: str
+    option_label: str
+    counts_per_rank: list[int]
+    pcts_per_rank: list[float]
+
+    def __post_init__(self) -> None:
+        _require_non_empty_string(self.option_id, "option_id")
+        _require_non_empty_string(self.option_label, "option_label")
+        if len(self.counts_per_rank) != len(self.pcts_per_rank):
+            raise ValueError("counts_per_rank and pcts_per_rank lengths must match")
+        for index, count in enumerate(self.counts_per_rank):
+            _require_non_negative_int(count, f"counts_per_rank[{index}]")
+        for index, pct in enumerate(self.pcts_per_rank):
+            _require_rate(pct, f"pcts_per_rank[{index}]")
+
+
+@dataclass(frozen=True, slots=True)
+class RankOrderResult(SingleCutResult):
+    """Per-option, per-rank-position table for a RANK_ORDER question."""
+
+    question_text: str
+    K: int
+    rows: list[RankOrderRow]
+    total_respondents: int
+    total_responses: int
+
+    def __post_init__(self) -> None:
+        super(RankOrderResult, self).__post_init__()
+        if self.question_type is not QuestionType.RANK_ORDER:
+            raise ValueError("RankOrderResult requires question_type RANK_ORDER")
+        _require_non_empty_string(self.question_text, "question_text")
+        _require_non_negative_int(self.K, "K")
+        if self.K <= 0:
+            raise ValueError("K must be greater than 0")
+        _require_non_negative_int(self.total_respondents, "total_respondents")
+        _require_non_negative_int(self.total_responses, "total_responses")
+        for row in self.rows:
+            if not isinstance(row, RankOrderRow):
+                raise ValueError("rows must contain RankOrderRow instances")
+
+
+@dataclass(frozen=True, slots=True)
+class GridRatedRow:
+    """Mean/valid-n payload for one grid row across c-columns."""
+
+    row_id: str
+    row_label: str
+    means_per_column: list[float]
+    valid_n_per_column: list[int]
+    delta: float | None = None
+
+    def __post_init__(self) -> None:
+        _require_non_empty_string(self.row_id, "row_id")
+        _require_non_empty_string(self.row_label, "row_label")
+        if len(self.means_per_column) != len(self.valid_n_per_column):
+            raise ValueError("means_per_column and valid_n_per_column lengths must match")
+        for index, mean in enumerate(self.means_per_column):
+            _require_numeric(mean, f"means_per_column[{index}]")
+        for index, valid_n in enumerate(self.valid_n_per_column):
+            _require_non_negative_int(valid_n, f"valid_n_per_column[{index}]")
+        if self.delta is not None:
+            _require_numeric(self.delta, "delta")
+
+
+@dataclass(frozen=True, slots=True)
+class GridRatedResult(SingleCutResult):
+    """Mean table for a rated row-by-column grid."""
+
+    question_text: str
+    column_headers: list[str]
+    rows: list[GridRatedRow]
+    total_respondents: int
+    total_responses: int
+    show_delta: bool
+
+    def __post_init__(self) -> None:
+        super(GridRatedResult, self).__post_init__()
+        if self.question_type is not QuestionType.GRID_RATED:
+            raise ValueError("GridRatedResult requires question_type GRID_RATED")
+        _require_non_empty_string(self.question_text, "question_text")
+        if not self.column_headers:
+            raise ValueError("column_headers must be non-empty")
+        for header in self.column_headers:
+            _require_non_empty_string(header, "column_headers item")
+        _require_non_negative_int(self.total_respondents, "total_respondents")
+        _require_non_negative_int(self.total_responses, "total_responses")
+        for row in self.rows:
+            if not isinstance(row, GridRatedRow):
+                raise ValueError("rows must contain GridRatedRow instances")
+            if len(row.means_per_column) != len(self.column_headers):
+                raise ValueError("each GridRatedRow must align with column_headers")
+
+
+@dataclass(frozen=True, slots=True)
+class GridBinaryPivotRow:
+    """Count/rate payload for one binary grid row across c-columns."""
+
+    row_id: str
+    row_label: str
+    counts_per_column: list[int]
+    pcts_per_column: list[float]
+
+    def __post_init__(self) -> None:
+        _require_non_empty_string(self.row_id, "row_id")
+        _require_non_empty_string(self.row_label, "row_label")
+        if len(self.counts_per_column) != len(self.pcts_per_column):
+            raise ValueError("counts_per_column and pcts_per_column lengths must match")
+        for index, count in enumerate(self.counts_per_column):
+            _require_non_negative_int(count, f"counts_per_column[{index}]")
+        for index, pct in enumerate(self.pcts_per_column):
+            _require_rate(pct, f"pcts_per_column[{index}]")
+
+
+@dataclass(frozen=True, slots=True)
+class GridBinaryPivotResult(SingleCutResult):
+    """Pivoted row-by-column output for binary select grids."""
+
+    question_text: str
+    column_headers: list[str]
+    rows: list[GridBinaryPivotRow]
+    total_respondents: int
+    total_responses: int
+
+    def __post_init__(self) -> None:
+        super(GridBinaryPivotResult, self).__post_init__()
+        if self.question_type is not QuestionType.GRID_BINARY_SELECT:
+            raise ValueError(
+                "GridBinaryPivotResult requires question_type GRID_BINARY_SELECT"
+            )
+        _require_non_empty_string(self.question_text, "question_text")
+        if not self.column_headers:
+            raise ValueError("column_headers must be non-empty")
+        for header in self.column_headers:
+            _require_non_empty_string(header, "column_headers item")
+        _require_non_negative_int(self.total_respondents, "total_respondents")
+        _require_non_negative_int(self.total_responses, "total_responses")
+        for row in self.rows:
+            if not isinstance(row, GridBinaryPivotRow):
+                raise ValueError("rows must contain GridBinaryPivotRow instances")
+            if len(row.counts_per_column) != len(self.column_headers):
+                raise ValueError("each GridBinaryPivotRow must align with column_headers")
+
+
+@dataclass(frozen=True, slots=True)
 class SkipRecord:
     """Records a question skipped or failed during analysis."""
 
@@ -590,6 +744,10 @@ class FilterSpec:
     def __post_init__(self) -> None:
         _require_non_empty_string(self.filter_question_id, "filter_question_id")
 
+    def is_breakdown(self) -> bool:
+        """True if this filter has no specific value."""
+        return self.filter_value is None and not self.filter_values
+
     def get_effective_values(self) -> list[int | str] | None:
         """Return list of values to filter on (None = breakdown)."""
         if self.filter_value is not None:
@@ -597,10 +755,6 @@ class FilterSpec:
         if self.filter_values:
             return list(self.filter_values)
         return None
-
-    def is_breakdown(self) -> bool:
-        """True if this filter has no specific value."""
-        return self.get_effective_values() is None
 
 
 @dataclass(frozen=True, slots=True)
@@ -853,16 +1007,10 @@ class GlobalFilterState:
     def description(self) -> str:
         if not self.filters:
             return "(no global filter)"
-        parts = []
-        for filter_spec in self.filters:
-            values = filter_spec.get_effective_values()
-            if values is None:
-                parts.append(f"{filter_spec.filter_question_id} == None")
-            elif len(values) == 1:
-                parts.append(f"{filter_spec.filter_question_id} == {values[0]!r}")
-            else:
-                parts.append(f"{filter_spec.filter_question_id} in {list(values)!r}")
-        return " AND ".join(parts)
+        return " AND ".join(
+            f"{filter_spec.filter_question_id} == {filter_spec.filter_value!r}"
+            for filter_spec in self.filters
+        )
 
 
 @dataclass(frozen=True, slots=True)

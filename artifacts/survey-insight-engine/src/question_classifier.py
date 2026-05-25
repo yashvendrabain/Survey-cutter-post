@@ -87,6 +87,13 @@ _REJECTION_PREFIXES = (
     "NO - ",
     "Not selected: ",
 )
+_MISSING_VALUE_TOKENS = {
+    "i don't know",
+    "i don\u2019t know",
+    "this was not something i considered",
+    "not applicable",
+    "n/a",
+}
 
 
 def classify_questions(
@@ -150,7 +157,11 @@ def _build_question_spec(
 ) -> QuestionSpec:
     question_type = _classify_question(question, all_sub_columns)
     expected_columns = _expected_columns(question)
-    if question_type is QuestionType.GRID_SINGLE_SELECT:
+    if question_type in {
+        QuestionType.GRID_SINGLE_SELECT,
+        QuestionType.GRID_RATED,
+        QuestionType.GRID_BINARY_SELECT,
+    }:
         expected_columns = _expand_grid_c_columns(
             question,
             expected_columns,
@@ -171,8 +182,11 @@ def _build_question_spec(
 
     if question_type in {
         QuestionType.MULTI_SELECT_BINARY,
+        QuestionType.RANK_ORDER,
         QuestionType.NUMERIC_ALLOCATION,
         QuestionType.GRID_SINGLE_SELECT,
+        QuestionType.GRID_RATED,
+        QuestionType.GRID_BINARY_SELECT,
     }:
         if not present_columns:
             analysis_eligible = False
@@ -185,7 +199,12 @@ def _build_question_spec(
     grid_row_labels = _grid_row_labels_for_spec(question_type, question, raw_columns)
 
     if (
-        question_type is QuestionType.GRID_SINGLE_SELECT
+        question_type
+        in {
+            QuestionType.GRID_SINGLE_SELECT,
+            QuestionType.GRID_RATED,
+            QuestionType.GRID_BINARY_SELECT,
+        }
         and 0 < len(present_columns) < len(expected_columns)
     ):
         missing = tuple(column for column in expected_columns if column not in raw_column_set)
@@ -193,7 +212,11 @@ def _build_question_spec(
 
     possible_role: str | None = None
     classification_confidence_low = False
-    if question_type is QuestionType.GRID_SINGLE_SELECT:
+    if question_type in {
+        QuestionType.GRID_SINGLE_SELECT,
+        QuestionType.GRID_RATED,
+        QuestionType.GRID_BINARY_SELECT,
+    }:
         possible_role, confidence = classify_grid_subtype(question, raw_column_set)
         classification_confidence_low = confidence < _GRID_CONFIDENCE_LOW_THRESHOLD
 
@@ -236,6 +259,11 @@ def _merge_grid_siblings(
         if spec.question_type not in {
             QuestionType.SINGLE_SELECT,
             QuestionType.GRID_SINGLE_SELECT,
+            QuestionType.MULTI_SELECT_BINARY,
+            QuestionType.RANK_ORDER,
+            QuestionType.GRID_RATED,
+            QuestionType.GRID_BINARY_SELECT,
+            QuestionType.DIRECT_NUMERIC,
         }:
             continue
         parent_groups.setdefault(parent_id, []).append(spec)
@@ -283,6 +311,7 @@ def _merge_sibling_group(
     option_map = dict(ordered_members[0].option_map)
     value_range = ordered_members[0].value_range
     possible_role = _sibling_grid_role(ordered_members)
+    question_type = _merged_sibling_question_type(ordered_members, possible_role)
 
     raw_columns: list[str] = []
     grid_row_labels: dict[str, str] = {}
@@ -292,6 +321,8 @@ def _merge_sibling_group(
         for column in member_columns:
             raw_columns.append(column)
             grid_row_labels[column] = criterion_label
+    if question_type in {QuestionType.MULTI_SELECT_BINARY, QuestionType.RANK_ORDER}:
+        option_map = {column: grid_row_labels[column] for column in raw_columns}
 
     conditional_values = {member.conditional_on for member in ordered_members}
     conditional_on = conditional_values.pop() if len(conditional_values) == 1 else None
@@ -304,7 +335,7 @@ def _merge_sibling_group(
         question_id=f"[{parent_id}]",
         canonical_id=parent_id,
         question_text=root_text,
-        question_type=QuestionType.GRID_SINGLE_SELECT,
+        question_type=question_type,
         raw_columns=tuple(raw_columns),
         option_map=option_map,
         value_range=value_range,
@@ -320,8 +351,30 @@ def _merge_sibling_group(
         conditional_on=conditional_on,
     )
     merged_role, confidence = classify_grid_subtype(merged_spec, raw_column_set)
+    role_to_type = {
+        GRID_RATED: QuestionType.GRID_RATED,
+        GRID_BINARY_SELECT: QuestionType.GRID_BINARY_SELECT,
+        GRID_CATEGORICAL: QuestionType.GRID_SINGLE_SELECT,
+    }
+    grid_family_types = {
+        QuestionType.GRID_SINGLE_SELECT,
+        QuestionType.GRID_RATED,
+        QuestionType.GRID_BINARY_SELECT,
+    }
+    final_type = merged_spec.question_type
+    if final_type in grid_family_types and any(
+        member.question_type in grid_family_types for member in ordered_members
+    ):
+        final_type = role_to_type.get(merged_role, final_type)
+    final_option_map = merged_spec.option_map
+    if final_type is QuestionType.GRID_RATED and _option_map_looks_numeric_scale(
+        final_option_map
+    ):
+        final_option_map = {}
     return replace(
         merged_spec,
+        question_type=final_type,
+        option_map=final_option_map,
         possible_role=merged_role,
         classification_confidence_low=confidence < _GRID_CONFIDENCE_LOW_THRESHOLD,
     )
@@ -345,17 +398,39 @@ def _sibling_group_is_mergeable(members: list[QuestionSpec]) -> bool:
     return True
 
 
+def _merged_sibling_question_type(
+    members: list[QuestionSpec],
+    possible_role: str,
+) -> QuestionType:
+    if _members_have_c_column_groups(members):
+        return QuestionType.GRID_SINGLE_SELECT
+    value_range = members[0].value_range
+    if (
+        value_range is not None
+        and value_range[0] == 1
+        and 2 <= value_range[1] <= 10
+        and not members[0].option_map
+    ):
+        return QuestionType.RANK_ORDER
+    if value_range == (0, 1):
+        return QuestionType.MULTI_SELECT_BINARY
+    return QuestionType.GRID_SINGLE_SELECT
+
+
 def _sibling_grid_role(members: list[QuestionSpec]) -> str:
     explicit_roles = {
         member.possible_role for member in members if member.possible_role is not None
     }
     if len(explicit_roles) == 1:
         role = explicit_roles.pop() or GRID_CATEGORICAL
-        if role == GRID_BINARY_SELECT and _members_have_c_column_groups(members):
-            return GRID_CATEGORICAL
         return role
     labels = [str(label) for label in members[0].option_map.values()]
     return _grid_subtype_from_parts(members[0].value_range, labels)
+
+
+def _option_map_looks_numeric_scale(option_map: dict[int | str, str]) -> bool:
+    labels = [str(label) for label in option_map.values()]
+    return _grid_subtype_from_parts(None, labels) == GRID_RATED
 
 
 def _members_have_c_column_groups(members: list[QuestionSpec]) -> bool:
@@ -469,9 +544,18 @@ def _classify_question(
         return QuestionType.UNKNOWN
 
     if type_hint == "values_range":
+        if has_sub_columns and _has_grid_c_columns(question):
+            subtype, _confidence = classify_grid_subtype(question, set())
+            if subtype == GRID_RATED:
+                return QuestionType.GRID_RATED
+            if subtype == GRID_BINARY_SELECT or value_range == (0, 1):
+                return QuestionType.GRID_BINARY_SELECT
+            return QuestionType.GRID_SINGLE_SELECT
         if has_sub_columns and has_options:
             return QuestionType.GRID_SINGLE_SELECT
         if has_sub_columns and not has_options:
+            if value_range is not None and value_range[0] == 1 and 2 <= value_range[1] <= 10:
+                return QuestionType.RANK_ORDER
             return _classify_sub_column_numeric_group(value_range)
         if has_options and not has_sub_columns:
             return QuestionType.SINGLE_SELECT
@@ -557,9 +641,27 @@ def _classify_sub_column_numeric_group(
 
 
 def _expected_columns(question: ParsedQuestion) -> tuple[str, ...]:
+    child_columns = _child_columns(question)
+    if child_columns:
+        return child_columns
     if question["sub_columns"]:
         return tuple(sub_column_id for sub_column_id, _ in question["sub_columns"])
     return (question["canonical_id"],)
+
+
+def _child_columns(question: ParsedQuestion) -> tuple[str, ...]:
+    children = question.get("children", [])
+    columns: list[str] = []
+    for child in children:
+        if child["sub_columns"]:
+            columns.extend(sub_column_id for sub_column_id, _label in child["sub_columns"])
+        else:
+            columns.append(child["canonical_id"])
+    return tuple(columns)
+
+
+def _has_grid_c_columns(question: ParsedQuestion) -> bool:
+    return any(re.match(r"^.+r\d+c\d+$", column) for column in _expected_columns(question))
 
 
 def _expand_grid_c_columns(
@@ -602,6 +704,9 @@ def _raw_columns_for_spec(
 ) -> tuple[str, ...]:
     if question_type in {
         QuestionType.MULTI_SELECT_BINARY,
+        QuestionType.RANK_ORDER,
+        QuestionType.GRID_RATED,
+        QuestionType.GRID_BINARY_SELECT,
         QuestionType.NUMERIC_ALLOCATION,
         QuestionType.GRID_SINGLE_SELECT,
     }:
@@ -629,6 +734,15 @@ def _option_map_for_spec(
         return {sub_column_id: label for sub_column_id, label in question["sub_columns"]}
     if question_type is QuestionType.GRID_SINGLE_SELECT:
         return {code: label for code, label in question["options"]}
+    if question_type in {
+        QuestionType.GRID_RATED,
+        QuestionType.GRID_BINARY_SELECT,
+    }:
+        if question["options"]:
+            return {code: label for code, label in question["options"]}
+        return _grid_group_labels_for_spec(question)
+    if question_type is QuestionType.RANK_ORDER:
+        return {sub_column_id: label for sub_column_id, label in question["sub_columns"]}
     return {}
 
 
@@ -637,8 +751,25 @@ def _grid_row_labels_for_spec(
     question: ParsedQuestion,
     raw_columns: tuple[str, ...],
 ) -> dict[str, str] | None:
-    if question_type is not QuestionType.GRID_SINGLE_SELECT:
+    if question_type not in {
+        QuestionType.GRID_SINGLE_SELECT,
+        QuestionType.GRID_RATED,
+        QuestionType.GRID_BINARY_SELECT,
+    }:
         return None
+
+    child_row_labels = _child_grid_row_labels(question)
+    if child_row_labels:
+        labels = {}
+        for sub_column_id in raw_columns:
+            if sub_column_id in child_row_labels:
+                labels[sub_column_id] = child_row_labels[sub_column_id]
+                continue
+            base_column_id = _grid_base_sub_column_id(sub_column_id)
+            if base_column_id in child_row_labels:
+                labels[sub_column_id] = child_row_labels[base_column_id]
+        if labels:
+            return labels
 
     row_label_lookup = {
         sub_column_id: label for sub_column_id, label in question["sub_columns"]
@@ -651,6 +782,36 @@ def _grid_row_labels_for_spec(
         base_column_id = _grid_base_sub_column_id(sub_column_id)
         if base_column_id in row_label_lookup:
             labels[sub_column_id] = row_label_lookup[base_column_id]
+    return labels
+
+
+def _child_grid_row_labels(question: ParsedQuestion) -> dict[str, str]:
+    labels: dict[str, str] = {}
+    for child in question.get("children", []):
+        criterion_label = _child_criterion_label(child)
+        if child["sub_columns"]:
+            for sub_column_id, _sub_label in child["sub_columns"]:
+                labels[sub_column_id] = criterion_label
+        else:
+            labels[child["canonical_id"]] = criterion_label
+    return labels
+
+
+def _child_criterion_label(question: ParsedQuestion) -> str:
+    parts = _QUESTION_TEXT_SEPARATOR_PATTERN.split(question["question_text"], maxsplit=1)
+    if len(parts) == 2 and parts[0].strip():
+        return _LEADING_QUESTION_PREFIX_PATTERN.sub("", parts[0]).strip()
+    return question["canonical_id"]
+
+
+def _grid_group_labels_for_spec(question: ParsedQuestion) -> dict[int | str, str]:
+    labels: dict[int | str, str] = {}
+    for sub_column_id, label in question["sub_columns"]:
+        match = re.match(r"^.+r\d+c(?P<group>\d+)$", sub_column_id)
+        if match is None:
+            continue
+        group_key = match.group("group")
+        labels.setdefault(group_key, label)
     return labels
 
 
@@ -765,7 +926,13 @@ class _GridSubtypeParts:
 
 def _grid_option_labels(question: ParsedQuestion | QuestionSpec | _GridSubtypeParts) -> list[str]:
     if isinstance(question, dict):
-        return [str(label) for _code, label in question["options"]]
+        labels = [str(label) for _code, label in question.get("options", [])]
+        if labels:
+            return labels
+        for child in question.get("children", []) or []:
+            for _code, label in child.get("options", []) or []:
+                labels.append(str(label))
+        return labels
     if isinstance(question, _GridSubtypeParts):
         return [str(label) for label in question.labels]
     return [str(label) for label in question.option_map.values()]
@@ -903,14 +1070,70 @@ def _is_numeric_label(label: str) -> bool:
     return _numeric_label_value(label) is not None
 
 
-def _numeric_label_value(label: str) -> float | None:
-    match = re.match(r"^\s*(-?\d+(?:\.\d+)?)", str(label))
+def _extract_leading_int(value: str | int | float | None) -> int | None:
+    """Extract a leading integer from labels such as '10 (extremely high)'."""
+
+    numeric = _coerce_to_numeric(value)
+    if numeric is None:
+        return None
+    if not float(numeric).is_integer():
+        return None
+    return int(numeric)
+
+
+def _coerce_to_numeric(value: object) -> float | None:
+    """Coerce numeric-coded survey values while skipping missing-value tokens."""
+
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.casefold() in _MISSING_VALUE_TOKENS:
+        return None
+    match = re.match(r"^\s*(-?\d+(?:\.\d+)?)", text)
     if match is None:
         return None
     try:
         return float(match.group(1))
     except (TypeError, ValueError):
         return None
+
+
+def _has_no_rank_repeats(
+    df: object,
+    sibling_cols: list[str],
+    K: int,
+    sample_rows: int = 500,
+) -> bool:
+    """Return True when no respondent repeats a rank across sibling columns."""
+
+    if not sibling_cols or not hasattr(df, "loc"):
+        return False
+    sample = df.loc[:, [col for col in sibling_cols if col in df.columns]].head(sample_rows)
+    for _idx, row in sample.iterrows():
+        ranks = [
+            rank
+            for value in row
+            if (rank := _extract_leading_int(value)) is not None and 1 <= rank <= K
+        ]
+        if len(ranks) != len(set(ranks)):
+            return False
+    return True
+
+
+def _labels_look_numeric(labels: list[str]) -> tuple[bool, int]:
+    """Return whether labels mostly form a numeric rating scale and its max."""
+
+    values = [
+        value for label in labels if (value := _extract_leading_int(label)) is not None
+    ]
+    if not labels or len(values) / len(labels) < 0.6:
+        return False, 0
+    max_value = max(values)
+    return max_value <= 10 and max(values) - min(values) >= 2, max_value
+
+
+def _numeric_label_value(label: str) -> float | None:
+    return _coerce_to_numeric(label)
 
 
 def _option_other_code(question: ParsedQuestion) -> int | str | None:

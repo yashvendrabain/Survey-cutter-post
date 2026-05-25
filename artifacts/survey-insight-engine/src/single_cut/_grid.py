@@ -141,4 +141,8 @@ def _checked_only_row_result(
 
 
 def _is_unchecked_value(value: object) -> bool:
-    return value == 0 or value == "0"
+    if value == 0 or value == "0":
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in {"unchecked", "not selected"}
+    return False

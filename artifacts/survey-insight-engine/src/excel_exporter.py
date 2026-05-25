@@ -31,10 +31,13 @@ from src.models import (
     DataQualityReport,
     FilteredSingleCutResult,
     FilterSpec,
+    GridBinaryPivotResult,
+    GridRatedResult,
     GridSingleSelectResult,
     MultiSelectResult,
     NumericResult,
     QuestionType,
+    RankOrderResult,
     SingleCutResult,
     SingleSelectResult,
     SkipRecord,
@@ -1887,7 +1890,13 @@ def _live_write_question_block(
         note_cell.font = _live_font(italic=True, size=9, color="808080")
         row_index += 1
     row_index += 1
-    if isinstance(result, NumericResult):
+    if isinstance(result, RankOrderResult):
+        next_row = _live_write_rank_order_table(worksheet, row_index, result)
+    elif isinstance(result, GridRatedResult):
+        next_row = _live_write_grid_rated_result_table(worksheet, row_index, result)
+    elif isinstance(result, GridBinaryPivotResult):
+        next_row = _live_write_grid_binary_pivot_result_table(worksheet, row_index, result)
+    elif isinstance(result, NumericResult):
         next_row = _live_write_numeric_table(
             worksheet,
             row_index,
@@ -1988,6 +1997,171 @@ def _grid_result_values_look_binary(result: GridSingleSelectResult) -> bool:
         return True
     text = " ".join(str(value).strip().lower() for value in values)
     return any(token in text for token in ("selected", "checked", "unchecked"))
+
+
+def _live_write_rank_order_table(
+    worksheet: Any,
+    start_row: int,
+    result: RankOrderResult,
+) -> int:
+    header_row = start_row
+    subheader_row = start_row + 1
+    worksheet.cell(row=header_row, column=1, value="Option ID").font = _live_font(bold=True)
+    worksheet.cell(row=header_row, column=2, value="Option").font = _live_font(bold=True)
+    col_index = 3
+    percent_columns: list[int] = []
+    for rank in range(1, result.K + 1):
+        worksheet.cell(row=header_row, column=col_index, value=str(rank)).font = _live_font(bold=True)
+        worksheet.merge_cells(
+            start_row=header_row,
+            start_column=col_index,
+            end_row=header_row,
+            end_column=col_index + 1,
+        )
+        worksheet.cell(row=subheader_row, column=col_index, value="# of respondents").font = _live_font(bold=True)
+        worksheet.cell(row=subheader_row, column=col_index + 1, value="% of respondents").font = _live_font(bold=True)
+        percent_columns.append(col_index + 1)
+        col_index += 2
+    last_col = col_index - 1
+    for row in (header_row, subheader_row):
+        for col in range(1, last_col + 1):
+            worksheet.cell(row=row, column=col).fill = _live_fill("F2F2F2")
+
+    data_start = start_row + 2
+    for offset, row in enumerate(result.rows):
+        excel_row = data_start + offset
+        worksheet.cell(row=excel_row, column=1, value=row.option_id).font = _live_font(color="808080")
+        worksheet.cell(row=excel_row, column=2, value=row.option_label)
+        col = 3
+        for count, pct in zip(row.counts_per_rank, row.pcts_per_rank):
+            worksheet.cell(row=excel_row, column=col, value=count).number_format = "#,##0"
+            worksheet.cell(row=excel_row, column=col + 1, value=pct).number_format = "0.0%"
+            col += 2
+
+    data_end = data_start + len(result.rows) - 1
+    if result.rows:
+        for percent_col in percent_columns:
+            _apply_color_scale_range(worksheet, data_start, percent_col, data_end, percent_col)
+    total_row = max(data_start, data_end + 1)
+    _write_total_respondents_row(worksheet, total_row, result.total_respondents, last_col)
+    responses_row = total_row + 1
+    _write_total_responses_row(worksheet, responses_row, result.total_responses, last_col)
+    qc_row = responses_row + 1
+    worksheet.cell(row=qc_row, column=2, value="QC check").font = _live_font(bold=True)
+    worksheet.cell(
+        row=qc_row,
+        column=3,
+        value=sum(sum(row.counts_per_rank) for row in result.rows) == result.total_responses,
+    )
+    return qc_row
+
+
+def _live_write_grid_rated_result_table(
+    worksheet: Any,
+    start_row: int,
+    result: GridRatedResult,
+) -> int:
+    header_row = start_row
+    worksheet.cell(row=header_row, column=1, value="Sub-question ID").font = _live_font(bold=True)
+    worksheet.cell(row=header_row, column=2, value="Sub-question").font = _live_font(bold=True)
+    col_index = 3
+    metric_columns: list[int] = []
+    for header in result.column_headers:
+        worksheet.cell(row=header_row, column=col_index, value=header).font = _live_font(bold=True)
+        metric_columns.append(col_index)
+        col_index += 1
+    delta_col = None
+    if result.show_delta:
+        delta_col = col_index
+        worksheet.cell(row=header_row, column=delta_col, value="Delta").font = _live_font(bold=True)
+        col_index += 1
+    last_col = col_index - 1
+    for col in range(1, last_col + 1):
+        worksheet.cell(row=header_row, column=col).fill = _live_fill("F2F2F2")
+
+    data_start = start_row + 1
+    for offset, row in enumerate(result.rows):
+        excel_row = data_start + offset
+        worksheet.cell(row=excel_row, column=1, value=row.row_id).font = _live_font(color="808080")
+        worksheet.cell(row=excel_row, column=2, value=row.row_label)
+        col = 3
+        for mean in row.means_per_column:
+            worksheet.cell(row=excel_row, column=col, value=mean).number_format = "0.00"
+            col += 1
+        if delta_col is not None:
+            worksheet.cell(row=excel_row, column=delta_col, value=row.delta or 0.0).number_format = "0.00"
+
+    data_end = data_start + len(result.rows) - 1
+    if result.rows:
+        for col in metric_columns:
+            _apply_color_scale_range(worksheet, data_start, col, data_end, col)
+    total_row = max(data_start, data_end + 1)
+    _write_total_respondents_row(worksheet, total_row, result.total_respondents, last_col)
+    responses_row = total_row + 1
+    _write_total_responses_row(worksheet, responses_row, result.total_responses, last_col)
+    qc_row = responses_row + 1
+    worksheet.cell(row=qc_row, column=2, value="QC check").font = _live_font(bold=True)
+    worksheet.cell(row=qc_row, column=3, value=True)
+    return qc_row
+
+
+def _live_write_grid_binary_pivot_result_table(
+    worksheet: Any,
+    start_row: int,
+    result: GridBinaryPivotResult,
+) -> int:
+    header_row = start_row
+    subheader_row = start_row + 1
+    worksheet.cell(row=header_row, column=1, value="Sub-question ID").font = _live_font(bold=True)
+    worksheet.cell(row=header_row, column=2, value="Sub-question").font = _live_font(bold=True)
+    worksheet.cell(row=subheader_row, column=1, value="")
+    worksheet.cell(row=subheader_row, column=2, value="")
+    col_index = 3
+    percent_columns: list[int] = []
+    for header in result.column_headers:
+        worksheet.cell(row=header_row, column=col_index, value=header).font = _live_font(bold=True)
+        worksheet.merge_cells(
+            start_row=header_row,
+            start_column=col_index,
+            end_row=header_row,
+            end_column=col_index + 1,
+        )
+        worksheet.cell(row=subheader_row, column=col_index, value="Count").font = _live_font(bold=True)
+        worksheet.cell(row=subheader_row, column=col_index + 1, value="%").font = _live_font(bold=True)
+        percent_columns.append(col_index + 1)
+        col_index += 2
+    last_col = col_index - 1
+    for row in (header_row, subheader_row):
+        for col in range(1, last_col + 1):
+            worksheet.cell(row=row, column=col).fill = _live_fill("F2F2F2")
+
+    data_start = start_row + 2
+    for offset, row in enumerate(result.rows):
+        excel_row = data_start + offset
+        worksheet.cell(row=excel_row, column=1, value=row.row_id).font = _live_font(color="808080")
+        worksheet.cell(row=excel_row, column=2, value=row.row_label)
+        col = 3
+        for count, pct in zip(row.counts_per_column, row.pcts_per_column):
+            worksheet.cell(row=excel_row, column=col, value=count).number_format = "#,##0"
+            worksheet.cell(row=excel_row, column=col + 1, value=pct).number_format = "0.0%"
+            col += 2
+
+    data_end = data_start + len(result.rows) - 1
+    if result.rows:
+        for percent_col in percent_columns:
+            _apply_color_scale_range(worksheet, data_start, percent_col, data_end, percent_col)
+    total_row = max(data_start, data_end + 1)
+    _write_total_respondents_row(worksheet, total_row, result.total_respondents, last_col)
+    responses_row = total_row + 1
+    _write_total_responses_row(worksheet, responses_row, result.total_responses, last_col)
+    qc_row = responses_row + 1
+    worksheet.cell(row=qc_row, column=2, value="QC check").font = _live_font(bold=True)
+    worksheet.cell(
+        row=qc_row,
+        column=3,
+        value=sum(sum(row.counts_per_column) for row in result.rows) == result.total_responses,
+    )
+    return qc_row
 
 
 def _live_write_grid_rated_table(
@@ -3310,7 +3484,11 @@ def _live_column_specs(schema: SurveySchema) -> list[_LiveColumnSpec]:
                         kind="multi_select",
                     )
                 )
-        elif question.question_type is QuestionType.GRID_SINGLE_SELECT:
+        elif question.question_type in {
+            QuestionType.GRID_SINGLE_SELECT,
+            QuestionType.GRID_RATED,
+            QuestionType.GRID_BINARY_SELECT,
+        }:
             for source_column in question.raw_columns:
                 header = _unique_live_header(source_column, used_headers)
                 columns.append(
@@ -3320,10 +3498,17 @@ def _live_column_specs(schema: SurveySchema) -> list[_LiveColumnSpec]:
                         data_name=f"{header}_data",
                         question=question,
                         source_column=source_column,
-                        kind="grid_single",
+                        kind=(
+                            "grid_binary"
+                            if question.question_type is QuestionType.GRID_BINARY_SELECT
+                            else "grid_single"
+                        ),
                     )
                 )
-        elif question.question_type is QuestionType.NUMERIC_ALLOCATION:
+        elif question.question_type in {
+            QuestionType.NUMERIC_ALLOCATION,
+            QuestionType.RANK_ORDER,
+        }:
             for source_column in question.raw_columns:
                 header = _unique_live_header(source_column, used_headers)
                 columns.append(
@@ -3380,6 +3565,8 @@ def _raw_rows_from_dataframe(
                 row_payload[column.key] = _decode_option_value(raw_value, question.option_map)
             elif column.kind == "multi_select":
                 row_payload[column.key] = "Selected" if _is_selected_value(raw_value) else None
+            elif column.kind == "grid_binary":
+                row_payload[column.key] = "Selected" if _is_selected_value(raw_value) else None
             elif column.kind == "grid_single":
                 if _grid_spec_subtype(question) == GRID_BINARY_SELECT:
                     row_payload[column.key] = "Selected" if _is_selected_value(raw_value) else None
@@ -3421,6 +3608,8 @@ def _iter_raw_row_payloads(
             if column.kind == "single":
                 row_payload[column.key] = _decode_option_value(raw_value, question.option_map)
             elif column.kind == "multi_select":
+                row_payload[column.key] = "Selected" if _is_selected_value(raw_value) else None
+            elif column.kind == "grid_binary":
                 row_payload[column.key] = "Selected" if _is_selected_value(raw_value) else None
             elif column.kind == "grid_single":
                 if _grid_spec_subtype(question) == GRID_BINARY_SELECT:
