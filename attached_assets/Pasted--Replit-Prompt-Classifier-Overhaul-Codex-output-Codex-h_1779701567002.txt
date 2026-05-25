@@ -1,0 +1,188 @@
+# Replit Prompt — Classifier Overhaul (Codex output)
+
+Codex has completed a major overhaul of the question classifier. This adds three new question types (RANK_ORDER, GRID_RATED, GRID_BINARY_SELECT), fixes parent block merging for per-row datamap entries (Q30r1, Q30r2 → Q30), and adds three new calculators and renderers. **454 tests pass in Codex's environment (up from 450 before this work).**
+
+Your job is to apply these files in Replit, verify the test suite stays green, run the engine against the real BCN sample file, and visually inspect the output workbook for the questions that were previously broken.
+
+## Files Codex modified
+
+Apply these files exactly as provided. Do NOT modify them — they were reviewed already and the fixes are precise.
+
+**Modified (existing files):**
+- `src/datamap_parser.py` — adds `_merge_per_row_children` post-processing
+- `src/models.py` — adds 3 enum values (RANK_ORDER, GRID_RATED, GRID_BINARY_SELECT) + 6 dataclasses
+- `src/question_classifier.py` — adds new type detection, parent merging, grid subtype resolution
+- `src/single_cut/_grid.py` — light tweak for legacy compatibility
+- `src/single_cut/engine.py` — updated TYPE_TO_CALCULATOR dispatch
+- `src/excel_exporter.py` — adds three new renderers + dispatch wiring
+
+**New files:**
+- `src/single_cut/rank_order.py`
+- `src/single_cut/grid_rated.py`
+- `src/single_cut/grid_binary_pivot.py`
+- `tests/test_rank_order.py`
+- `tests/test_grid_rated.py`
+- `tests/test_grid_binary_pivot.py`
+- Additional test coverage in existing test files (`tests/test_question_classifier.py`, `tests/test_datamap_parser.py`)
+
+## What this fixes
+
+The previous output completely missed or mishandled these questions:
+
+| Question | Was | Now should be |
+|---|---|---|
+| Q22, Q33, Q34, Q35, Q43 | Missing entirely (UNKNOWN) | RANK_ORDER — per-option counts at each rank position |
+| Q30, Q36 | Wrong (counts of each rating score) | GRID_RATED — mean per row × column with delta |
+| Q26, Q41 | Flattened to long rows | GRID_BINARY_SELECT — 2D pivot (stakeholder rows × role columns) |
+| Q8, Q9, Q10, Q12, Q16, Q19, Q20, Q21, Q25, Q27, Q37b, Q38, Q40 | GRID_SINGLE_SELECT | MULTI_SELECT_BINARY (more accurate type, output may look similar) |
+
+## Verification steps (do these in this order)
+
+### Step 1 — Apply files and confirm import
+
+After dropping all files in:
+
+```bash
+python -c "from src import engine, question_classifier, models, datamap_parser, excel_exporter; print('imports OK')"
+```
+
+Expect: `imports OK`. If you get any ImportError, stop and paste the full traceback back.
+
+### Step 2 — Run the full test suite
+
+```bash
+python -m pytest tests/ -v 2>&1 | tail -60
+```
+
+**Expected:** 454 tests pass, 0 fail. If anything fails, paste the failure messages — do NOT modify any test to make it pass. A failing test means the code broke something, not that the test is wrong.
+
+### Step 3 — Run the engine on the BCN sample data
+
+The sample data should be at `sample_data/BCN_LTB_raw_data.xlsx` (or wherever the BCN combined file lives in Replit — check existing paths).
+
+```bash
+python -c "
+from pathlib import Path
+from src.io import load_inputs
+from src.datamap_parser import parse_datamap
+from src.question_classifier import classify_questions
+from src.single_cut.engine import compute_single_cuts
+from src.calculation_log import CalculationLog
+from src.excel_exporter import export_single_cuts
+
+raw_path = Path('sample_data/BCN_LTB_raw_data.xlsx')  # adjust if your filename differs
+map_path = Path('sample_data/BCN_LTB_datamap.xlsx')   # adjust if your filename differs
+
+decoded_df, data_map, _report = load_inputs(raw_path, map_path)
+schema = classify_questions(data_map, set(decoded_df.columns))
+log = CalculationLog()
+results, skips = compute_single_cuts(schema, decoded_df, log)
+print(f'Results: {len(results)}, Skips: {len(skips)}')
+print(f'Result types: {set(type(r).__name__ for r in results)}')
+
+export_single_cuts(
+    results=results,
+    schema=schema,
+    log=log,
+    output_path=Path('/tmp/bcn_test_output.xlsx'),
+)
+print('Exported to /tmp/bcn_test_output.xlsx')
+"
+```
+
+If the import paths differ in your Replit (e.g. `load_inputs` lives somewhere else, or the BCN sample file has a different name), adjust them. Paste any errors back.
+
+### Step 4 — Visual inspection (THE critical step)
+
+Download `/tmp/bcn_test_output.xlsx` and open it. Confirm by eye:
+
+1. **Q22, Q33, Q34, Q35, Q43 sheets exist** with rank-order layout:
+   ```
+   Option | Rank 1 #  | Rank 1 %  | Rank 2 #  | Rank 2 %  | ...
+   ```
+
+2. **Q30 sheet** shows mean values, NOT score distributions:
+   ```
+   Row label              | Winner mean | Other mean | Delta
+   Pre-purchase familiarity |    8.62    |    7.84   |  0.78
+   Strength of validation   |    8.18    |    6.80   |  1.38
+   ```
+   It should NOT look like "how many people gave it a 7, how many gave it an 8".
+
+3. **Q36 sheet** — same structure as Q30.
+
+4. **Q26 sheet** shows pivot layout:
+   ```
+   Stakeholder row    | Blocked # | Blocked % | Scored # | Scored % | ...
+   Future users       |    23     |   7.6%    |   206    |  67.8%   | ...
+   IT/Engineering     |   109     |  18.3%    |   435    |  73.0%   | ...
+   ```
+   Each row is a stakeholder group; each pair of columns is a role.
+
+5. **Q41 sheet** — same shape as Q26.
+
+### Step 5 — Spot-check three exact numbers
+
+Compare against the inspo file `260310_Likelihood_to_Buy_survey_cutter_v1.xlsx`:
+
+| Cell | Expected (from inspo) | Got? |
+|---|---|---|
+| Q30 — Q30r11 row, Winner column mean | ≈ 8.62 | ? |
+| Q26 — Q26r11 row, first c-column count | ≈ 23 (7.6%) | ? |
+| Q43 — Q43r12 row, rank-1 count | ≈ 63 (34.4%) | ? |
+
+If all three match within rounding, **the fix is shipped successfully** — paste back "all three numbers match" and we're done with this task.
+
+If any diverge, paste:
+- Which cell differs
+- Expected value (from inspo)
+- Actual value (from your output)
+- The sheet name
+
+I'll diagnose from there — most likely it's a denominator or filter scope difference, not a fundamental bug.
+
+## What NOT to do
+
+- Don't modify any of Codex's files. They were reviewed and the fixes are intentional.
+- Don't touch `app.py` — UI wiring is a separate task once the engine is verified.
+- Don't add new tests for now — Codex added enough coverage. We just need to verify on real data.
+- Don't run the Streamlit app yet. The engine layer must be verified first.
+- If a test fails, don't suppress it or skip it. Paste it back so I can review.
+
+## Quick reference — known sample data file paths
+
+If the BCN file paths in Step 3 don't match what's in Replit:
+
+```bash
+ls -la sample_data/
+```
+
+Common naming patterns in the repo:
+- `sample_data/BCN_LTB_raw_data.xlsx`
+- `sample_data/BCN_LTB_datamap.xlsx`
+- `sample_data/bcn_combined.xlsx` (if single combined file)
+- `sample_data/Rawdata_sample.xlsx` + `sample_data/Datamap_sample.xlsx`
+
+Use whichever matches your environment, then adjust the script in Step 3.
+
+## Expected output to paste back
+
+Reply with:
+
+```
+Step 1 — Imports: OK / errors below
+Step 2 — Tests: N passed, M failed (paste failures)
+Step 3 — Engine run: Results = X, Skips = Y, no errors / errors below
+Step 4 — Visual inspection:
+  - Q22, Q33, Q34, Q35, Q43 sheets: present / missing
+  - Q30 layout: means with delta / wrong format
+  - Q36 layout: means with delta / wrong format
+  - Q26 layout: 2D pivot / wrong format
+  - Q41 layout: 2D pivot / wrong format
+Step 5 — Spot-checks:
+  - Q30 Q30r11 Winner mean: 8.62 / got X
+  - Q26 Q26r11 first c-col count: 23 / got X
+  - Q43 Q43r12 rank-1 count: 63 / got X
+```
+
+That's it. The whole verification should take about 10 minutes once files are applied.
