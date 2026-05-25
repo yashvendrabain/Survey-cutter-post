@@ -103,6 +103,7 @@ class QuestionSpec:
     exclusion_reason: str | None = None
     parent_question_id: str | None = None
     grid_row_labels: dict[str, str] | None = None
+    grid_column_labels: dict[str, str] = field(default_factory=dict)
     option_other_code: int | str | None = None
     is_demographic: bool = False
     conditional_on: str | None = None
