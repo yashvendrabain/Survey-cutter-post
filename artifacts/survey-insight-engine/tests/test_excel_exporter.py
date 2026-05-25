@@ -3091,12 +3091,7 @@ class TestExcelExporter(unittest.TestCase):
         self.assertNotEqual(ws.cell(ss_header + 4, 1).value, "Total responses")
 
     def test_grid_single_select_ui_format(self) -> None:
-        app_path = (
-            Path(__file__).resolve().parents[1]
-            / "artifacts"
-            / "survey-insight-engine"
-            / "app.py"
-        )
+        app_path = Path(__file__).resolve().parents[1] / "app.py"
         spec = importlib.util.spec_from_file_location("survey_insight_app", app_path)
         self.assertIsNotNone(spec)
         self.assertIsNotNone(spec.loader)
