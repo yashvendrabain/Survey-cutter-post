@@ -1,0 +1,157 @@
+You're picking up the Survey Insight Engine after two rounds of Codex work. None of the chart/think-cell code is in the Replit workspace yet — Codex did the work in a separate sandbox. Your job is to install all of it, run the tests, and smoke-test the app.
+
+## Context
+
+The tool is a Streamlit survey-analysis engine. Codex shipped two rounds of work:
+
+- Round 1 added chart recommendation, inline Plotly rendering, and think-cell TSV table formatting. 3 new modules + UI wiring.
+- Round 2 added .ppttc generation (think-cell automation file) + a zip bundle download. 1 new module + UI wiring.
+
+All files are uploaded; nothing is in the repo yet.
+
+## Files to install
+
+### New source files (all under src/)
+- src/chart_recommender.py
+- src/thinkcell_table_formatter.py
+- src/chart_renderer.py
+- src/ppttc_generator.py
+
+### New test files (all under tests/)
+- tests/test_chart_recommender.py
+- tests/test_thinkcell_table_formatter.py
+- tests/test_ppttc_generator.py
+
+### Modified files (replace existing)
+- app.py (UI wiring for inline charts, TSV expander, .ppttc zip download)
+- src/models.py (only if your local version is missing FilterSpec.filter_values — diff first; if production version has it, keep production)
+- requirements.txt (adds plotly if not present)
+
+### Template asset
+- sample_data/bain_survey_template.pptx (copy from /mnt/user-data/uploads/)
+
+## Steps
+
+### 1. Install all uploaded files
+
+Drop each file into its correct path per the list above. Do NOT modify any of them — they were written and reviewed by Codex + CTO already.
+
+For src/models.py specifically:
+- Before overwriting, diff your existing models.py against the uploaded one
+- If both have FilterSpec.filter_values and QuestionSpec.grid_column_labels, keep your existing models.py (it was the production source of truth)
+- If your existing models.py is MISSING either field, use the uploaded one
+- Report which path you took
+
+### 2. Install dependencies
+
+pip install -r requirements.txt
+pip install plotly
+
+Confirm plotly imports:
+python -c "import plotly; print(plotly.__version__)"
+
+### 3. Run the full test suite
+
+pytest -v
+
+Expected: 485 passed, 0 skipped, 0 failed.
+
+If anything fails, paste the FULL traceback. Do not try to fix it yourself — these tests are the contract that proves the Codex work is correct.
+
+The new test counts:
+- test_chart_recommender.py: 6 new tests
+- test_thinkcell_table_formatter.py: 3 new tests  
+- test_ppttc_generator.py: 10 tests (7 from R2 + 3 from R2 fix pack)
+- Total new: 19
+- Pre-existing: 467
+- Grand total: should be ~486 (small variance OK if Codex's count was 485)
+
+### 4. Copy the think-cell template
+
+cp /mnt/user-data/uploads/bain_survey_template.pptx sample_data/
+ls -la sample_data/bain_survey_template.pptx
+
+Should be ~236KB.
+
+### 5. Start the app
+
+streamlit run app.py
+
+Confirm:
+- App starts without errors
+- No import errors in console
+- UI loads at the Streamlit URL
+
+### 6. Smoke test in the running app
+
+a. Upload BCN sample data (raw + datamap, or the combined xlsx)
+b. Click Run Analysis, wait for completion
+c. Open the sidebar question navigator
+d. Pick a SINGLE_SELECT question:
+   - Should see an inline Plotly chart (vertical stacked column) above the table
+   - Should see "Show think-cell formatted table" expander with TSV inside
+   - Should see "Generate think-cell chart (zip)" button
+   - Click the zip button — confirm a .zip downloads
+e. Pick a MULTI_SELECT_BINARY question:
+   - Inline chart should be horizontal bar
+   - Same buttons should appear
+f. Pick a Q26 or Q41 (GRID_BINARY_SELECT, renders as heatmap table):
+   - Should see "Generate formatted table" button (NOT "Generate think-cell chart")
+   - NO zip button should appear — this is correct, heatmap tables don't have a template slide
+
+### 7. Inspect a downloaded zip
+
+Pick one of the SINGLE_SELECT downloads. The zip should contain exactly two files:
+- bain_survey_template.pptx
+- <question_id>_<label>.ppttc
+
+Open the .ppttc in a text editor. It should be JSON with this exact shape:
+
+[
+  {
+    "template": "bain_survey_template.pptx"
+  },
+  {
+    "data": [
+      {
+        "name": "Chart_stacked_column",
+        "table": [
+          [{}, {"string": "Respondents"}],
+          [{"string": "<option label>"}, {"number": 0.42}],
+          ...
+        ]
+      }
+    ]
+  }
+]
+
+Critical checks:
+- Top level is a LIST with exactly 2 entries (template and data as siblings, NOT nested)
+- The corner cell [0][0] of the table is {} (empty object), NOT null
+- "template" value is just the filename, not an absolute path
+
+### 8. Report back
+
+Paste:
+- Test count (passed/failed/skipped)
+- Path taken on models.py (kept existing vs replaced)
+- Any errors at any step
+- Confirmation that all four smoke tests passed (SINGLE_SELECT chart, MULTI_SELECT chart, GRID_BINARY no button, zip contents valid)
+
+## Do NOT
+
+- Do not modify any uploaded source files
+- Do not "fix" anything you find — report it
+- Do not skip manual smoke tests
+- Do not skip the .ppttc JSON inspection
+
+## Constraints carried from earlier rounds
+
+- AI never computes — Python computes every number, AI only writes prose
+- calc_primitives is single source of truth — no formula re-implemented elsewhere
+- Existing calculators (src/single_cut/*) must not be touched
+- Existing exporters (src/excel_exporter.py) must not be touched
+
+## After this completes
+
+The last verification step is a manual think-cell test on a Windows machine with PowerPoint + think-cell installed. That's not your job — the user will handle it offline. Your job ends when steps 1-8 pass.
