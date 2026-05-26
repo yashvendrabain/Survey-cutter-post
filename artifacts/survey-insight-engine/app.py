@@ -1407,7 +1407,7 @@ def _render_recommended_chart_and_thinkcell(result: Any, spec: Any) -> None:
 
     table_col, download_col = app.columns([3, 1])
     with table_col:
-        with app.expander(button_label, expanded=False):
+        with app.container():
             app.write(f"**Chart type:** {recommendation.chart_type.value}")
             app.write(
                 "**Layout for think-cell:** copy the table below and paste directly "
@@ -1785,6 +1785,7 @@ def _run_pipeline(
     load_report: Any,
     status: Any,
 ) -> None:
+    app = _require_streamlit()
     from src.calculation_log import CalculationLog
     from src.cross_cut_suggestions import suggest_cross_cuts
     from src.excel_exporter import export_single_cuts
@@ -1891,7 +1892,6 @@ def _run_pipeline(
         ),
     )
 
-    app = _require_streamlit()
     _INSIGHT_CACHE.clear()
     app.session_state["decoded_df"] = dataframe
     app.session_state["active_df"] = dataframe
