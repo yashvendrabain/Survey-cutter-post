@@ -1,0 +1,104 @@
+ROUND 3 INTEGRATION — Install Codex's fix for hardcoded rank_order and grid_rated values, plus wizard custom filter inputs.
+
+CONTEXT
+
+Codex completed Round 3, fixing two bugs:
+
+1. RankOrderResult and GridRatedResult tables in the exported Excel workbook were writing hardcoded literal numbers (e.g. Q30 means like 7.285714, Q33 rank counts like 21) instead of Excel formulas. Workbook filters had no effect on these question types. Multi-select and single-select were already correct.
+
+2. The wizard's "number of custom filters" and "number of filters per question" inputs were not being read into session state or passed downstream to the exporter.
+
+The fix is now in 6 modified/new files which I am uploading to the Replit workspace. Your job is to install them, verify nothing broke, and confirm the bug is actually fixed end-to-end.
+
+FILES BEING UPLOADED
+
+1. src/excel_exporter.py — replaces existing file. Contains rewritten _live_write_rank_order_table and _live_write_grid_rated_result_table that emit COUNTIFS and AVERAGEIFS formulas. The dispatch block (around line 1897) also has updated calls passing the extended signature (question, context, sheet_filters, fq_name, fv_name, theme_prefix).
+
+2. app.py — replaces existing file. Wizard step has stable keys on the number_inputs (wizard_workbook_custom_filter_count, wizard_per_question_filter_count) and plumbs them into the exporter call.
+
+3. src/ui/wizard.py — new or replaced file. Pure helpers including filter_config_from_wizard_state() and WizardFilterConfig dataclass.
+
+4. tests/test_excel_exporter_rank_order_formulas.py — new test file.
+
+5. tests/test_excel_exporter_grid_rated_formulas.py — new test file.
+
+6. tests/test_ui_wizard.py — replaces existing file with added filter-count assertions.
+
+INSTRUCTIONS
+
+STEP 1. Replace files
+After I upload these via the Replit file panel, confirm each file is in the right path. The wizard module path is src/ui/wizard.py — if src/ui/ doesn't exist yet, create it and add an empty __init__.py.
+
+STEP 2. Run the test suite
+Run:
+
+cd artifacts/survey-insight-engine && pytest tests/ -v 2>&1 | tail -30
+
+I am expecting 499 tests to pass (489 existing + 10 new). If any FAIL, stop and paste the failure output before changing anything.
+
+STEP 3. Verify the dispatch site is wired correctly
+Show me the output of:
+
+cd artifacts/survey-insight-engine && sed -n '1895,1930p' src/excel_exporter.py
+
+The dispatch calls to _live_write_rank_order_table and _live_write_grid_rated_result_table must now pass the extended signature (worksheet, row_index, result, question, context, sheet_filters, fq_name, fv_name, theme_prefix). If they still pass only (worksheet, row_index, result), the writer rewrite is incomplete and Excel will produce a TypeError at runtime even though unit tests pass.
+
+STEP 4. Restart Streamlit and run a real analysis
+Stop the current Streamlit process. Start it fresh:
+
+cd artifacts/survey-insight-engine && streamlit run app.py
+
+Upload the BCN sample files (sample_data/BCN_LTB_raw_data or whichever the user previously used). Click through the wizard. On the Filters step, change the "number of custom filters" to 4 and the "number of filters per question" to 2 — these should now have visible effect later in the workbook. Click Run Analysis. Wait for completion. Download the Excel workbook.
+
+If anything errors during the run, paste the last 20 lines of the terminal output before doing anything else.
+
+STEP 5. Verify formulas in the downloaded workbook
+Run this Python check (substitute the actual downloaded filename):
+
+cd artifacts/survey-insight-engine && python3 << 'EOF'
+import openpyxl
+import glob
+files = sorted(glob.glob('outputs/survey_analysis*.xlsx'), key=lambda f: -__import__('os').path.getmtime(f))
+if not files:
+    print("NO OUTPUT FILE FOUND")
+else:
+    path = files[0]
+    print(f"Checking: {path}")
+    wb = openpyxl.load_workbook(path, data_only=False)
+    
+    # Find Q30 (grid_rated) and Q33 (rank_order) cells - row numbers from prior output
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        for row in ws.iter_rows(values_only=False):
+            for cell in row:
+                if isinstance(cell.value, str) and (cell.value.startswith('Q30 -') or cell.value.startswith('Q33 -') or cell.value.startswith('Q43 -')):
+                    q_label = cell.value[:6]
+                    q_start_row = cell.row
+                    # Sample a data cell 5-10 rows below the question header
+                    for offset in range(5, 15):
+                        sample = ws.cell(row=q_start_row + offset, column=3)
+                        if sample.value is not None:
+                            is_formula = isinstance(sample.value, str) and sample.value.startswith('=')
+                            verdict = "FORMULA OK" if is_formula else f"LITERAL BUG: {sample.value}"
+                            print(f"  {q_label} on '{sheet_name}' C{q_start_row + offset}: {verdict}")
+                            break
+EOF
+
+Paste the output. Every line must say "FORMULA OK". If any line says "LITERAL BUG", the fix didn't actually land in the live-write path.
+
+STEP 6. Verify filters work in Excel
+Open the downloaded workbook in Excel or LibreOffice. Find the Filters sheet. Change one workbook-level filter value (e.g. Organization Size). Observe whether the Q30 means and Q33 rank counts on the "Vendor Selection Process" sheet recalculate. If they update, the fix is confirmed end-to-end. If they stay frozen at the originally generated values, escalate before any further work.
+
+STEP 7. Report results
+Paste back to me:
+- pytest summary line
+- the sed output from STEP 3
+- the formula verification output from STEP 5
+- a one-line confirmation that Excel filter recalculation works (STEP 6)
+
+CONSTRAINTS
+
+- Do not modify any files I uploaded. If something doesn't work, paste the error and stop.
+- Do not delete the older output xlsx files in outputs/ — we want to keep them for comparison.
+- If the Streamlit start fails, the most common cause is missing imports from the new src/ui/wizard.py module — check the traceback for ImportError first.
+- If a test fails with "module not found: src.ui", create src/ui/__init__.py as an empty file.

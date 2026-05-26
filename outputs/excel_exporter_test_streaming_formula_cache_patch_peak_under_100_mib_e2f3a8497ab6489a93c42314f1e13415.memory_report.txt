@@ -1,0 +1,18 @@
+step | rss_start | rss_end | rss_delta | tracemalloc_peak
+--- | ---: | ---: | ---: | ---:
+load_or_receive_decoded_df | 371.1 MiB | 371.1 MiB | 0.0 MiB | 15.6 MiB
+generate_short_labels | 371.1 MiB | 371.1 MiB | 0.0 MiB | 15.6 MiB
+build_raw_data_sheet | 371.1 MiB | 371.1 MiB | 0.0 MiB | 25.8 MiB
+build_options_sheet | 371.1 MiB | 371.1 MiB | 0.0 MiB | 20.2 MiB
+build_filters_sheet | 371.1 MiB | 371.1 MiB | 0.0 MiB | 20.2 MiB
+build_helper_columns | 371.1 MiB | 371.1 MiB | 0.0 MiB | 20.2 MiB
+build_run_summary_sheet | 371.1 MiB | 371.1 MiB | 0.0 MiB | 20.2 MiB
+build_question_metadata_sheet | 371.1 MiB | 371.1 MiB | 0.0 MiB | 20.2 MiB
+build_single_cut_index_sheet | 371.1 MiB | 371.1 MiB | 0.0 MiB | 20.2 MiB
+build_theme_sheets | 371.1 MiB | 371.1 MiB | 0.0 MiB | 20.4 MiB
+build_calculation_log_sheet | 371.1 MiB | 371.1 MiB | 0.0 MiB | 20.4 MiB
+build_filter_log_sheet | 371.1 MiB | 371.1 MiB | 0.0 MiB | 20.4 MiB
+build_warnings_sheet | 371.1 MiB | 371.1 MiB | 0.0 MiB | 20.4 MiB
+save_workbook | 371.1 MiB | 371.1 MiB | 0.0 MiB | 21.2 MiB
+patch_formula_caches | 371.1 MiB | 371.1 MiB | 0.0 MiB | 26.8 MiB
+write_calc_chain | 371.1 MiB | 371.1 MiB | 0.0 MiB | 18.3 MiB
