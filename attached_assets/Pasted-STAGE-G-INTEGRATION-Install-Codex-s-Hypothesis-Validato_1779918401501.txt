@@ -1,0 +1,158 @@
+STAGE G INTEGRATION — Install Codex's Hypothesis Validator.
+
+CONTEXT
+
+Codex completed Stage G. Adds a new module src/hypothesis_validator.py that lets analysts pose a hypothesis ("Tech companies have higher AI maturity than retail") and runs the right statistical test (Pearson r, Spearman rho, Welch's t, ANOVA, or Chi-square + Cramér's V) auto-selected from question types. Returns verdict (CONFIRMED/REFUTED/INCONCLUSIVE) with effect size, p-value, 95% CI, sample size, and full audit trail through Calculation_Log.
+
+Locked design: auto-selector, n>=50 floor, p<0.05 AND effect-size threshold, cohort = active workbook filter, AI only optional for free-text parsing + prose explanation.
+
+7 files modified/new. Upload via Replit file panel.
+
+FILES BEING UPLOADED
+
+1. src/models.py — replaces existing. Adds 4 new dataclasses: HypothesisGroup, HypothesisSpec, HypothesisStatistic, HypothesisResult. All existing dataclasses (FilterSpec, QuestionSpec, etc.) preserved including the get_effective_values method we restored in Round 4 hotfix.
+
+2. src/hypothesis_validator.py — new file. 896 lines. Contains validate_hypothesis (main entry), _select_test, _verdict_from_statistic, parse_freetext_hypothesis (opt-in AI), explain_verdict (opt-in AI), plus 5 individual scipy-backed test runners with fallback math.
+
+3. src/excel_exporter.py — replaces existing. Adds Hypothesis_Check sheet writer. Effect-size and p-value cells are FORMULAS pointing at Calculation_Log rows, not hardcoded values. Sheet omitted entirely if no hypotheses were run.
+
+4. app.py — replaces existing. New section "Hypothesis Check" with structured form (always available) and free-text input (only if PORTKEY_API_KEY set). New state keys: hypothesis_results, pending_hypothesis_spec.
+
+5. requirements.txt — modified. Adds scipy>=1.11.
+
+6. tests/test_hypothesis_validator.py — new test file.
+
+7. tests/test_excel_exporter_hypothesis_sheet.py — new test file.
+
+INSTRUCTIONS
+
+STEP 0. CRITICAL PRE-FLIGHT CHECK — verify the config module exists
+
+Codex's hypothesis_validator.py contains this import at line 17:
+
+    from config import PORTKEY_BASE_URL, PORTKEY_DEFAULT_MODEL
+
+This is a TOP-LEVEL import (not from src.config). Before installing anything else, verify the config module exists at the expected path:
+
+cd artifacts/survey-insight-engine && (ls config.py 2>&1 ; ls src/config.py 2>&1 ; grep -rn "PORTKEY_BASE_URL\|PORTKEY_DEFAULT_MODEL" --include="*.py" .)
+
+Paste the output BEFORE doing anything else. If config.py doesn't exist anywhere with those constants, the validator will crash at import and the entire app will fail to start. Tell me which:
+
+(a) config.py exists at the project root with PORTKEY_BASE_URL + PORTKEY_DEFAULT_MODEL — proceed.
+(b) Constants exist at src/config.py (not project root) — proceed but flag for one-line fix.
+(c) Constants exist elsewhere under a different name — stop and paste the actual location.
+(d) Constants do not exist anywhere — stop. We'll need to create config.py before installing.
+
+If outcome is (b), (c), or (d), STOP HERE before uploading any files.
+
+STEP 1. Install the 7 files
+After STEP 0 confirms config is OK, replace/add the 7 files via the file panel.
+
+STEP 2. Install scipy
+
+pip install "scipy>=1.11"
+
+Then confirm: python3 -c "import scipy; print(scipy.__version__)"
+
+STEP 3. Run the test suite
+
+cd artifacts/survey-insight-engine && pytest tests/ -v 2>&1 | tail -20
+
+Expected: ~538 tests pass (496 from prior rounds + 30 new Stage G validator tests + 5 new sheet tests). If anything fails, paste the failure output and stop.
+
+If you see "ModuleNotFoundError: No module named 'config'" during test collection, that's the STEP 0 issue — stop and paste it.
+
+STEP 4. Restart Streamlit
+
+Kill the running process. Start fresh:
+
+cd artifacts/survey-insight-engine && streamlit run app.py
+
+If startup crashes with ImportError (especially from hypothesis_validator), paste the traceback. If startup is clean, proceed.
+
+STEP 5. Verify app.py line 1410 fix is intact
+
+Codex re-uploaded app.py. The nested-expander fix may have been clobbered:
+
+sed -n '1408,1413p' app.py
+
+If line 1410 shows "with app.expander(button_label, expanded=False):", re-apply the fix:
+
+sed -i 's/        with app.expander(button_label, expanded=False):/        with app.container():/' app.py
+
+Then restart Streamlit again.
+
+STEP 6. Verify _run_pipeline fix is intact
+
+The Round 4 fix added "app = _require_streamlit()" at the top of _run_pipeline. Codex may have clobbered it. Check:
+
+grep -n "^def _run_pipeline\|app = _require_streamlit" app.py | head -10
+
+The line immediately after "def _run_pipeline(" (after closing paren and "-> None:") should be "    app = _require_streamlit()". If not present where expected, paste the function signature area:
+
+sed -n '1782,1795p' app.py
+
+I'll give the patch command.
+
+STEP 7. Smoke-test the hypothesis validator UI
+
+In the browser (hard-refresh first):
+- Upload BCN files, complete wizard, run analysis (so we have an active dataframe and schema)
+- Navigate to the new Hypothesis Check section
+- Pick TWO numeric questions (e.g. Q30r1 outcome, Q30r2 predictor)
+- Set direction to "correlated_positive"
+- Click "Run hypothesis"
+- Confirm a result card appears with: verdict, test name "pearson_r", effect size, p-value, 95% CI, sample size
+
+Tell me what you see. Paste a screenshot if anything is off.
+
+STEP 8. Test the calculation log traceability
+
+Run an actual hypothesis (any combination). Then in Replit shell:
+
+python3 << 'EOF'
+import openpyxl, glob, os
+files = sorted(glob.glob('outputs/survey_analysis*.xlsx'), key=os.path.getmtime, reverse=True)
+path = files[0]
+print(f"Checking: {path}\n")
+wb = openpyxl.load_workbook(path, data_only=False)
+if "Hypothesis_Check" in wb.sheetnames:
+    ws = wb["Hypothesis_Check"]
+    print(f"Hypothesis_Check sheet found, {ws.max_row} rows")
+    print("\nRow 2 contents (first hypothesis):")
+    for c in range(1, 20):
+        v = ws.cell(row=2, column=c).value
+        col_letter = openpyxl.utils.get_column_letter(c)
+        if v is not None:
+            print(f"  {col_letter}2: {v}")
+    # Effect size is col I, p-value is col K — must be formulas
+    eff = ws.cell(row=2, column=9).value
+    pval = ws.cell(row=2, column=11).value
+    print(f"\nFORMULA CHECK:")
+    print(f"  Effect size (I2): {'FORMULA OK' if isinstance(eff, str) and eff.startswith('=') else f'LITERAL: {eff!r}'}")
+    print(f"  p-value     (K2): {'FORMULA OK' if isinstance(pval, str) and pval.startswith('=') else f'LITERAL: {pval!r}'}")
+else:
+    print("Hypothesis_Check sheet NOT found. Did the hypothesis result write to disk?")
+    print(f"Available sheets: {wb.sheetnames}")
+EOF
+
+Paste the output. Both effect size and p-value must show FORMULA OK.
+
+STEP 9. Report back
+
+Paste the following:
+- STEP 0 config module location
+- pytest summary line
+- Streamlit startup status
+- STEP 5 nested-expander check result
+- STEP 6 _run_pipeline check result  
+- STEP 7 UI smoke test result
+- STEP 8 FORMULA CHECK output
+
+CONSTRAINTS
+
+- Do not modify any Codex file.
+- Do not skip STEP 0 — that's the single highest-risk failure mode.
+- If Streamlit fails to start with "No module named 'config'", that's STEP 0 — escalate before touching anything.
+- Do not delete older outputs/*.xlsx files.
+- Existing 496 tests + 30 + 5 new = 531 expected. (Codex's local count of 538 includes runtime variance.) Anything within ~5 of 531 is fine. Below that, paste the diff.
