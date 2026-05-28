@@ -1,0 +1,83 @@
+ROUND 7 INTEGRATION — Bain palette enforcement (Prompt 1) + remediation.
+
+Codex's first pass left two violations: chart_recommender.py kept an old BAIN_COLORS dict with invented colors (#0070B9 sky_blue, #6A1B9A berry, etc.) and chart_renderer.py had a stray #F0F0F0 gridcolor. After remediation both are clean. All chart rendering now routes through src/bain_palette.py.
+
+FILES BEING UPLOADED
+
+1. src/bain_palette.py — NEW. Locked Bain palette constants plus get_series_palette and get_hero_color helpers.
+2. src/chart_renderer.py — replaces existing. All hex literals removed; imports from bain_palette.
+3. src/chart_recommender.py — replaces existing. Old BAIN_COLORS dict and BAIN_SERIES_PALETTE list deleted; imports from bain_palette.
+4. tests/test_bain_palette.py — NEW. Regression guards on the palette constants and helpers.
+5. tests/test_chart_renderer.py — replaces existing. Now walks rendered fig.data and asserts every color is in BAIN_PALETTE.values() (the skipped tests when Plotly is missing — will run in Replit).
+
+INSTRUCTIONS
+
+STEP 0. Defensive checks on models.py BEFORE install.
+
+cd artifacts/survey-insight-engine && grep -n "def get_effective_values" src/models.py
+grep -n "label_to_numeric_value\|allowed_numeric_range" src/models.py
+
+models.py is NOT being touched this round but verify the Round 4 + Round 13 hotfixes are still intact before doing anything.
+
+STEP 1. Install the 5 files.
+
+STEP 2. Hex-literal sanity grep AFTER install.
+
+cd artifacts/survey-insight-engine && grep -nE '#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{3}\b' src/chart_renderer.py src/chart_recommender.py
+
+Expected: ZERO hits. Any hits = remediation failed.
+
+STEP 3. Confirm old palette constants are gone everywhere.
+
+grep -rn "BAIN_COLORS\|BAIN_SERIES_PALETTE" src/
+
+Expected: ZERO hits. If anything matches, the import surgery missed a spot.
+
+STEP 4. Run palette and renderer tests.
+
+pytest tests/test_bain_palette.py tests/test_chart_renderer.py tests/test_chart_recommender.py -v 2>&1 | tail -30
+
+Expected: all tests pass. Plotly IS installed in Replit, so the renderer tests that walk fig.data will actually run (they were skipped in Codex's sandbox). If any test fails because rendered figure has a non-Bain color, the renderer is still leaking somewhere — paste the failure.
+
+STEP 5. Run full suite chunked.
+
+Expected: 576 total tests pass, 0 fail. (May be 577-581 if Plotly-skipped tests now run; that's good.)
+
+STEP 6. Verify protective fixes still in place (this round doesn't touch app.py, but defensive check).
+
+sed -n '1620,1625p' app.py
+grep -n "^def _run_pipeline\|app = _require_streamlit" app.py | head -5
+
+Line ~1623 must show "with app.container():". _run_pipeline must have "app = _require_streamlit()" early in its body.
+
+STEP 7. Restart Streamlit.
+
+cd artifacts/survey-insight-engine && streamlit run app.py
+
+Verify clean startup, no ImportError. If startup hits a "circular import" between bain_palette / chart_recommender / chart_renderer, paste the traceback.
+
+STEP 8. Browser visual check.
+
+Hard-refresh. Look at any single-cut card with a chart. Confirm:
+- The chart's primary color is dark grey (BAIN_PALETTE GRAPHITE_1 = #333333) when no segment is highlighted, OR Bain red (#CC0000) when a segment is the hero
+- Gridlines are light grey (#D6D6D6), not the old #F0F0F0
+- No bright blue, no green, no purple, no orange anywhere in the chart
+- Multi-series charts cycle through graphite, sky, forest, sunset shades — NOT random Plotly defaults
+
+If anything looks off, paste a screenshot.
+
+REPORT BACK
+
+- STEP 0 protected fields check
+- STEP 2 hex-literal grep (should be empty)
+- STEP 3 BAIN_COLORS grep (should be empty)
+- STEP 4 chart/palette test result
+- STEP 5 full suite total
+- STEP 6 protective check
+- STEP 7 startup status
+- STEP 8 chart visual confirmation
+
+CONSTRAINTS
+
+- Do not modify any uploaded file.
+- If STEP 2 or STEP 3 returns ANY matches, STOP and escalate — the remediation isn't actually complete.
