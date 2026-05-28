@@ -443,13 +443,13 @@ def export_winners_vs_laggards_workbook(
     for theme_name, theme_results in theme_groups:
         sheet_name = theme_sheet_names[theme_name]
         worksheet = workbook.create_sheet(sheet_name)
-        worksheet.cell(row=1, column=1, value=theme_name).font = _live_font(bold=True)
-        row_index = 3
+        row_index = _wvl_write_category_sheet_header(worksheet, theme_name)
         for result in theme_results:
             question = schema.get_question(result.question_id)
             if question is None:
                 continue
             row_index = _wvl_write_question_block(
+                workbook,
                 worksheet,
                 row_index,
                 result,
@@ -458,12 +458,19 @@ def export_winners_vs_laggards_workbook(
                 log,
                 segment_definition.winner_label,
                 laggard_definition.laggard_label or laggard_definition.loser_label,
+                schema,
             )
             row_index += 2
+        _wvl_apply_arial_to_used_cells(worksheet)
         _live_autofit(worksheet)
 
     _live_write_calculation_log(workbook, log)
     _live_write_filter_log(workbook, [])
+    _wvl_apply_arial_to_used_cells(workbook["Run_Summary"])
+    _wvl_apply_arial_to_used_cells(workbook["Question_Metadata"])
+    _wvl_apply_arial_to_used_cells(workbook["Single_Cut_Index"])
+    _wvl_apply_arial_to_used_cells(workbook["Calculation_Log"])
+    _wvl_apply_arial_to_used_cells(workbook["Filter_Log"])
     workbook.save(str(output_path))
     _write_formula_caches(str(output_path), workbook)
 
@@ -613,7 +620,28 @@ def _wvl_segment_description(segment_definition: SegmentDefinition, laggard: boo
     return f"{segment_definition.outcome_question_id} quartile winner={segment_definition.quartile_winner}"
 
 
+def _wvl_write_category_sheet_header(worksheet: Any, theme_name: str) -> int:
+    from openpyxl.styles import Alignment
+
+    banner = worksheet.cell(row=1, column=1, value=theme_name)
+    banner.font = _live_font(bold=True, size=12, color="FFFFFF")
+    banner.fill = _live_fill("CC0000")
+    banner.alignment = Alignment(vertical="center")
+    worksheet.row_dimensions[1].height = 25
+    for col_index in range(1, 8):
+        cell = worksheet.cell(row=1, column=col_index)
+        cell.fill = _live_fill("CC0000")
+        cell.font = _live_font(bold=True, size=12, color="FFFFFF")
+    worksheet.cell(
+        row=2,
+        column=1,
+        value="Tip: Use the Filters sheet for workbook-wide values, or override below.",
+    ).font = _live_font(italic=True, size=9, color="666666")
+    return 3
+
+
 def _wvl_write_question_block(
+    workbook: Any,
     worksheet: Any,
     start_row: int,
     result: SingleCutResult,
@@ -622,17 +650,52 @@ def _wvl_write_question_block(
     log: CalculationLog,
     winner_label: str,
     laggard_label: str,
+    schema: SurveySchema,
 ) -> int:
-    worksheet.cell(row=start_row, column=1, value=f"{question.canonical_id}: {question.question_text}").font = _live_font(bold=True)
+    heading_fill = _live_fill("FFCC0000")
+    heading_font = _live_font(bold=True, size=11, color="FFFFFFFF")
+    for col_index in range(1, 8):
+        cell = worksheet.cell(row=start_row, column=col_index)
+        cell.fill = heading_fill
+        cell.font = heading_font
+    worksheet.cell(
+        row=start_row,
+        column=1,
+        value=_question_heading_text(question, {}),
+    ).font = heading_font
+
+    q_filter_prefix = str(result.question_id)
+    _live_write_per_question_filter_slot(
+        workbook,
+        worksheet,
+        start_row + 1,
+        q_filter_prefix,
+        1,
+    )
+    _build_per_question_filter_helper_column(workbook, q_filter_prefix, context, 1)
+
+    ct_name = f"{_safe_defined_name(result.question_id)}_CT"
+    worksheet.cell(row=start_row + 2, column=1, value="Cross-tab by").font = _live_font(bold=True, size=9)
+    ct_cell = worksheet.cell(row=start_row + 2, column=3, value="(None)")
+    _add_named_cell(workbook, ct_name, worksheet, ct_cell.coordinate)
+    _add_dropdown_to_cell(worksheet, ct_cell.coordinate, "=All_Questions")
+
+    note = _subset_denominator_note(result, question, schema) or (
+        f"Note: This question was shown to {int(getattr(result, 'valid_n', 0)):,} respondents."
+    )
+    note_cell = worksheet.cell(row=start_row + 3, column=1, value=note)
+    note_cell.font = _live_font(italic=True, size=9, color="808080")
+
+    table_start_row = start_row + 5
     if isinstance(result, SingleSelectResult):
-        return _wvl_write_single_select_layout(worksheet, start_row + 1, result, question, context, log, winner_label, laggard_label)
+        return _wvl_write_single_select_layout(worksheet, table_start_row, result, question, context, log, winner_label, laggard_label)
     if isinstance(result, MultiSelectResult):
-        return _wvl_write_multi_select_layout(worksheet, start_row + 1, result, question, context, log, winner_label, laggard_label)
+        return _wvl_write_multi_select_layout(worksheet, table_start_row, result, question, context, log, winner_label, laggard_label)
     if isinstance(result, GridRatedResult):
-        return _wvl_write_grid_rated_layout(worksheet, start_row + 1, result, question, context, log, winner_label, laggard_label)
+        return _wvl_write_grid_rated_layout(worksheet, table_start_row, result, question, context, log, winner_label, laggard_label)
     if isinstance(result, NumericResult):
-        return _wvl_write_numeric_layout(worksheet, start_row + 1, result, question, context, log, winner_label, laggard_label)
-    return start_row + 2
+        return _wvl_write_numeric_layout(worksheet, table_start_row, result, question, context, log, winner_label, laggard_label)
+    return table_start_row + 1
 
 
 def _wvl_write_single_select_layout(
@@ -658,18 +721,23 @@ def _wvl_write_single_select_layout(
         worksheet.cell(row=row_index, column=2, value=label)
         winner_count_formula = _wvl_countifs(data_name, label, result.question_id, "winners_mask_data")
         laggard_count_formula = _wvl_countifs(data_name, label, result.question_id, "laggards_mask_data")
-        _live_formula(worksheet, row_index, 3, winner_count_formula, 0)
+        winner_count_cell = _live_formula(worksheet, row_index, 3, winner_count_formula, 0)
+        winner_count_cell.number_format = "#,##0"
         _record_wvl_metric(log, worksheet.title, result.question_id, (data_name,), "winner_count", winner_count_formula, 0)
         winner_pct_formula = f'=IFERROR(C{row_index}/$C${winner_total_row},0)'
-        _live_formula(worksheet, row_index, 4, winner_pct_formula, 0)
+        winner_pct_cell = _live_formula(worksheet, row_index, 4, winner_pct_formula, 0)
+        winner_pct_cell.number_format = "0.0%"
         _record_wvl_metric(log, worksheet.title, result.question_id, (data_name,), "winner_pct", winner_pct_formula, 0)
-        _live_formula(worksheet, row_index, 5, laggard_count_formula, 0)
+        laggard_count_cell = _live_formula(worksheet, row_index, 5, laggard_count_formula, 0)
+        laggard_count_cell.number_format = "#,##0"
         _record_wvl_metric(log, worksheet.title, result.question_id, (data_name,), "laggard_count", laggard_count_formula, 0)
         laggard_pct_formula = f'=IFERROR(E{row_index}/$C${laggard_total_row},0)'
-        _live_formula(worksheet, row_index, 6, laggard_pct_formula, 0)
+        laggard_pct_cell = _live_formula(worksheet, row_index, 6, laggard_pct_formula, 0)
+        laggard_pct_cell.number_format = "0.0%"
         _record_wvl_metric(log, worksheet.title, result.question_id, (data_name,), "laggard_pct", laggard_pct_formula, 0)
         delta_formula = f"=D{row_index}-F{row_index}"
-        _live_formula(worksheet, row_index, 7, delta_formula, 0)
+        delta_cell = _live_formula(worksheet, row_index, 7, delta_formula, 0)
+        delta_cell.number_format = "+0.0%;-0.0%"
         _record_wvl_metric(log, worksheet.title, result.question_id, (data_name,), "delta_pct", delta_formula, 0)
         row_index += 1
     _wvl_write_totals(worksheet, winner_total_row, laggard_total_row, data_name, result.question_id, result.valid_n)
@@ -700,11 +768,16 @@ def _wvl_write_multi_select_layout(
         anchor_data_name = anchor_data_name or column.data_name
         worksheet.cell(row=row_index, column=1, value=option_id)
         worksheet.cell(row=row_index, column=2, value=payload.get("label", option_id))
-        _live_formula(worksheet, row_index, 3, _wvl_countifs(column.data_name, "Selected", result.question_id, "winners_mask_data"), 0)
-        _live_formula(worksheet, row_index, 4, f'=IFERROR(C{row_index}/$C${winner_total_row},0)', 0)
-        _live_formula(worksheet, row_index, 5, _wvl_countifs(column.data_name, "Selected", result.question_id, "laggards_mask_data"), 0)
-        _live_formula(worksheet, row_index, 6, f'=IFERROR(E{row_index}/$C${laggard_total_row},0)', 0)
-        _live_formula(worksheet, row_index, 7, f"=D{row_index}-F{row_index}", 0)
+        winner_count_cell = _live_formula(worksheet, row_index, 3, _wvl_countifs(column.data_name, "Selected", result.question_id, "winners_mask_data"), 0)
+        winner_count_cell.number_format = "#,##0"
+        winner_pct_cell = _live_formula(worksheet, row_index, 4, f'=IFERROR(C{row_index}/$C${winner_total_row},0)', 0)
+        winner_pct_cell.number_format = "0.0%"
+        laggard_count_cell = _live_formula(worksheet, row_index, 5, _wvl_countifs(column.data_name, "Selected", result.question_id, "laggards_mask_data"), 0)
+        laggard_count_cell.number_format = "#,##0"
+        laggard_pct_cell = _live_formula(worksheet, row_index, 6, f'=IFERROR(E{row_index}/$C${laggard_total_row},0)', 0)
+        laggard_pct_cell.number_format = "0.0%"
+        delta_cell = _live_formula(worksheet, row_index, 7, f"=D{row_index}-F{row_index}", 0)
+        delta_cell.number_format = "+0.0%;-0.0%"
         row_index += 1
     if anchor_data_name:
         _wvl_write_totals(worksheet, winner_total_row, laggard_total_row, anchor_data_name, result.question_id, result.valid_n)
@@ -733,15 +806,20 @@ def _wvl_write_grid_rated_layout(
         worksheet.cell(row=row_index, column=2, value=result_row.row_label)
         winner_mean_formula = _wvl_averageifs(column.data_name, result.question_id, "winners_mask_data")
         laggard_mean_formula = _wvl_averageifs(column.data_name, result.question_id, "laggards_mask_data")
-        _live_formula(worksheet, row_index, 3, winner_mean_formula, result_row.means_per_column[0] if result_row.means_per_column else 0)
+        winner_mean_cell = _live_formula(worksheet, row_index, 3, winner_mean_formula, result_row.means_per_column[0] if result_row.means_per_column else 0)
+        winner_mean_cell.number_format = "0.00"
         _record_wvl_metric(log, worksheet.title, result.question_id, (column.data_name,), "winner_mean", winner_mean_formula, result_row.means_per_column[0] if result_row.means_per_column else 0)
-        _live_formula(worksheet, row_index, 4, laggard_mean_formula, result_row.means_per_column[1] if len(result_row.means_per_column) > 1 else 0)
+        laggard_mean_cell = _live_formula(worksheet, row_index, 4, laggard_mean_formula, result_row.means_per_column[1] if len(result_row.means_per_column) > 1 else 0)
+        laggard_mean_cell.number_format = "0.00"
         _record_wvl_metric(log, worksheet.title, result.question_id, (column.data_name,), "laggard_mean", laggard_mean_formula, result_row.means_per_column[1] if len(result_row.means_per_column) > 1 else 0)
         delta_formula = f"=C{row_index}-D{row_index}"
-        _live_formula(worksheet, row_index, 5, delta_formula, 0)
+        delta_cell = _live_formula(worksheet, row_index, 5, delta_formula, 0)
+        delta_cell.number_format = "+0.00;-0.00"
         _record_wvl_metric(log, worksheet.title, result.question_id, (column.data_name,), "delta_mean", delta_formula, 0)
-        _live_formula(worksheet, row_index, 6, _wvl_countifs(column.data_name, "<>", result.question_id, "winners_mask_data"), result_row.valid_n_per_column[0] if result_row.valid_n_per_column else 0)
-        _live_formula(worksheet, row_index, 7, _wvl_countifs(column.data_name, "<>", result.question_id, "laggards_mask_data"), result_row.valid_n_per_column[1] if len(result_row.valid_n_per_column) > 1 else 0)
+        winner_n_cell = _live_formula(worksheet, row_index, 6, _wvl_countifs(column.data_name, "<>", result.question_id, "winners_mask_data"), result_row.valid_n_per_column[0] if result_row.valid_n_per_column else 0)
+        winner_n_cell.number_format = "#,##0"
+        laggard_n_cell = _live_formula(worksheet, row_index, 7, _wvl_countifs(column.data_name, "<>", result.question_id, "laggards_mask_data"), result_row.valid_n_per_column[1] if len(result_row.valid_n_per_column) > 1 else 0)
+        laggard_n_cell.number_format = "#,##0"
         row_index += 1
     return row_index
 
@@ -770,9 +848,14 @@ def _wvl_write_numeric_layout(
         worksheet.cell(row=row_index, column=1, value=metric)
         winner_formula = _wvl_averageifs(column.data_name, result.question_id, "winners_mask_data") if metric == "Mean" else _wvl_filtered_numeric_formula(metric, column.data_name, result.question_id, "winners_mask_data")
         laggard_formula = _wvl_averageifs(column.data_name, result.question_id, "laggards_mask_data") if metric == "Mean" else _wvl_filtered_numeric_formula(metric, column.data_name, result.question_id, "laggards_mask_data")
-        _live_formula(worksheet, row_index, 2, winner_formula, _numeric_result_cache_value(metric, result))
-        _live_formula(worksheet, row_index, 3, laggard_formula, _numeric_result_cache_value(metric, result))
-        _live_formula(worksheet, row_index, 4, f"=B{row_index}-C{row_index}", 0)
+        value_format = "#,##0" if metric.lower().endswith("count") else "0.00"
+        delta_format = "+#,##0;-#,##0" if value_format == "#,##0" else "+0.00;-0.00"
+        winner_cell = _live_formula(worksheet, row_index, 2, winner_formula, _numeric_result_cache_value(metric, result))
+        winner_cell.number_format = value_format
+        laggard_cell = _live_formula(worksheet, row_index, 3, laggard_formula, _numeric_result_cache_value(metric, result))
+        laggard_cell.number_format = value_format
+        delta_cell = _live_formula(worksheet, row_index, 4, f"=B{row_index}-C{row_index}", 0)
+        delta_cell.number_format = delta_format
     return start_row + len(metrics) + 1
 
 
@@ -785,9 +868,24 @@ def _wvl_write_totals(
     cache_value: int,
 ) -> None:
     worksheet.cell(row=winner_total_row, column=1, value="Winners total")
-    _live_formula(worksheet, winner_total_row, 3, _wvl_countifs(data_name, "<>", question_id, "winners_mask_data"), cache_value)
+    winner_total_cell = _live_formula(worksheet, winner_total_row, 3, _wvl_countifs(data_name, "<>", question_id, "winners_mask_data"), cache_value)
+    winner_total_cell.number_format = "#,##0"
     worksheet.cell(row=laggard_total_row, column=1, value="Laggards total")
-    _live_formula(worksheet, laggard_total_row, 3, _wvl_countifs(data_name, "<>", question_id, "laggards_mask_data"), cache_value)
+    laggard_total_cell = _live_formula(worksheet, laggard_total_row, 3, _wvl_countifs(data_name, "<>", question_id, "laggards_mask_data"), cache_value)
+    laggard_total_cell.number_format = "#,##0"
+
+
+def _wvl_apply_arial_to_used_cells(worksheet: Any) -> None:
+    for row in worksheet.iter_rows():
+        for cell in row:
+            if cell.value is not None:
+                current = cell.font or _live_font()
+                cell.font = _live_font(
+                    bold=bool(current.bold),
+                    italic=bool(current.italic),
+                    size=int(current.sz or 10),
+                    color=current.color.rgb if getattr(current.color, "type", None) == "rgb" else None,
+                )
 
 
 def _wvl_countifs(data_name: str, criteria: Any, question_id: str, cohort_mask_name: str) -> str:
