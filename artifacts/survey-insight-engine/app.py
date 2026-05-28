@@ -1409,7 +1409,7 @@ def _render_recommended_chart_and_thinkcell(result: Any, spec: Any) -> None:
 
     table_col, download_col = app.columns([3, 1])
     with table_col:
-        with app.expander(button_label, expanded=False):
+        with app.container():
             app.write(f"**Chart type:** {recommendation.chart_type.value}")
             app.write(
                 "**Layout for think-cell:** copy the table below and paste directly "

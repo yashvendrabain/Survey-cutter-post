@@ -824,6 +824,14 @@ class FilterSpec:
     def is_breakdown(self) -> bool:
         """True if this filter has no specific value."""
         return self.filter_value is None and not self.filter_values
+    def get_effective_values(self) -> list | None:
+        """Return the active filter values, or None for a breakdown."""
+        if self.filter_value is not None:
+            return [self.filter_value]
+        if self.filter_values:
+            return list(self.filter_values)
+        return None
+
 
 
 @dataclass(frozen=True, slots=True)
