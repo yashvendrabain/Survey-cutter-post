@@ -1,0 +1,81 @@
+STAGE G BUG FIX — Install the chi-square integer cast + ANOVA defensive guard.
+
+CONTEXT
+
+Codex shipped fixes for the two failing Stage G tests (chi-square float-dtype rejection in SciPy 1.17, ANOVA eta-squared NaN on degenerate input). Scope is limited to two files. The Round 4 hotfix for FilterSpec.get_effective_values must be verified intact afterward (it should be untouched this round since models.py isn't being modified, but verify defensively given prior regression history).
+
+FILES BEING UPLOADED
+
+1. src/hypothesis_validator.py — replaces existing. Two changes: _run_chi_square casts contingency table to int64 with non-integer guard; _compute_eta_squared returns 1.0 for infinite F and 0.0 for zero denominator.
+
+2. tests/test_hypothesis_validator.py — replaces existing. test_run_anova_with_three_groups now uses seeded random data with within-group spread. New test_eta_squared_handles_infinite_f added.
+
+INSTRUCTIONS
+
+STEP 1. Install both files via the file panel.
+
+STEP 2. Defensive check — confirm models.py wasn't accidentally touched.
+
+cd artifacts/survey-insight-engine && grep -n "def get_effective_values" src/models.py
+
+Must return ONE match. If zero matches, the Round 4 hotfix is gone and you need to re-apply it (same Python script as before). If one match, proceed.
+
+STEP 3. Run the previously failing tests specifically.
+
+pytest tests/test_hypothesis_validator.py::TestHypothesisValidator::test_run_chi_square_cramer_v tests/test_hypothesis_validator.py::TestHypothesisValidator::test_run_anova_with_three_groups tests/test_hypothesis_validator.py::TestHypothesisValidator::test_validate_categorical_vs_categorical_chi_square -v 2>&1 | tail -15
+
+All three must pass.
+
+STEP 4. Run the new test.
+
+pytest tests/test_hypothesis_validator.py::TestHypothesisValidator::test_eta_squared_handles_infinite_f -v 2>&1 | tail -10
+
+Must pass.
+
+STEP 5. Full hypothesis validator suite.
+
+pytest tests/test_hypothesis_validator.py -v 2>&1 | tail -15
+
+All tests should pass. Expected count is ~30 (was 30 with 3 failing before; now 30 with 0 failing + 1 new test = ~31). Codex's local unittest count was 26 for this file because it uses unittest discovery which counts differently — pytest count of ~30 is correct.
+
+STEP 6. Run the full suite (chunked for excel as in prior rounds).
+
+Expected: ~531-540 total pass, 0 fail (allowing for the existing 3 Plotly skips).
+
+STEP 7. Restart Streamlit if it was running.
+
+The hypothesis_validator.py change is loaded fresh on startup, so a restart is required for the new code to take effect in the browser session.
+
+cd artifacts/survey-insight-engine && streamlit run app.py
+
+STEP 8. Verify app.py protective fixes still in place (since the previous rounds clobbered them repeatedly).
+
+sed -n '1408,1413p' app.py
+
+Must show "with app.container():" at the indented line. If it shows "with app.expander(button_label, expanded=False):", re-apply:
+
+sed -i 's/        with app.expander(button_label, expanded=False):/        with app.container():/' app.py
+
+Then check _run_pipeline:
+
+grep -n "^def _run_pipeline\|app = _require_streamlit" app.py | head -10
+
+Must show "app = _require_streamlit()" within the first 5 lines after def _run_pipeline. If not, paste the function signature and I'll give the patch.
+
+REPORT BACK
+
+Paste:
+- STEP 2 result (get_effective_values count)
+- STEP 3 result (3 previously failing tests)
+- STEP 4 result (new eta-squared test)
+- STEP 5 result (full hypothesis validator suite)
+- STEP 6 result (chunked full suite summary)
+- STEP 8 result (app.py protective checks)
+
+Streamlit smoke test (STEPS 7 onwards in the browser — hypothesis check section with chi-square or ANOVA path) is my call to make, not yours. Just confirm Streamlit starts clean.
+
+CONSTRAINTS
+
+- Do not modify any uploaded file.
+- Do not modify any other file unless STEP 8 explicitly directs it.
+- If STEP 2 fails (get_effective_values absent), STOP and report before doing anything else — that's a regression severity equal to the chi-square failure.
