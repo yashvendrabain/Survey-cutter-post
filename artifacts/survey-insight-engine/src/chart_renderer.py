@@ -7,12 +7,8 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - optional UI dependency.
     go = None  # type: ignore[assignment]
 
-from src.chart_recommender import (
-    BAIN_COLORS,
-    BAIN_SERIES_PALETTE,
-    ChartRecommendation,
-    ChartType,
-)
+from src.bain_palette import BAIN_PALETTE, get_hero_color, get_series_palette
+from src.chart_recommender import ChartRecommendation, ChartType
 from src.thinkcell_table_formatter import ThinkCellTablePayload
 
 
@@ -38,20 +34,32 @@ def render_chart(
         return _render_line(recommendation, table_payload)
     if chart_type is ChartType.HEATMAP_TABLE:
         return _render_heatmap(recommendation, table_payload)
+    if chart_type is ChartType.COMBO:
+        return _render_combo(recommendation, table_payload)
     raise ValueError(f"Unsupported chart type: {chart_type}")
 
 
 def _bain_layout(title: str, source: str, height: int = 450) -> dict:
+    axis = {
+        "linecolor": BAIN_PALETTE["GRAPHITE_3"],
+        "tickcolor": BAIN_PALETTE["GRAPHITE_3"],
+        "tickfont": {"family": "Arial", "size": 11, "color": BAIN_PALETTE["GRAPHITE_1"]},
+        "titlefont": {"family": "Arial", "size": 11, "color": BAIN_PALETTE["GRAPHITE_1"]},
+        "gridcolor": BAIN_PALETTE["GRAPHITE_5"],
+        "zerolinecolor": BAIN_PALETTE["GRAPHITE_5"],
+    }
     return {
         "title": {
             "text": title,
-            "font": {"family": "Arial", "size": 14, "color": BAIN_COLORS["graphite"]},
+            "font": {"family": "Arial", "size": 14, "color": BAIN_PALETTE["BLACK"]},
             "x": 0.0,
             "xanchor": "left",
         },
-        "font": {"family": "Arial", "size": 11, "color": BAIN_COLORS["graphite"]},
-        "plot_bgcolor": BAIN_COLORS["white"],
-        "paper_bgcolor": BAIN_COLORS["white"],
+        "font": {"family": "Arial", "size": 11, "color": BAIN_PALETTE["GRAPHITE_1"]},
+        "plot_bgcolor": BAIN_PALETTE["WHITE"],
+        "paper_bgcolor": BAIN_PALETTE["WHITE"],
+        "xaxis": dict(axis),
+        "yaxis": dict(axis),
         "height": height,
         "margin": {"l": 90, "r": 80, "t": 60, "b": 80},
         "annotations": [
@@ -66,11 +74,34 @@ def _bain_layout(title: str, source: str, height: int = 450) -> dict:
                 "font": {
                     "family": "Arial",
                     "size": 8,
-                    "color": BAIN_COLORS["graphite"],
+                    "color": BAIN_PALETTE["GRAPHITE_2"],
                 },
             }
         ],
     }
+
+
+def _merge_axis(base: dict, axis_overrides: dict | None = None) -> dict:
+    merged = dict(base)
+    if axis_overrides:
+        merged.update(axis_overrides)
+    return merged
+
+
+def _apply_bain_layout(
+    fig: go.Figure,
+    title: str,
+    source: str,
+    height: int = 450,
+    xaxis: dict | None = None,
+    yaxis: dict | None = None,
+    **kwargs: object,
+) -> None:
+    layout = _bain_layout(title, source, height)
+    layout["xaxis"] = _merge_axis(layout["xaxis"], xaxis)
+    layout["yaxis"] = _merge_axis(layout["yaxis"], yaxis)
+    layout.update(kwargs)
+    fig.update_layout(**layout)
 
 
 def _percent_value(value: float | int) -> float:
@@ -87,36 +118,48 @@ def _format_value(value: float | int, label_format: str) -> str:
     return f"{numeric:.1f}"
 
 
+def _hero_index_for(recommendation: ChartRecommendation, n_items: int) -> int | None:
+    if n_items <= 0:
+        return None
+    if recommendation.highlight_rule in {"top_1", "top_1_to_3"}:
+        return 0
+    return None
+
+
+def _single_series_colors(recommendation: ChartRecommendation, n_items: int) -> list[str]:
+    if recommendation.highlight_rule == "top_1_to_3":
+        colors = get_series_palette(n_items, hero_index=0)
+        for index in range(1, min(3, n_items)):
+            colors[index] = get_hero_color()
+        return colors
+    return get_series_palette(n_items, hero_index=_hero_index_for(recommendation, n_items))
+
+
 def _render_column_stacked(
     recommendation: ChartRecommendation, payload: ThinkCellTablePayload
 ) -> go.Figure:
     fig = go.Figure()
-    non_highlight_palette = BAIN_SERIES_PALETTE
+    colors = _single_series_colors(recommendation, len(payload.rows))
     for index, row in enumerate(payload.rows):
-        option = str(row[0])
         value = float(row[1])
-        if recommendation.highlight_rule == "top_1" and index == 0:
-            color = BAIN_COLORS["bain_red"]
-        else:
-            highlighted_count = 1 if recommendation.highlight_rule == "top_1" else 0
-            palette_index = (index - highlighted_count) % len(non_highlight_palette)
-            color = non_highlight_palette[palette_index]
         fig.add_trace(
             go.Bar(
-                name=option,
+                name=str(row[0]),
                 x=["Respondents"],
                 y=[_percent_value(value)],
-                marker_color=color,
+                marker_color=colors[index],
                 text=_format_value(value, recommendation.data_label_format),
                 textposition="inside",
             )
         )
-    fig.update_layout(
+    _apply_bain_layout(
+        fig,
+        payload.title,
+        payload.source_line,
         barmode="stack",
         showlegend=True,
         yaxis={"title": "% of respondents", "range": [0, 100]},
         xaxis={"showticklabels": False},
-        **_bain_layout(payload.title, payload.source_line),
     )
     return fig
 
@@ -134,28 +177,12 @@ def _render_bar_clustered(
             else value
             for value in values
         ]
-        colors = []
-        for index in range(len(options)):
-            if recommendation.highlight_rule == "top_1" and index == 0:
-                colors.append(BAIN_COLORS["bain_red"])
-            elif recommendation.highlight_rule == "top_1_to_3" and index < 3:
-                colors.append(BAIN_COLORS["bain_red"])
-            else:
-                highlighted_count = (
-                    3
-                    if recommendation.highlight_rule == "top_1_to_3"
-                    else 1
-                    if recommendation.highlight_rule == "top_1"
-                    else 0
-                )
-                palette_index = (index - highlighted_count) % len(BAIN_SERIES_PALETTE)
-                colors.append(BAIN_SERIES_PALETTE[palette_index])
         fig.add_trace(
             go.Bar(
                 y=options,
                 x=display_values,
                 orientation="h",
-                marker_color=colors,
+                marker_color=_single_series_colors(recommendation, len(options)),
                 text=[
                     _format_value(value, recommendation.data_label_format)
                     for value in values
@@ -164,30 +191,29 @@ def _render_bar_clustered(
             )
         )
     else:
+        colors = get_series_palette(len(payload.headers))
         for col_index, header in enumerate(payload.headers):
             values = [float(row[col_index + 1]) for row in payload.rows]
-            color = (
-                recommendation.series_colors[col_index]
-                if col_index < len(recommendation.series_colors)
-                else BAIN_COLORS["graphite"]
-            )
             fig.add_trace(
                 go.Bar(
                     name=header,
                     y=options,
                     x=values,
                     orientation="h",
-                    marker_color=color,
+                    marker_color=colors[col_index],
                     text=[f"{value:.1f}" for value in values],
                     textposition="outside",
                 )
             )
-        fig.update_layout(barmode="group")
-    fig.update_layout(
+    _apply_bain_layout(
+        fig,
+        payload.title,
+        payload.source_line,
+        max(350, 30 * len(options) + 150),
+        barmode="group",
         showlegend=len(payload.headers) > 1,
         yaxis={"autorange": "reversed"},
-        xaxis={"showgrid": True, "gridcolor": "#F0F0F0"},
-        **_bain_layout(payload.title, payload.source_line, max(350, 30 * len(options) + 150)),
+        xaxis={"showgrid": True},
     )
     return fig
 
@@ -197,28 +223,27 @@ def _render_bar_stacked(
 ) -> go.Figure:
     fig = go.Figure()
     options = payload.headers
+    colors = get_series_palette(len(payload.rows))
     for row_index, row in enumerate(payload.rows):
-        color = (
-            recommendation.series_colors[row_index]
-            if row_index < len(recommendation.series_colors)
-            else BAIN_COLORS["graphite"]
-        )
         fig.add_trace(
             go.Bar(
                 name=str(row[0]),
                 y=options,
                 x=row[1:],
                 orientation="h",
-                marker_color=color,
+                marker_color=colors[row_index],
                 text=row[1:],
                 textposition="inside",
             )
         )
-    fig.update_layout(
+    _apply_bain_layout(
+        fig,
+        payload.title,
+        payload.source_line,
+        max(350, 30 * len(options) + 150),
         barmode="stack",
         showlegend=True,
         yaxis={"autorange": "reversed"},
-        **_bain_layout(payload.title, payload.source_line, max(350, 30 * len(options) + 150)),
     )
     return fig
 
@@ -228,27 +253,25 @@ def _render_column_clustered(
 ) -> go.Figure:
     fig = go.Figure()
     categories = [str(row[0]) for row in payload.rows]
+    colors = get_series_palette(len(payload.headers))
     for col_index, header in enumerate(payload.headers):
         values = [float(row[col_index + 1]) for row in payload.rows]
-        color = (
-            recommendation.series_colors[col_index]
-            if col_index < len(recommendation.series_colors)
-            else BAIN_COLORS["graphite"]
-        )
         fig.add_trace(
             go.Bar(
                 name=header,
                 x=categories,
                 y=values,
-                marker_color=color,
+                marker_color=colors[col_index],
                 text=[f"{value:.1f}" for value in values],
                 textposition="outside",
             )
         )
-    fig.update_layout(
+    _apply_bain_layout(
+        fig,
+        payload.title,
+        payload.source_line,
         barmode="group",
         showlegend=True,
-        **_bain_layout(payload.title, payload.source_line),
     )
     return fig
 
@@ -258,30 +281,29 @@ def _render_line(
 ) -> go.Figure:
     fig = go.Figure()
     criteria = [str(row[0]) for row in payload.rows]
+    colors = get_series_palette(len(payload.headers))
     for col_index, header in enumerate(payload.headers):
         values = [float(row[col_index + 1]) for row in payload.rows]
-        color = (
-            recommendation.series_colors[col_index]
-            if col_index < len(recommendation.series_colors)
-            else BAIN_COLORS["graphite"]
-        )
         fig.add_trace(
             go.Scatter(
                 name=header,
                 x=criteria,
                 y=values,
                 mode="lines+markers+text",
-                line={"color": color, "width": 2},
-                marker={"size": 6},
+                line={"color": colors[col_index], "width": 2},
+                marker={"size": 6, "color": colors[col_index]},
                 text=[f"{value:.1f}" for value in values],
                 textposition="top center",
             )
         )
-    fig.update_layout(
+    _apply_bain_layout(
+        fig,
+        payload.title,
+        payload.source_line,
+        500,
         showlegend=True,
         yaxis={"range": [recommendation.axis_min or 0, recommendation.axis_max or 10]},
         xaxis={"tickangle": -45},
-        **_bain_layout(payload.title, payload.source_line, 500),
     )
     return fig
 
@@ -304,15 +326,27 @@ def _render_heatmap(
             z=z_values,
             x=headers,
             y=row_labels,
-            colorscale=[[0, BAIN_COLORS["white"]], [1, BAIN_COLORS["bain_red"]]],
+            colorscale=[
+                [0, BAIN_PALETTE["WHITE"]],
+                [1, get_hero_color()],
+            ],
             text=text,
             texttemplate="%{text}",
-            textfont={"size": 11, "family": "Arial"},
+            textfont={"size": 11, "family": "Arial", "color": BAIN_PALETTE["BLACK"]},
             showscale=False,
         )
     )
-    fig.update_layout(
+    _apply_bain_layout(
+        fig,
+        payload.title,
+        payload.source_line,
+        max(350, 35 * len(row_labels) + 150),
         yaxis={"autorange": "reversed"},
-        **_bain_layout(payload.title, payload.source_line, max(350, 35 * len(row_labels) + 150)),
     )
     return fig
+
+
+def _render_combo(
+    recommendation: ChartRecommendation, payload: ThinkCellTablePayload
+) -> go.Figure:
+    return _render_column_clustered(recommendation, payload)

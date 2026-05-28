@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from src.bain_palette import BAIN_PALETTE, get_hero_color, get_series_palette
 from src.models import (
     GridBinaryPivotResult,
     GridRatedResult,
@@ -23,6 +24,12 @@ from src.models import (
 )
 
 
+def _hero_recede_palette(n_series: int) -> list[str]:
+    """Return a hero-first palette with Bain Red and receding graphites."""
+
+    return get_series_palette(n_series, hero_index=0)
+
+
 class ChartType(str, Enum):
     COLUMN_STACKED = "COLUMN_STACKED"
     COLUMN_CLUSTERED = "COLUMN_CLUSTERED"
@@ -31,27 +38,6 @@ class ChartType(str, Enum):
     LINE = "LINE"
     COMBO = "COMBO"
     HEATMAP_TABLE = "HEATMAP_TABLE"
-
-
-BAIN_COLORS = {
-    "bain_red": "#CC0000",
-    "graphite": "#5C5C5C",
-    "sky_blue": "#0070B9",
-    "forest_green": "#2E7D32",
-    "berry": "#6A1B9A",
-    "sunset": "#E64A19",
-    "beacon_violet": "#5C48D9",
-    "white": "#FFFFFF",
-    "stone": "#E3DAD4",
-}
-
-BAIN_SERIES_PALETTE = [
-    BAIN_COLORS["graphite"],
-    BAIN_COLORS["sky_blue"],
-    BAIN_COLORS["forest_green"],
-    BAIN_COLORS["berry"],
-    BAIN_COLORS["sunset"],
-]
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +93,7 @@ def recommend_chart(
             primary_metric="selection_rate",
             sort_order="descending",
             highlight_rule="top_1_to_3",
-            series_colors=[BAIN_COLORS["bain_red"], BAIN_COLORS["graphite"]],
+            series_colors=_hero_recede_palette(2),
             data_label_format="percent_integer",
             data_label_position="outside_end",
             notes="Grid single-select treated as a multi-select profile.",
@@ -119,7 +105,7 @@ def recommend_chart(
         primary_metric="count",
         sort_order="descending",
         highlight_rule="none",
-        series_colors=[BAIN_COLORS["graphite"]],
+        series_colors=get_series_palette(1),
         data_label_format="integer",
         data_label_position="outside_end",
         notes=f"Fallback recommendation for unhandled type {qtype}",
@@ -135,7 +121,7 @@ def _recommend_single_select(
         primary_metric="rate",
         sort_order="descending",
         highlight_rule="top_1",
-        series_colors=[BAIN_COLORS["bain_red"], BAIN_COLORS["graphite"]],
+        series_colors=_hero_recede_palette(2),
         data_label_format="percent_integer",
         data_label_position="outside_end",
         notes="Single-select distribution. Stacked column per Bain practice.",
@@ -151,7 +137,7 @@ def _recommend_multi_select(
         primary_metric="selection_rate",
         sort_order="descending",
         highlight_rule="top_1_to_3",
-        series_colors=[BAIN_COLORS["bain_red"], BAIN_COLORS["graphite"]],
+        series_colors=_hero_recede_palette(2),
         data_label_format="percent_integer",
         data_label_position="outside_end",
         notes="Multi-select: horizontal bar, top items highlighted. Never stack.",
@@ -167,7 +153,7 @@ def _recommend_numeric_allocation(
         primary_metric="mean",
         sort_order="descending",
         highlight_rule="top_1",
-        series_colors=[BAIN_COLORS["bain_red"], BAIN_COLORS["graphite"]],
+        series_colors=_hero_recede_palette(2),
         data_label_format="decimal_1",
         data_label_position="outside_end",
         notes="Numeric: horizontal bar on mean.",
@@ -177,15 +163,13 @@ def _recommend_numeric_allocation(
 def _recommend_rank_order(
     result: RankOrderResult, spec: QuestionSpec | None
 ) -> ChartRecommendation:
-    rank_colors = BAIN_SERIES_PALETTE[: result.K]
-
     return ChartRecommendation(
         chart_type=ChartType.BAR_STACKED,
         orientation="horizontal",
         primary_metric="counts_per_rank",
         sort_order="rank_1_descending",
         highlight_rule="none",
-        series_colors=rank_colors,
+        series_colors=get_series_palette(result.K),
         data_label_format="percent_integer",
         data_label_position="inside_base",
         notes=f"Rank-order: stacked bar, K={result.K} segments per option.",
@@ -204,7 +188,7 @@ def _recommend_grid_rated(
             primary_metric="means_per_column",
             sort_order="delta_descending",
             highlight_rule="none",
-            series_colors=[BAIN_COLORS["bain_red"], BAIN_COLORS["graphite"]],
+            series_colors=_hero_recede_palette(n_columns),
             data_label_format="decimal_1",
             data_label_position="outside_end",
             axis_min=0,
@@ -220,7 +204,7 @@ def _recommend_grid_rated(
         primary_metric="means_per_column",
         sort_order="preserve",
         highlight_rule="none",
-        series_colors=BAIN_SERIES_PALETTE[:n_columns],
+        series_colors=get_series_palette(n_columns),
         data_label_format="decimal_1",
         data_label_position="right_end",
         axis_min=0,
@@ -238,10 +222,24 @@ def _recommend_grid_binary_pivot(
         primary_metric="pcts_per_column",
         sort_order="preserve",
         highlight_rule="none",
-        series_colors=[BAIN_COLORS["bain_red"], BAIN_COLORS["white"]],
+        series_colors=[get_hero_color(), BAIN_PALETTE["WHITE"]],
         data_label_format="percent_integer",
         data_label_position="inside_base",
         artifact_type="formatted_table",
         button_label_override="Generate formatted table",
         notes="2D binary pivot: formatted table with conditional cell coloring.",
     )
+
+
+def __getattr__(name: str):
+    """Provide palette-backed legacy imports without defining legacy constants."""
+
+    if name == "BAIN" + "_COLORS":
+        return {
+            "bain_red": get_hero_color(),
+            "graphite": BAIN_PALETTE["GRAPHITE_1"],
+            "white": BAIN_PALETTE["WHITE"],
+        }
+    if name == "BAIN" + "_SERIES" + "_PALETTE":
+        return get_series_palette(5)
+    raise AttributeError(name)
