@@ -1278,7 +1278,6 @@ def _render_chart_type_override_control(
         if not location
         else f"{override_key}_{location}"
     )
-    app.session_state[widget_key] = selected_type
     selected_type = app.selectbox(
         "Chart type",
         options=options,
