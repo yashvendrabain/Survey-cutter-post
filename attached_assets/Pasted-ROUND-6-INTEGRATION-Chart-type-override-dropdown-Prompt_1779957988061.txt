@@ -1,0 +1,59 @@
+ROUND 6 INTEGRATION — Chart-type override dropdown (Prompt 2).
+
+Codex shipped the manual chart-type switcher. 2 files: modified app.py and new tests/test_chart_type_override.py. Override is session-only, screen-only — does NOT affect .ppttc downloads or Excel charts. Stored under chart_type_override_{canonical_id}. Clears on analysis rerun.
+
+KNOWN BUG IN CODEX'S DELIVERY: the test file has the same APP_PATH bug as Round 5 (parents[1] doubled with "artifacts/survey-insight-engine"). Apply the same one-line fix immediately after install.
+
+INSTRUCTIONS
+
+STEP 0. Defensive checks on incoming files BEFORE install.
+
+cd artifacts/survey-insight-engine && grep -n "def get_effective_values" attached_assets/models*.py 2>/dev/null || echo "no models.py in this upload (expected)"
+grep -n "with app.container\|with app.expander(button_label" attached_assets/app*.py
+
+Line ~1415 in the incoming app.py must be "with app.container():" — verify it.
+
+STEP 1. Install both files.
+
+STEP 2. Apply the test path fix immediately.
+
+sed -i 's|parents\[1\] / "artifacts" / "survey-insight-engine" / "app.py"|parents[1] / "app.py"|' tests/test_chart_type_override.py
+
+Verify:
+grep "APP_PATH" tests/test_chart_type_override.py
+
+STEP 3. Run the new tests.
+
+pytest tests/test_chart_type_override.py -v 2>&1 | tail -15
+
+Expected: 5 tests pass.
+
+If any fail with "AttributeError: module has no attribute 'st'", that's a known issue — the tests fake module-level `st` but the production code uses `_require_streamlit()` instead. Tests are isolating the helper functions correctly even if the fake is technically unused. Pass means the helpers work; we'll address the fake-injection pattern in a future round if it becomes flaky.
+
+STEP 4. Run full suite chunked.
+
+Expected: 565 total tests pass, 0 fail. (Was 555 from Round 5; +5 new chart override tests + ~5 wizard tests fixed from path bug = 565.)
+
+STEP 5. Verify app.py protective fixes still in place.
+
+sed -n '1413,1418p' app.py
+grep -n "^def _run_pipeline\|app = _require_streamlit" app.py | head -8
+
+Line ~1415 must be "with app.container():" — Codex preserved it but verify. _run_pipeline at ~1787 must have "app = _require_streamlit()" within its first non-import statement.
+
+STEP 6. Restart Streamlit.
+
+cd artifacts/survey-insight-engine && streamlit run app.py
+
+Verify clean startup. If ImportError, paste the traceback.
+
+REPORT BACK
+
+- STEP 0 pre-install check
+- STEP 2 path fix verification
+- STEP 3 chart override test result
+- STEP 4 full suite chunked summary
+- STEP 5 protective check results
+- STEP 6 startup status
+
+Browser smoke test of the chart switcher dropdown (clicking the new "Chart type" dropdown on a single-cut card and seeing the chart redraw) is mine.
