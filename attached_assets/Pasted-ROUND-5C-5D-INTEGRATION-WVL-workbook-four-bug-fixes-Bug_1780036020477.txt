@@ -1,0 +1,174 @@
+ROUND 5C+5D INTEGRATION — WVL workbook: four bug fixes + Bug 5 regression coverage.
+
+Two test files and one src file land together. Round 5C is the actual fix delivery. Round 5D is regression test coverage.
+
+Codex's assessment: the exporter currently writes winner/laggard mask booleans correctly into _RawData via _wvl_build_raw_data_sheet. The bug 5 symptom (Winners total = Laggards total in the UI-generated workbook) may have been from a stale pre-5C build, OR from generating a workbook without defining cohorts first. Round 5D adds regression coverage with a 100-row fixture (30 winners, 70 laggards) to lock the behavior in place.
+
+FILES BEING UPLOADED
+
+1. src/excel_exporter.py — replaces existing. Round 5C: Bug 1 (option_code COUNTIFS), Bug 2 (workbook+custom filter rows), Bug 3 (theme-based sheets), Bug 4 (heatmap on % columns), plus Bug 5 mask writing.
+2. tests/test_excel_exporter_winners_vs_laggards.py — replaces existing. 20 tests total: existing + Round 5C assertions + Round 5D mask regression coverage.
+
+INSTRUCTIONS
+
+STEP 0. Defensive checks on production files (NOT touched this round).
+
+cd artifacts/survey-insight-engine && grep -n "def get_effective_values" src/models.py
+grep -n "label_to_numeric_value\|allowed_numeric_range" src/models.py
+
+Both must return matches. models.py untouched this round.
+
+STEP 1. Install both files.
+
+STEP 2. Run new WVL test suite.
+
+pytest tests/test_excel_exporter_winners_vs_laggards.py -v 2>&1 | tail -30
+
+Expected: 20 tests pass (was 14 + 6 new from 5C/5D additions). Specifically look for:
+- test_winners_mask_data_reflects_winner_membership PASSED
+- test_laggards_mask_data_reflects_laggard_membership PASSED
+
+If either FAILS, stop — that means the mask writing has a real bug and Codex's claim is wrong.
+
+STEP 3. Full suite chunked.
+
+Expected: ~582 total tests pass, 0 fail.
+
+STEP 4. Verify protective fixes still intact.
+
+sed -n '1620,1625p' app.py
+grep -n "^def _run_pipeline\|app = _require_streamlit" app.py | head -5
+
+Line ~1623 must show "with app.container():". _run_pipeline must have "app = _require_streamlit()" early in its body.
+
+STEP 5. Restart Streamlit cleanly.
+
+Stop the workflow. cd artifacts/survey-insight-engine && streamlit run app.py
+Verify clean startup, no ImportError, no traceback.
+
+STEP 6. Browser smoke test — IMPORTANT, follow exactly to verify cohort definition takes effect.
+
+In the browser:
+- Hard-refresh (Ctrl+Shift+R)
+- Upload Datamap_sample.xlsx + Rawdata_sample.xlsx
+- Complete the wizard with default settings
+- Click "Run Analysis"
+- Wait for completion
+- Scroll to the outcome segmentation section (Section 5 or wherever it lives)
+- IMPORTANT: pick a specific outcome question with clear options. Q18 works if it's single-select. Otherwise pick any single-select demographic question.
+- Define Winners explicitly: e.g. "respondents who selected option 1 OR 2"
+- Define Laggards explicitly: e.g. "respondents who selected option 5 OR 6"
+- The UI should display Winner N and Laggard N badges. RECORD THESE NUMBERS.
+- Click "Outcome Segmented Workbook (Winners vs Laggards)" download
+
+STEP 7. Verify the downloaded workbook end-to-end.
+
+cd artifacts/survey-insight-engine && python3 << 'EOF'
+import openpyxl, glob, os
+files = sorted(glob.glob('outputs/*outcome*.xlsx') + glob.glob('outputs/*winners*.xlsx'), key=os.path.getmtime, reverse=True)
+path = files[0]
+print(f"Checking: {path}")
+print(f"Generated: {os.path.getmtime(path)}\n")
+
+# CHECK 1: Theme sheets exist
+wb = openpyxl.load_workbook(path, data_only=False)
+print(f"Sheets: {wb.sheetnames}")
+non_meta = [s for s in wb.sheetnames if not s.startswith('_') and s not in ('Run_Summary', 'Question_Metadata', 'Single_Cut_Index', 'Calculation_Log', 'Filter_Log', 'Warnings', 'Filters')]
+print(f"Category sheets: {non_meta}")
+if "All Questions" in non_meta and len(non_meta) == 2:
+    print("BUG 3 STATUS: only Demographics + All Questions (theme split NOT applied)")
+elif len(non_meta) >= 3:
+    print("BUG 3 OK: theme-based category sheets present")
+else:
+    print(f"BUG 3 PARTIAL: {len(non_meta)} category sheets")
+
+# CHECK 2: Demographics filter rows at top
+ws = wb['Demographics']
+print(f"\nDemographics first 10 rows:")
+for r in range(1, 11):
+    items = []
+    for c in range(1, 6):
+        v = ws.cell(row=r, column=c).value
+        if v is not None:
+            items.append(f"{ws.cell(row=r,column=c).coordinate}={str(v)[:30]}")
+    if items:
+        print(f"  Row {r}: {' | '.join(items)}")
+
+# CHECK 3: Q14 has REAL counts (Bug 1)
+data_wb = openpyxl.load_workbook(path, data_only=True)
+ws_d = data_wb['Demographics']
+print(f"\n=== Q14 verification (Bug 1) ===")
+for r in range(1, ws_d.max_row + 1):
+    a = ws_d.cell(row=r, column=1).value
+    if isinstance(a, str) and 'Q14' in a and ' - ' in a:
+        nonzero_count = 0
+        zero_count = 0
+        for offset in range(5, 18):
+            rr = r + offset
+            row_label = ws_d.cell(row=rr, column=2).value
+            winner_count = ws_d.cell(row=rr, column=3).value
+            if winner_count is None:
+                break
+            if isinstance(winner_count, (int, float)) and winner_count > 0:
+                nonzero_count += 1
+            else:
+                zero_count += 1
+            print(f"  {row_label}: winner={winner_count}, laggard={ws_d.cell(row=rr, column=5).value}")
+        print(f"\nBUG 1 STATUS: {nonzero_count} options with nonzero winner count, {zero_count} with zero")
+        if nonzero_count == 0:
+            print("  BUG 1 NOT FIXED — all Q14 counts still zero")
+        else:
+            print("  BUG 1 OK — Q14 has real distribution")
+        break
+
+# CHECK 4: Cohort masks in _RawData (Bug 5)
+ws_raw = wb['_RawData']
+w_col, l_col = None, None
+for col in range(1, ws_raw.max_column + 1):
+    h = ws_raw.cell(row=1, column=col).value
+    if h == 'winners_mask_data':
+        w_col = col
+    elif h == 'laggards_mask_data':
+        l_col = col
+
+if w_col and l_col:
+    w_true = sum(1 for r in range(2, ws_raw.max_row + 1) if ws_raw.cell(row=r, column=w_col).value in (True, 1, 'TRUE'))
+    l_true = sum(1 for r in range(2, ws_raw.max_row + 1) if ws_raw.cell(row=r, column=l_col).value in (True, 1, 'TRUE'))
+    total = ws_raw.max_row - 1
+    print(f"\n=== Cohort mask verification (Bug 5) ===")
+    print(f"Total respondents in _RawData: {total}")
+    print(f"winners_mask_data: {w_true} TRUE")
+    print(f"laggards_mask_data: {l_true} TRUE")
+    if w_true == total and l_true == total:
+        print("BUG 5 NOT FIXED — every row marked TRUE in both masks")
+    elif w_true == 0 and l_true == 0:
+        print("BUG 5 ALTERNATIVE BUG — no rows marked TRUE in either mask")
+    else:
+        print(f"BUG 5 OK — winners={w_true}, laggards={l_true}, both distinct from total")
+        print(f"COMPARE TO UI: did STEP 6 show Winner N={w_true} and Laggard N={l_true}?")
+else:
+    print(f"\nBUG 5 STATUS UNCLEAR: mask columns not found in _RawData (w_col={w_col}, l_col={l_col})")
+
+# CHECK 5: Heatmap conditional formatting on Demographics sheet
+print(f"\n=== Heatmap verification (Bug 4) ===")
+ws_check = wb['Demographics']
+cf_rules = list(ws_check.conditional_formatting._cf_rules.keys()) if hasattr(ws_check.conditional_formatting, '_cf_rules') else []
+print(f"Conditional formatting ranges on Demographics: {[str(r) for r in cf_rules][:5]}")
+if cf_rules:
+    print("BUG 4 OK — heatmap formatting applied")
+else:
+    print("BUG 4 NOT APPLIED — no conditional formatting")
+EOF
+
+STEP 8. Report back to me:
+
+- pytest count from STEP 2 and STEP 3
+- Streamlit startup status from STEP 5
+- ALL output from STEP 7
+- Confirm whether STEP 6's UI Winner N matches the workbook's winners_mask TRUE count
+
+CONSTRAINTS
+
+- Do not modify any uploaded file.
+- If STEP 2 shows the two new tests failing, that means Codex's claim about mask writing is wrong and we need another fix round.
+- If STEP 7 BUG 1 STATUS shows "NOT FIXED" — the option_code fix didn't actually land in production code path.
