@@ -44,7 +44,7 @@ def _bain_layout(title: str, source: str, height: int = 450) -> dict:
         "linecolor": BAIN_PALETTE["GRAPHITE_3"],
         "tickcolor": BAIN_PALETTE["GRAPHITE_3"],
         "tickfont": {"family": "Arial", "size": 11, "color": BAIN_PALETTE["GRAPHITE_1"]},
-        "titlefont": {"family": "Arial", "size": 11, "color": BAIN_PALETTE["GRAPHITE_1"]},
+        "title": {"font": {"family": "Arial", "size": 11, "color": BAIN_PALETTE["GRAPHITE_1"]}},
         "gridcolor": BAIN_PALETTE["GRAPHITE_5"],
         "zerolinecolor": BAIN_PALETTE["GRAPHITE_5"],
     }
