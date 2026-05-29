@@ -1,0 +1,116 @@
+ROUND 5F + 5G INTEGRATION — Input file embed checkbox + manual cohort upload, resynced delivery.
+
+This is the resynced delivery layering Round 5F (embed_input_files checkbox) and Round 5G (manual cohort upload via uuid lists) on top of the existing Round 5E baseline. All preserved features verified by Codex.
+
+FILES BEING UPLOADED
+
+1. src/models.py — replaces existing. Round 5G adds manual_winner_uuids and manual_laggard_uuids to SegmentDefinition. All Round 5 laggard fields preserved.
+2. src/io.py — replaces existing. Round 5G adds detect_manual_cohort_sheet helper.
+3. src/outcome_segmentation.py — replaces existing. Round 5G adds manual_uuid branch to _build_segment_masks; respondent_id_column kwarg restored.
+4. src/excel_exporter.py — replaces existing. Round 5F embed plumbing + Round 5G _wvl_write_cohort_definition_sheet helper + 3 call sites updated to pass respondent_id_column=schema.respondent_id_column.
+5. app.py — replaces existing. Round 5F embed checkbox + Round 5G manual cohort UI in outcome segmentation section.
+6. tests/test_manual_cohort_upload.py — new.
+7. tests/test_app_manual_cohort_ui.py — new.
+8. tests/test_excel_exporter_manual_cohort.py — new.
+9. tests/test_excel_exporter_input_embed.py — new (Round 5F, possibly already in current state).
+10. tests/test_app_embed_checkbox.py — new (Round 5F, possibly already in current state).
+
+INSTRUCTIONS
+
+STEP 0. Defensive checks BEFORE install.
+
+cd artifacts/survey-insight-engine && grep -n "def get_effective_values" src/models.py
+grep -n "label_to_numeric_value\|allowed_numeric_range" src/models.py
+grep -n "laggard_values\|laggard_threshold_direction" src/models.py
+
+All must return matches. Round 5 + Round 4 hotfixes must be intact in CURRENT models.py before installing the new one.
+
+STEP 0.5. Also defensively check incoming models.py preserves these.
+
+cat attached_assets/models_*.py 2>/dev/null | grep -E "def get_effective_values|label_to_numeric_value|allowed_numeric_range|laggard_values|laggard_threshold_direction|manual_winner_uuids|manual_laggard_uuids"
+
+You should see matches for ALL of these in the incoming file. If any is missing, STOP and escalate.
+
+STEP 1. Install all uploaded files.
+
+STEP 2. Run new 5G test files specifically.
+
+pytest tests/test_manual_cohort_upload.py tests/test_app_manual_cohort_ui.py tests/test_excel_exporter_manual_cohort.py -v 2>&1 | tail -45
+
+Expected: ~17-22 tests pass total. Each new file delivers 5-8 tests.
+
+STEP 3. Run 5F test files specifically.
+
+pytest tests/test_excel_exporter_input_embed.py tests/test_app_embed_checkbox.py -v 2>&1 | tail -25
+
+Expected: ~10 tests pass.
+
+STEP 4. Run WVL test file (Round 5E layout — must not regress).
+
+pytest tests/test_excel_exporter_winners_vs_laggards.py -v 2>&1 | tail -35
+
+Expected: 30 tests pass.
+
+If any of these 30 fail, the 5E layout has regressed and we need a different round.
+
+STEP 5. Full suite chunked.
+
+Expected: ~615 total. Codex's full local run showed 615 pass, 0 fail (+5 Plotly skips).
+
+STEP 6. Verify protective fixes in app.py post-install.
+
+sed -n '1620,1625p' app.py
+grep -n "^def _run_pipeline\|app = _require_streamlit" app.py | head -5
+
+The `with app.container():` line must be present somewhere around 1620-1625 (line number may have drifted upward as Codex added 5F+5G UI sections). _run_pipeline must have `app = _require_streamlit()` early in its body.
+
+If line ~1623 shows `with app.expander(button_label, expanded=False):` instead of `with app.container():`, the protective fix has regressed. Apply this immediately:
+
+sed -i 's/        with app.expander(button_label, expanded=False):/        with app.container():/' app.py
+
+STEP 7. Restart Streamlit.
+
+cd artifacts/survey-insight-engine && streamlit run app.py
+
+Verify clean startup. No ImportError, no traceback. If startup hits an error, paste the full traceback — most likely is a circular import involving SegmentDefinition's new fields or a missing helper in io.py.
+
+REPORT BACK
+
+- STEP 0 protected fields check
+- STEP 0.5 incoming file check
+- STEP 2 new 5G test result
+- STEP 3 5F test result
+- STEP 4 WVL test result (Round 5E)
+- STEP 5 full suite total
+- STEP 6 protective fix verification (line number where with app.container(): now sits, _run_pipeline location)
+- STEP 7 Streamlit startup status
+
+CONSTRAINTS
+
+- Do not modify any uploaded file.
+- If STEP 4 shows regression in WVL tests, the 5E layout has been clobbered. Stop and escalate.
+- If any test in STEPS 2-4 fails because of missing imports (e.g., from src.io import detect_manual_cohort_sheet, ImportError), the io.py changes didn't actually land. Verify with: grep -n "def detect_manual_cohort_sheet" src/io.py
+
+CRITICAL — browser smoke test sequence (yours to run after installation):
+
+After STEP 7 startup is clean, the manual smoke test sequence is:
+
+1. Hard-refresh browser
+2. Upload Datamap_sample.xlsx + Rawdata_sample.xlsx WITH "Include original raw data and data map as sheets" checkbox CHECKED (verifies Round 5F embed)
+3. Run wizard, run analysis
+4. Outcome segmentation section:
+   a. Should default to categorical mode (no W&L sheet in BCN sample)
+   b. Select "Manual upload" from segment mode dropdown
+   c. Should expose a separate xlsx uploader
+   d. Upload survey_file_win_vs_lag_sample_input.xlsx
+   e. Summary panel should display: ~256 winners (256 valid, 1 not found), 216 laggards (216 valid, 0 not found), 0 overlap
+   f. WVL download button should be enabled (no overlap warning blocking)
+5. Click download
+6. Verify the downloaded file has:
+   - Raw Data (Input) sheet — contains the original raw data verbatim (5F embed)
+   - Data Map (Input) sheet — contains the original data map verbatim (5F embed)
+   - _CohortDefinition sheet (hidden) — Round 5G audit
+   - Demographics sheet — Round 5E layout (Winners + Laggards + Others + Total + "Who prioritizes more?")
+   - Q14 actually shows counts (Round 5C fix from earlier rounds)
+
+If the WVL download fails with KeyError or AttributeError, the manual cohort path has a wiring issue. Most likely culprit: respondent_id_column missing from active_df or schema, or the uploaded file's "uuid" column doesn't match the expected column name.
