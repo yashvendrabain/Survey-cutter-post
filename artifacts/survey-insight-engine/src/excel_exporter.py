@@ -394,7 +394,6 @@ def export_winners_vs_laggards_workbook(
             decoded_df,
             None,
             segment_definition,
-            respondent_id_column=schema.respondent_id_column,
         )
         _record_wvl_manual_cohort_audit(log, "winner_mask", schema, segment_definition, int(winner_mask.sum()))
         _record_wvl_manual_cohort_audit(log, "laggard_mask", schema, segment_definition, int(laggard_mask.sum()))
@@ -408,7 +407,6 @@ def export_winners_vs_laggards_workbook(
             decoded_df,
             winner_spec,
             segment_definition,
-            respondent_id_column=schema.respondent_id_column,
         )
 
         laggard_definition = laggard_segment_definition or segment_definition
@@ -432,7 +430,6 @@ def export_winners_vs_laggards_workbook(
             decoded_df,
             laggard_spec,
             laggard_definition,
-            respondent_id_column=schema.respondent_id_column,
         )
 
         _record_wvl_cohort_audit(
