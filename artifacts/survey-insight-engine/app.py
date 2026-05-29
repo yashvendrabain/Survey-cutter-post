@@ -89,6 +89,7 @@ SESSION_DEFAULTS = {
     "input_file_embed_sources": None,
     "manual_cohort_input": None,
     "manual_cohort_source": None,
+    "manual_cohort_id_column": None,
     "manual_cohort_overlap_blocked": False,
     "wiz_crosscut_consolidation": "one_sheet",
     "ss_search": "",
@@ -2346,6 +2347,11 @@ def _run_pipeline(
         if app.session_state["manual_cohort_input"] is not None
         else None
     )
+    app.session_state["manual_cohort_id_column"] = (
+        getattr(app.session_state["manual_cohort_input"], "id_column", None)
+        if app.session_state["manual_cohort_input"] is not None
+        else None
+    )
 
     _INSIGHT_CACHE.clear()
     app.session_state["decoded_df"] = dataframe
@@ -3998,21 +4004,68 @@ def _render_segment_definition_ui() -> None:
             )
             if uploaded_manual is not None:
                 try:
-                    raw_ids = app.session_state["active_df"][schema.respondent_id_column]
+                    active_df = app.session_state["active_df"]
+                    primary_id_column = schema.respondent_id_column
+                    raw_ids_primary = active_df[primary_id_column].astype(str).str.strip()
+                    uploaded_bytes = uploaded_manual.read()
                     manual_cohort = parse_manual_cohort_workbook(
-                        uploaded_manual.read(),
-                        valid_uuids=raw_ids,
+                        uploaded_bytes,
+                        valid_uuids=set(raw_ids_primary),
                         source="separate upload",
+                        id_column=primary_id_column,
                     )
+                    resolved_id_column = primary_id_column
+                    if (
+                        len(manual_cohort.winner_uuids) == 0
+                        and len(manual_cohort.laggard_uuids) == 0
+                        and len(manual_cohort.invalid_uuids) > 0
+                    ):
+                        candidate_columns = [
+                            column
+                            for column in active_df.columns
+                            if str(column).lower() in ("uuid", "respondent_id", "id")
+                            and str(column) != str(primary_id_column)
+                        ]
+                        for fallback_column in candidate_columns:
+                            raw_ids_fallback = active_df[fallback_column].astype(str).str.strip()
+                            fallback_cohort = parse_manual_cohort_workbook(
+                                uploaded_bytes,
+                                valid_uuids=set(raw_ids_fallback),
+                                source="separate upload",
+                                id_column=str(fallback_column),
+                            )
+                            if (
+                                len(fallback_cohort.winner_uuids) > 0
+                                or len(fallback_cohort.laggard_uuids) > 0
+                            ):
+                                manual_cohort = fallback_cohort
+                                resolved_id_column = str(fallback_column)
+                                break
                     app.session_state["manual_cohort_input"] = manual_cohort
                     app.session_state["manual_cohort_source"] = "separate upload"
+                    app.session_state["manual_cohort_id_column"] = resolved_id_column
                     manual_available = True
                 except Exception as exc:  # noqa: BLE001
                     app.error(f"Manual cohort upload failed: {type(exc).__name__}: {exc}")
         if manual_cohort is not None:
+            manual_cohort_id_column = (
+                app.session_state.get("manual_cohort_id_column")
+                or getattr(manual_cohort, "id_column", None)
+                or schema.respondent_id_column
+            )
+            primary_id_column = schema.respondent_id_column
+            if (
+                manual_cohort_id_column != primary_id_column
+                and manual_cohort_id_column in app.session_state["active_df"].columns
+            ):
+                app.info(
+                    f"Manual cohort matched against '{manual_cohort_id_column}' column "
+                    f"(the survey's primary respondent_id is '{primary_id_column}' "
+                    f"but uploaded values are {manual_cohort_id_column}-shaped)."
+                )
             raw_ids = {
                 str(value).strip()
-                for value in app.session_state["active_df"][schema.respondent_id_column].tolist()
+                for value in app.session_state["active_df"][manual_cohort_id_column].tolist()
             }
             winner_set = set(manual_cohort.winner_uuids)
             laggard_set = set(manual_cohort.laggard_uuids)
@@ -4051,6 +4104,7 @@ def _render_segment_definition_ui() -> None:
                 laggard_label="Laggards",
                 manual_winner_uuids=tuple(manual_cohort.winner_uuids),
                 manual_laggard_uuids=tuple(manual_cohort.laggard_uuids),
+                manual_cohort_id_column=manual_cohort_id_column,
             )
         else:
             app.info("Upload a Winners & Laggards workbook to continue.")

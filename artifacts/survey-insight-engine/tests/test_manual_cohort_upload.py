@@ -54,6 +54,31 @@ class TestManualCohortUpload(unittest.TestCase):
         self.assertEqual(cohort.winner_uuids, ("R1", "R2"))
         self.assertEqual(cohort.laggard_uuids, ("R3", "R4"))
 
+    def test_validation_fallback_to_uuid_column(self) -> None:
+        raw_df = pd.DataFrame(
+            {
+                "record": [1, 2, 3, 4],
+                "uuid": ["R1", "R2", "R3", "R4"],
+            }
+        )
+        cohort = detect_manual_cohort_sheet(_manual_workbook_bytes(), raw_df, "record")
+        self.assertEqual(cohort.winner_uuids, ("R1", "R2"))
+        self.assertEqual(cohort.laggard_uuids, ("R3", "R4"))
+        self.assertEqual(cohort.invalid_uuids, ())
+        self.assertEqual(cohort.id_column, "uuid")
+
+    def test_validation_no_fallback_when_primary_matches(self) -> None:
+        path = Path(tempfile.gettempdir()) / "manual_primary_uuid.xlsx"
+        path.write_bytes(_manual_workbook_bytes("winnerlaggard"))
+        cohort = parse_manual_cohort_workbook(
+            path,
+            valid_uuids=["R1", "R2", "R3", "R4"],
+            id_column="uuid",
+        )
+        self.assertEqual(cohort.winner_uuids, ("R1", "R2"))
+        self.assertEqual(cohort.laggard_uuids, ("R3", "R4"))
+        self.assertEqual(cohort.id_column, "uuid")
+
     def test_invalid_uuids_surfaced_as_warning(self) -> None:
         workbook = Workbook()
         worksheet = workbook.active
@@ -105,6 +130,40 @@ class TestManualCohortUpload(unittest.TestCase):
         )
         self.assertEqual(segment.segment_mode, "manual_uuid")
 
+    def test_segment_definition_accepts_manual_cohort_id_column(self) -> None:
+        segment = SegmentDefinition(
+            outcome_question_id="manual_uuid",
+            segment_mode="manual_uuid",
+            manual_winner_uuids=("A",),
+            manual_laggard_uuids=("B",),
+            manual_cohort_id_column="uuid",
+        )
+        self.assertEqual(segment.manual_cohort_id_column, "uuid")
+
+    def test_build_segment_masks_uses_manual_cohort_id_column_when_set(self) -> None:
+        df = pd.DataFrame(
+            {
+                "record": [1, 2, 3, 4],
+                "uuid": ["A", "B", "C", "D"],
+            }
+        )
+        segment = SegmentDefinition(
+            outcome_question_id="manual_uuid",
+            segment_mode="manual_uuid",
+            manual_winner_uuids=("A", "C"),
+            manual_laggard_uuids=("D",),
+            manual_cohort_id_column="uuid",
+        )
+        winner, laggard, valid, _warnings = _build_segment_masks(
+            df,
+            None,
+            segment,
+            respondent_id_column="record",
+        )
+        self.assertEqual(winner.tolist(), [True, False, True, False])
+        self.assertEqual(laggard.tolist(), [False, False, False, True])
+        self.assertEqual(valid.tolist(), [True, False, True, True])
+
     def test_segment_definition_preserves_existing_laggard_fields(self) -> None:
         segment = SegmentDefinition(
             outcome_question_id="manual_uuid",
@@ -117,6 +176,7 @@ class TestManualCohortUpload(unittest.TestCase):
             laggard_outcome_sub_question_id="Q2r1",
             manual_winner_uuids=("A",),
             manual_laggard_uuids=("B",),
+            manual_cohort_id_column="uuid",
         )
         self.assertEqual(segment.laggard_values, (2,))
         self.assertEqual(segment.laggard_threshold, 4.0)
@@ -124,6 +184,7 @@ class TestManualCohortUpload(unittest.TestCase):
         self.assertEqual(segment.laggard_label, "Trailing")
         self.assertEqual(segment.laggard_outcome_question_id, "Q2")
         self.assertEqual(segment.laggard_outcome_sub_question_id, "Q2r1")
+        self.assertEqual(segment.manual_cohort_id_column, "uuid")
 
     def test_cohort_definition_sheet_written_in_workbook(self) -> None:
         output_path, schema, df, results, _default_segment, log = _fixture()

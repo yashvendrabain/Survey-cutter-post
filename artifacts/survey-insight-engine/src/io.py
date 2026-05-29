@@ -89,6 +89,7 @@ class ManualCohortInput:
     invalid_uuids: tuple[str, ...] = ()
     overlap_uuids: tuple[str, ...] = ()
     source: str = ""
+    id_column: str | None = None
 
     @property
     def winner_count(self) -> int:
@@ -270,11 +271,22 @@ def detect_manual_cohort_sheet(
         sheet_name = _find_manual_cohort_sheet_name(workbook.sheetnames)
         if sheet_name is None:
             return None
-        respondent_ids = _respondent_id_values(raw_df, respondent_id_column)
-        return _parse_manual_cohort_worksheet(
+        primary_column = _respondent_id_column(raw_df, respondent_id_column)
+        respondent_ids = _respondent_id_values(raw_df, primary_column)
+        parsed = _parse_manual_cohort_worksheet(
             workbook[sheet_name],
             valid_uuids=respondent_ids,
             source=f"embedded sheet:{sheet_name}",
+            id_column=primary_column,
+        )
+        fallback_column = _manual_cohort_fallback_column(raw_df, primary_column, parsed)
+        if fallback_column is None:
+            return parsed
+        return _parse_manual_cohort_worksheet(
+            workbook[sheet_name],
+            valid_uuids=_respondent_id_values(raw_df, fallback_column),
+            source=f"embedded sheet:{sheet_name}",
+            id_column=fallback_column,
         )
     finally:
         workbook.close()
@@ -284,6 +296,7 @@ def parse_manual_cohort_workbook(
     workbook_source: str | Path | bytes,
     valid_uuids: Iterable[Any] | None = None,
     source: str = "separate upload",
+    id_column: str | None = None,
 ) -> ManualCohortInput:
     """Parse a standalone or combined Winners & Laggards workbook."""
 
@@ -302,6 +315,7 @@ def parse_manual_cohort_workbook(
             workbook[sheet_name],
             valid_uuids=valid_uuids,
             source=source,
+            id_column=id_column,
         )
     finally:
         workbook.close()
@@ -322,11 +336,7 @@ def _respondent_id_values(
     raw_df: pd.DataFrame,
     respondent_id_column: str | None,
 ) -> set[str]:
-    candidate = respondent_id_column if respondent_id_column in raw_df.columns else None
-    if candidate is None and "record" in raw_df.columns:
-        candidate = "record"
-    if candidate is None and len(raw_df.columns) > 0:
-        candidate = str(raw_df.columns[0])
+    candidate = _respondent_id_column(raw_df, respondent_id_column)
     if candidate is None or candidate not in raw_df.columns:
         return set()
     return {
@@ -336,10 +346,43 @@ def _respondent_id_values(
     }
 
 
+def _respondent_id_column(
+    raw_df: pd.DataFrame,
+    respondent_id_column: str | None,
+) -> str | None:
+    candidate = respondent_id_column if respondent_id_column in raw_df.columns else None
+    if candidate is None and "record" in raw_df.columns:
+        candidate = "record"
+    if candidate is None and len(raw_df.columns) > 0:
+        candidate = str(raw_df.columns[0])
+    return candidate
+
+
+def _manual_cohort_fallback_column(
+    raw_df: pd.DataFrame,
+    primary_column: str | None,
+    parsed: ManualCohortInput,
+) -> str | None:
+    if parsed.winner_uuids or parsed.laggard_uuids or not parsed.invalid_uuids:
+        return None
+    primary_lower = str(primary_column or "").lower()
+    for column in raw_df.columns:
+        column_text = str(column)
+        if column_text.lower() == primary_lower:
+            continue
+        if column_text.lower() in {"uuid", "respondent_id", "id"}:
+            values = _respondent_id_values(raw_df, column_text)
+            reparsed_valid = [value for value in parsed.invalid_uuids if value in values]
+            if reparsed_valid:
+                return column_text
+    return None
+
+
 def _parse_manual_cohort_worksheet(
     worksheet: Any,
     valid_uuids: Iterable[Any] | None,
     source: str,
+    id_column: str | None,
 ) -> ManualCohortInput:
     header_row = next(
         worksheet.iter_rows(min_row=1, max_row=1, values_only=True),
@@ -391,6 +434,7 @@ def _parse_manual_cohort_worksheet(
         invalid_uuids=tuple(dict.fromkeys(invalid)),
         overlap_uuids=tuple(overlap),
         source=source,
+        id_column=id_column,
     )
 
 

@@ -30,6 +30,11 @@ class TestManualCohortUi(unittest.TestCase):
         self.assertIn("Upload Winners & Laggards xlsx", self.app_text)
         self.assertIn("manual_winners_laggards_upload", self.app_text)
 
+    def test_fallback_info_message_surfaced_in_app(self) -> None:
+        self.assertIn("Manual cohort matched against", self.app_text)
+        self.assertIn("but uploaded values are", self.app_text)
+        self.assertIn("manual_cohort_id_column", self.app_text)
+
 
 if __name__ == "__main__":
     unittest.main()

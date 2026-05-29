@@ -923,6 +923,7 @@ class SegmentDefinition:
     laggard_outcome_sub_question_id: str | None = None
     manual_winner_uuids: tuple[str, ...] = ()
     manual_laggard_uuids: tuple[str, ...] = ()
+    manual_cohort_id_column: str | None = None
 
     def __post_init__(self) -> None:
         _require_non_empty_string(self.outcome_question_id, "outcome_question_id")
@@ -949,6 +950,11 @@ class SegmentDefinition:
         _require_non_empty_string(self.loser_label, "loser_label")
         _require_non_empty_string(self.laggard_label, "laggard_label")
         if self.segment_mode == "manual_uuid":
+            if self.manual_cohort_id_column is not None:
+                _require_non_empty_string(
+                    self.manual_cohort_id_column,
+                    "manual_cohort_id_column",
+                )
             for value in (*self.manual_winner_uuids, *self.manual_laggard_uuids):
                 _require_non_empty_string(str(value), "manual_uuid")
 

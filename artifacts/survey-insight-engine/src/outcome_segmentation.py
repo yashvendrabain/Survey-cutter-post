@@ -198,7 +198,12 @@ def _build_segment_masks(
     respondent_id_column: str | None = None,
 ) -> tuple[pd.Series, pd.Series, pd.Series, tuple[str, ...]]:
     if segment_definition.segment_mode == "manual_uuid":
-        column = _manual_respondent_id_column(df, respondent_id_column)
+        column = (
+            segment_definition.manual_cohort_id_column
+            or _manual_respondent_id_column(df, respondent_id_column)
+        )
+        if column not in df.columns:
+            raise ValueError(f"manual cohort id column {column!r} not in data")
         winner_set = {str(value).strip() for value in segment_definition.manual_winner_uuids}
         laggard_set = {str(value).strip() for value in segment_definition.manual_laggard_uuids}
         respondent_ids = df[column].astype(str).str.strip()
