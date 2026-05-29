@@ -4,7 +4,7 @@ from pathlib import Path
 import unittest
 
 
-APP_PATH = Path(__file__).resolve().parents[1] / "artifacts" / "survey-insight-engine" / "app.py"
+APP_PATH = Path(__file__).resolve().parents[1] / "app.py"
 
 
 class TestManualCohortUi(unittest.TestCase):
