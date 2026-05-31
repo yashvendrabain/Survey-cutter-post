@@ -1,0 +1,90 @@
+ROUND 5H INTEGRATION — Generic input support: compact data map format + expanded respondent_id detection.
+
+Codex shipped:
+- src/datamap_parser.py with _detect_datamap_format + _parse_compact_datamap
+- src/raw_decoder.py with expanded RESPONDENT_ID_CANDIDATES (18 entries)
+- src/io.py with sheet name normalization for "data map" with space and "Raw Data"
+- tests/test_compact_datamap_parser.py (new, 11 tests)
+- tests/test_respondent_id_detection.py (new, 5 tests)
+- tests/test_raw_decoder.py (modified at line 233 to reflect new first-column fallback contract)
+
+No models.py, no app.py.
+
+INSTRUCTIONS
+
+STEP 0. Defensive checks BEFORE install.
+
+cd artifacts/survey-insight-engine && grep -n "def get_effective_values" src/models.py
+grep -n "manual_cohort_id_column" src/models.py
+grep -n "label_to_numeric_value\|allowed_numeric_range" src/models.py
+
+All must return matches. models.py NOT touched this round.
+
+STEP 0.5. Show the line of test_raw_decoder.py that was modified.
+
+cd artifacts/survey-insight-engine && grep -n "respondent_id\|respondent_column" tests/test_raw_decoder.py | head -10
+
+I want to see whether Codex relaxed a test or genuinely updated to a new contract.
+
+Also show the diff between incoming and current:
+
+diff src/raw_decoder.py attached_assets/raw_decoder_*.py 2>/dev/null | head -30
+
+STEP 1. Install all 6 files.
+
+STEP 1.5. Apply path fix to new test files if needed (recurring Codex bug).
+
+grep "APP_PATH = Path" tests/test_compact_datamap_parser.py tests/test_respondent_id_detection.py 2>/dev/null
+
+These tests probably don't reference app.py so APP_PATH might not exist. But if it does, apply:
+
+sed -i 's|parents\[1\] / "artifacts" / "survey-insight-engine" / "app.py"|parents[1] / "app.py"|' tests/test_compact_datamap_parser.py tests/test_respondent_id_detection.py 2>/dev/null
+
+STEP 2. Run new tests.
+
+pytest tests/test_compact_datamap_parser.py tests/test_respondent_id_detection.py tests/test_raw_decoder.py -v 2>&1 | tail -40
+
+Expected: ~30+ tests pass total (11 compact + 5 respondent + existing raw_decoder).
+
+STEP 3. Full suite chunked.
+
+Expected: ~636 total.
+
+STEP 4. Verify protective fixes in app.py (defensive — Codex says app.py untouched).
+
+sed -n '1625,1635p' app.py
+grep -n "^def _run_pipeline" app.py | head -3
+
+`with app.container():` must still be in the chart think-cell section. _run_pipeline must still have `app = _require_streamlit()` early.
+
+STEP 5. Restart Streamlit.
+
+cd artifacts/survey-insight-engine && streamlit run app.py
+
+Verify clean startup.
+
+STEP 6. BROWSER SMOKE TEST — the real verification.
+
+Hard-refresh browser. Upload winvslag2024.xlsx (the file that returned 0 questions before).
+
+Expected:
+- Tool successfully parses the data map
+- Question count > 0 (the file has many Q1-Qn questions based on the data map structure)
+- The respondent_id_column should be detected as "Respondent" (since the raw data has that column)
+- Wizard proceeds normally to category tagging
+
+If the tool STILL shows 0 questions, paste the Streamlit logs to identify which step failed.
+
+REPORT BACK
+
+- STEP 0/0.5 protected fields + test diff inspection
+- STEP 2 test result
+- STEP 3 full suite total
+- STEP 4 protective check
+- STEP 5 startup status
+- STEP 6 browser smoke test result (winvslag2024.xlsx should now parse — question count and respondent_id resolution)
+
+CONSTRAINTS
+
+- Do not modify any uploaded file unless STEP 1.5 path fix is needed.
+- If STEP 0.5's test_raw_decoder.py diff shows the test was made weaker (e.g. assertion removed without replacement), flag it but don't reject — Codex may have intentionally relaxed an over-strict assertion. We can address in a separate round.
