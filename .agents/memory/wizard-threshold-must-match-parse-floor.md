@@ -1,24 +1,34 @@
 ---
-name: Wizard fallback must gate at the adapter parse floor, not the "use" threshold
-description: survey-insight-engine adapter router — needs_wizard must use CONFIDENCE_REJECT_THRESHOLD, not CONFIDENCE_USE_THRESHOLD, or it intercepts files the adapters can actually parse.
+name: Adapter data-map sheet lookup & wizard-fallback gating (survey-insight-engine)
+description: Why files route to the format wizard — the real cause was a hardcoded "Sheet1" lookup, not the confidence threshold. Also covers the needs_wizard gate.
 ---
 
-# Wizard fallback gate must equal the adapter parse-acceptance floor
+# Why a parseable workbook routes to the format wizard
 
-In `artifacts/survey-insight-engine/src/adapters/registry.py`, the router has two distinct
-confidence gates:
-- `CONFIDENCE_REJECT_THRESHOLD` (0.3) — `pick_adapter` only refuses to parse *below* this.
-- `CONFIDENCE_USE_THRESHOLD` (0.5) — was originally a dead constant.
+In `artifacts/survey-insight-engine`, two separate things govern wizard fallback. Keep them
+straight — one was a red herring.
 
-`needs_wizard` decides whether to divert a file to the manual setup wizard. It MUST gate at
-`CONFIDENCE_REJECT_THRESHOLD` (`best_score < CONFIDENCE_REJECT_THRESHOLD`).
+## 1. The REAL root cause: hardcoded data-map sheet name
+Both adapters (`compact_two_column`, `bcn_multicolumn`) originally located the data-map sheet
+by the hardcoded constant `DATAMAP_SHEET_NAME = "Sheet1"`. A workbook whose data map lived on a
+differently-named sheet (e.g. `"Data map"`, `"Datamap"`, `"Codebook"`) returned confidence 0.0
+from *every* adapter → `needs_wizard` True → wizard. This is what actually broke `winvslag2024`.
 
-**Why:** when `needs_wizard` gated at `CONFIDENCE_USE_THRESHOLD` (0.5), any file scoring in the
-0.3–0.5 band — which `pick_adapter` can fully parse — was wrongly diverted to the wizard. This
-regressed `winvslag2024.xlsx` (worked through Round 5K.1, broke after the 5L wizard was added).
-The wizard path was brand new; the bug was that its gate was stricter than the adapters' real
-capability, creating a 0.3–0.5 "dead zone".
+**Fix:** a `_find_datamap_sheet(workbook)` helper in each adapter that matches sheet names by
+normalized substring against a `DATAMAP_KEYWORDS` list (datamap, data map, codebook, schema,
+dictionary, questions, questionnaire, variables, metadata), falling back to `"Sheet1"`.
 
-**How to apply:** if a previously-working file suddenly routes to the wizard, check that
-`needs_wizard` gates at the same floor `pick_adapter` rejects at (0.3), not at USE_THRESHOLD.
-Lowering/raising USE_THRESHOLD is a red herring — it's unused by the parse path.
+**How to apply:** if a real workbook routes to the wizard, FIRST check whether its data map is on
+a sheet named something other than `"Sheet1"` and confirm `_find_datamap_sheet` recognizes it.
+`compact.detect()` is binary (0.9 / 0.0); `bcn.detect()` is 0.7 (format) + raw-column boosts.
+Neither produces a 0.3–0.5 score for a compact file.
+
+## 2. Red herring: the confidence threshold
+An earlier hotfix changed `needs_wizard` to gate at `CONFIDENCE_REJECT_THRESHOLD` (0.3) instead
+of `CONFIDENCE_USE_THRESHOLD` (0.5). **This could NOT have fixed winvslag** — because the adapter
+scores are binary/banded, no compact file ever lands in 0.3–0.5. The "0.3–0.5 dead zone" theory
+was wrong. The gate-at-0.3 change is still correct in principle (it should match the
+`pick_adapter` parse-acceptance floor, registry.py:43), but it was not the winvslag fix.
+
+**Lesson:** before theorizing about thresholds, confirm the adapter actually produces a score in
+the contested band. Here it never did — the score was a hard 0.0 from a sheet-name miss.
