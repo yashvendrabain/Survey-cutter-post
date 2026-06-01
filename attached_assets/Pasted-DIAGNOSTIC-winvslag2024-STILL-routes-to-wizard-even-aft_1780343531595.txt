@@ -1,0 +1,65 @@
+DIAGNOSTIC — winvslag2024 STILL routes to wizard even after the threshold hotfix.
+
+This file has a textbook compact two-column data map (column A: Q1/Q2/codes alternating, column B: text, columns C+ empty). It should score ~0.8 on CompactTwoColumnAdapter. The wizard appearing means either:
+(a) CompactTwoColumnAdapter.detect() now returns < 0.3 for this file (regression in Round 5J refactor)
+(b) The wizard check in app.py isn't actually calling detect_all (logic bug)
+(c) Some other gate is intercepting before registry runs
+
+STEP 1. Show the CompactTwoColumnAdapter detect() body.
+
+cd artifacts/survey-insight-engine && cat src/adapters/compact_two_column.py | head -120
+
+STEP 2. Show how app.py decides whether to route to wizard.
+
+grep -n "needs_wizard\|wizard_active\|wizard_step" app.py | head -20
+sed -n 'LINE_OF_FIRST_MATCH,LINE+30p' app.py
+(replace LINE_OF_FIRST_MATCH with what grep showed)
+
+STEP 3. Score winvslag2024 directly. The file MUST be available — user uploads it in browser, so it lands in /tmp/streamlit*/ during their session. Have user keep browser tab open, then:
+
+ls -lt /tmp/streamlit*/uploaded_files/ 2>/dev/null
+ls -lt /tmp/ | grep -i winvslag 2>/dev/null
+find / -name "winvslag*" 2>/dev/null | head -5
+
+If still not found, place winvslag2024 from attached_assets:
+
+cp attached_assets/winvslag*.xlsx /tmp/winvslag_test.xlsx 2>/dev/null
+ls -lt /tmp/winvslag_test.xlsx
+
+Then score it:
+
+cd artifacts/survey-insight-engine && python3 << 'EOF'
+from openpyxl import load_workbook
+from src.adapters.registry import get_default_registry, CONFIDENCE_REJECT_THRESHOLD
+
+router = get_default_registry()
+path = "/tmp/winvslag_test.xlsx"
+
+wb = load_workbook(path, data_only=True, read_only=True)
+print(f"Sheets: {wb.sheetnames}")
+print(f"\nAll adapter scores:")
+scores = router.detect_all(wb)
+for adapter, result in scores:
+    print(f"  {adapter.name}: confidence={result.confidence:.3f}")
+    print(f"    reason: {result.reason}")
+
+best = scores[0]
+print(f"\nBest: {best[0].name} at {best[1].confidence:.3f}")
+print(f"REJECT_THRESHOLD: {CONFIDENCE_REJECT_THRESHOLD}")
+
+needs_wiz, all_scores = router.needs_wizard(wb)
+print(f"\nneeds_wizard returned: {needs_wiz}")
+print(f"Expected for winvslag (compact format): False")
+
+wb.close()
+EOF
+
+REPORT BACK
+
+- STEP 1: full CompactTwoColumnAdapter.detect() body
+- STEP 2: app.py code path that calls needs_wizard
+- STEP 3: actual scores for winvslag2024
+
+If STEP 3 shows compact_two_column scoring < 0.3, the detector is broken — needs fix in compact_two_column.py.
+If STEP 3 shows >= 0.3 but needs_wizard returns True, the helper is buggy.
+If STEP 3 shows >= 0.3 AND needs_wizard returns False but the wizard still appears in browser, the app.py logic has a separate bug.
