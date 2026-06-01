@@ -1,0 +1,67 @@
+ROUND 5L HOTFIX INSTALLATION — Gate wizard at REJECT_THRESHOLD instead of USE_THRESHOLD.
+
+Codex shipped:
+- src/adapters/registry.py — single-line change in needs_wizard (line 64)
+- tests/test_wizard_router.py — NEW FILE (the one missing from 5L install)
+- 718 tests passing
+
+INSTRUCTIONS
+
+STEP 0. Defensive pre-checks.
+
+cd artifacts/survey-insight-engine && grep -n "_run_with_status_heartbeat" app.py | head -3
+grep -n "with app.container():" app.py
+grep -n "def get_effective_values\|manual_cohort_id_column" src/models.py
+
+All must return matches.
+
+STEP 1. Install registry.py and the new test file.
+
+After install, verify the change landed:
+
+grep -A 8 "def needs_wizard" src/adapters/registry.py
+
+Should show:
+return best_score < CONFIDENCE_REJECT_THRESHOLD, all_scores
+
+NOT:
+return best_score < CONFIDENCE_USE_THRESHOLD, all_scores
+
+STEP 1.5. Recurring path fix check on the new test file.
+
+grep "APP_PATH = Path" tests/test_wizard_router.py 2>/dev/null
+
+If it has the doubled "artifacts/survey-insight-engine" path:
+sed -i 's|parents\[1\] / "artifacts" / "survey-insight-engine" / "app.py"|parents[1] / "app.py"|g' tests/test_wizard_router.py
+
+Verify:
+grep "APP_PATH" tests/test_wizard_router.py
+
+STEP 2. Run the router test file.
+
+pytest tests/test_wizard_router.py -v 2>&1 | tail -15
+
+Expected: 5 tests pass (0.25 triggers wizard, 0.3 doesn't, 0.4 doesn't, 0.6 doesn't, and likely one more boundary test).
+
+STEP 3. Quick smoke check on existing wizard tests for no regression.
+
+pytest tests/test_wizard_configured_adapter.py tests/test_wizard_app_ui.py tests/test_wizard_diagnostic_panel.py -v 2>&1 | tail -25
+
+Expected: 17 tests pass.
+
+STEP 4. Full suite chunked.
+
+Expected: ~706 total (701 baseline from previous + 5 new router tests). NOT 718 — Codex's local count drifts.
+
+STEP 5. Restart Streamlit.
+
+cd artifacts/survey-insight-engine && streamlit run app.py
+
+Verify clean startup.
+
+REPORT BACK
+
+- STEP 0/1/1.5 confirmation
+- STEP 2/3/4 test counts
+- STEP 5 startup status
+- Final total
