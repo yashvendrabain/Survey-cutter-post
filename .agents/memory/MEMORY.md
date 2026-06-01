@@ -1,1 +1,2 @@
 - [Streamlit websocket idle timeout](streamlit-websocket-idle-timeout.md) — long (>~30s) synchronous Streamlit runs silently fail on Replit (proxy drops idle socket); fix with status.update heartbeat in a worker thread.
+- [Codex test doubled APP_PATH](codex-test-doubled-app-path.md) — Codex test files sometimes set APP_PATH with a redundant `artifacts/survey-insight-engine` segment → FileNotFoundError; correct form is `parents[1] / "app.py"`. Check ALL new test files, not just the authorized sed glob.
