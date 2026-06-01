@@ -1,0 +1,1 @@
+- [Streamlit websocket idle timeout](streamlit-websocket-idle-timeout.md) — long (>~30s) synchronous Streamlit runs silently fail on Replit (proxy drops idle socket); fix with status.update heartbeat in a worker thread.

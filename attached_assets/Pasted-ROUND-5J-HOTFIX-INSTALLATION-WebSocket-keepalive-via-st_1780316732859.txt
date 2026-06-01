@@ -1,0 +1,101 @@
+ROUND 5J HOTFIX INSTALLATION — WebSocket keepalive via status heartbeat during long pipeline phases.
+
+Codex shipped a single file modification: app.py. Added _run_with_status_heartbeat helper that runs blocking phases in a worker thread while emitting status.update() every 5 seconds from main thread.
+
+CRITICAL concerns to verify post-install:
+1. Worker thread doesn't access Streamlit session_state (would raise)
+2. Exceptions from worker thread propagate to main thread (otherwise errors get swallowed)
+3. Existing try/except at line 3582 still catches errors correctly
+
+INSTRUCTIONS
+
+STEP 0. Defensive pre-checks.
+
+cd artifacts/survey-insight-engine && grep -n "with app.container():" app.py
+grep -n "^def _run_pipeline\|app = _require_streamlit" app.py | head -5
+grep -n "except Exception as exc" app.py | head -5
+
+Verify protective fixes still in place. Show line numbers.
+
+STEP 1. Install the new app.py.
+
+STEP 2. Examine the new helper structure.
+
+grep -n "_run_with_status_heartbeat" app.py
+sed -n 'LINE_OF_DEF,LINE_OF_DEF+50p' app.py
+
+(Replace LINE_OF_DEF with the line where _run_with_status_heartbeat is defined.)
+
+I want to see:
+(a) Is the function using threading.Thread, asyncio, or another mechanism?
+(b) Does it pass session_state into the worker, or keep all session_state access in the main thread?
+(c) How does it propagate exceptions from worker back to main?
+
+STEP 3. Test the threading edge cases.
+
+cd artifacts/survey-insight-engine && python3 << 'EOF'
+import inspect
+# Find the function
+import importlib.util
+spec = importlib.util.spec_from_file_location("app_module", "app.py")
+print("Attempting to import app.py with mocked streamlit...")
+# Won't actually load due to streamlit imports; just check source
+with open("app.py") as f:
+    source = f.read()
+
+# Check for thread-safe patterns
+import re
+heartbeat_match = re.search(r"def _run_with_status_heartbeat.*?(?=\n(?:def |class ))", source, re.DOTALL)
+if heartbeat_match:
+    body = heartbeat_match.group()
+    print("=== _run_with_status_heartbeat body ===")
+    print(body[:3000])
+    print("=== Analysis ===")
+    print(f"  Uses threading.Thread: {'threading' in body or 'Thread(' in body}")
+    print(f"  Uses queue: {'queue.' in body or 'Queue(' in body}")
+    print(f"  Re-raises exception: {'raise' in body}")
+    print(f"  Touches session_state inside worker: {'session_state' in body}")
+EOF
+
+STEP 4. Run the affected test files (these test app.py text introspection).
+
+pytest tests/test_app_*.py -v 2>&1 | tail -20
+
+Expected: pass. If any fail because of new app.py structure, paste the failure.
+
+STEP 5. Full suite chunked.
+
+Expected: ~667 total.
+
+STEP 6. Restart Streamlit.
+
+cd artifacts/survey-insight-engine && streamlit run app.py
+
+Verify clean startup. Streamlit's threading model is sensitive; if Codex used threading incorrectly, you'll see an immediate ImportError or RuntimeError at startup.
+
+STEP 7. BROWSER SMOKE TEST — THE actual verification.
+
+Hard-refresh browser. Upload winvslag2024.xlsx. Click Run Analysis.
+
+Expected behavior:
+- Status panel appears at top showing "Stage 1/5: Loading inputs..." or similar
+- Status updates every ~5 seconds with phase progress
+- WebSocket stays alive throughout (no "Bad message format" error)
+- Pipeline completes, results appear in browser
+- Total time should be 60-90 seconds for winvslag2024
+
+REPORT BACK
+
+- STEP 0 protective check
+- STEP 2 helper structure (worker mechanism, session_state safety, exception handling)
+- STEP 4 + 5 test results
+- STEP 6 startup
+- STEP 7 browser test - WebSocket survives the long run?
+
+If STEP 7 fails:
+- Different error symptom: paste exact symptom
+- Same WebSocket disconnect: heartbeat isn't actually flushing frames; we need Codex to refactor
+
+CRITICAL — what to watch for
+
+If the worker thread raises an exception that doesn't propagate, the heartbeat will loop forever (status keeps saying "Stage 2/5..."). User sees the spinner spin indefinitely with no error. Tell me if you observe this.
