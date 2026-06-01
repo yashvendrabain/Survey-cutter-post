@@ -1,0 +1,65 @@
+Run Analysis is silently failing. The Streamlit terminal shows only "WARNING:root:RUN_CLICKED uploaded=True docx_only=False" — no traceback. Pipeline either crashes silently or hits a state reset.
+
+DIAGNOSTIC
+
+STEP 1. Find the RUN_CLICKED log location and what happens after it.
+
+cd artifacts/survey-insight-engine && grep -n "RUN_CLICKED\|_run_pipeline\|except Exception" app.py | head -30
+
+I want to see:
+- Where RUN_CLICKED is emitted (the line right before pipeline kicks off)
+- The structure of _run_pipeline (does it wrap in try/except that swallows errors?)
+- Whether there's an except clause that calls app.error() or st.stop() instead of raising
+
+STEP 2. Add temporary logging right after RUN_CLICKED.
+
+Find the line that emits "RUN_CLICKED" and show me 30 lines AFTER it:
+
+grep -n "RUN_CLICKED" app.py
+sed -n 'LINE,LINE+30p' app.py   (replace LINE with the line number from above)
+
+STEP 3. Check if there's a broad try/except wrapping _run_pipeline.
+
+grep -n "except\|try:" app.py | head -40
+
+Look specifically for any "except Exception" or "except BaseException" that might be swallowing errors silently.
+
+STEP 4. Try running the pipeline directly in Python to bypass Streamlit's state management:
+
+cd artifacts/survey-insight-engine && python3 << 'EOF'
+from src.io import load_inputs
+from src.question_classifier import classify_questions
+from src.single_cut import compute_single_cuts
+
+# Load the file the user is uploading (substitute with actual path)
+result = load_inputs("/path/to/winvslag2024.xlsx")  # or whichever file
+print(f"Load report: {result.load_report}")
+print(f"Decoded df shape: {result.decoded_df.shape}")
+print(f"Schema questions: {len(result.schema.questions)}")
+print(f"First 5 questions: {[q.canonical_id for q in result.schema.questions[:5]]}")
+EOF
+
+Path: you'll need to find the uploaded file in /tmp/ or wherever Streamlit stashes uploads. Or use a file from sample_data/.
+
+Tell me where /tmp/manual_cohort_fixture.xlsx or any of the sample uploads landed:
+ls -lt /tmp/*.xlsx | head -5
+ls -lt sample_data/*.xlsx | head
+
+STEP 5. Run with a known-good file from sample_data:
+
+python3 -c "
+from src.io import load_inputs
+r = load_inputs('sample_data/Datamap_sample.xlsx', 'sample_data/Rawdata_sample.xlsx')
+print('OK -', len(r.schema.questions), 'questions')
+" 2>&1 | tail -20
+
+If this fails with a traceback, the refactor broke the load_inputs flow. Paste the traceback.
+
+If it succeeds, the refactor is OK and the Streamlit-level pipeline has a separate issue.
+
+REPORT BACK
+
+- STEP 1: line numbers of RUN_CLICKED and _run_pipeline
+- STEP 2: the 30 lines of code AFTER RUN_CLICKED
+- STEP 3: list of try/except locations near pipeline
+- STEP 4 / 5: traceback from direct Python load OR confirmation it works
