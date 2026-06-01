@@ -1,0 +1,129 @@
+Run Analysis on winvslag2024 silently fails after ~30 seconds in the browser. No error box visible. Headless pipeline test showed it works. The Streamlit-specific code path must have a bug.
+
+The try/except at app.py:3505 should catch and display errors. The user reports NO error box visible. Three possibilities:
+(a) Error renders inside an expander or container that's collapsed/hidden
+(b) Error renders but session_state resets before render flushes
+(c) Exception bypasses the try/except via os._exit, sys.exit, or signal
+
+DIAGNOSTIC
+
+STEP 1. Show me the exact try/except structure around _run_pipeline:
+
+cd artifacts/survey-insight-engine && sed -n '3475,3540p' app.py
+
+STEP 2. Add aggressive file-based logging that survives WebSocket drops. Temporarily inject diagnostic logging into _run_pipeline so we have a forensic trail on disk.
+
+cd artifacts/survey-insight-engine && python3 << 'PATCH'
+import re
+path = "app.py"
+with open(path) as f:
+    content = f.read()
+
+# Find the start of _run_pipeline body and inject file logging
+marker = "def _run_pipeline("
+idx = content.find(marker)
+if idx < 0:
+    print("MARKER NOT FOUND - abort")
+else:
+    # Find first non-import line after the def
+    body_start = content.find(":", idx) + 1
+    insert_point = content.find("app = _require_streamlit()", body_start)
+    if insert_point < 0:
+        print("APP HANDLE NOT FOUND - abort")
+    else:
+        # Insert file-based diagnostic logger right after app = _require_streamlit()
+        end_of_line = content.find("\n", insert_point) + 1
+        injection = """
+    import logging, os
+    _diag = logging.getLogger("pipeline_diag")
+    _diag.handlers.clear()
+    _h = logging.FileHandler("/tmp/pipeline_diag.log", mode="a")
+    _h.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+    _diag.addHandler(_h)
+    _diag.setLevel(logging.DEBUG)
+    _diag.info("PIPELINE_ENTER")
+    try:
+"""
+        # We need to find the end of _run_pipeline to add the matching except
+        # For now, just add the entry log - error logging is later
+        new_content = content[:end_of_line] + injection + content[end_of_line:]
+        # Don't actually write - this is too invasive. Just diagnose for now.
+        print("(injection logic computed - not applied)")
+PATCH
+
+Skip the injection. Instead, just inspect what's in the existing code:
+
+STEP 3. Show me whether the except block actually surfaces the error or whether it might be swallowed:
+
+grep -n "except\|st.error\|app.error\|st.stop\|st.exception" app.py | grep -E "(326[0-9]|327[0-9]|328[0-9]|329[0-9]|33[0-9][0-9]|34[0-9][0-9]|35[0-9][0-9])" | head -30
+
+I want to see every error-handling pattern in the pipeline area.
+
+STEP 4. Manually run the EXACT path Streamlit would run, with no mocks.
+
+Find where Streamlit's UploadedFile gets transformed before _run_pipeline. The browser uploads files; Streamlit wraps them in UploadedFile objects with .read() and .name attributes. Replicate this:
+
+cd artifacts/survey-insight-engine && python3 << 'EOF'
+import io as stdio
+from pathlib import Path
+from src.io import load_survey_inputs  # actual entrypoint Streamlit uses
+
+# Mimic Streamlit's UploadedFile interface
+class FakeUploadedFile:
+    def __init__(self, path):
+        self._path = Path(path)
+        self.name = self._path.name
+        self._bytes = self._path.read_bytes()
+        self._pos = 0
+    def read(self, size=-1):
+        if size == -1:
+            data = self._bytes[self._pos:]
+            self._pos = len(self._bytes)
+        else:
+            data = self._bytes[self._pos:self._pos+size]
+            self._pos += size
+        return data
+    def seek(self, pos, whence=0):
+        if whence == 0: self._pos = pos
+        elif whence == 1: self._pos += pos
+        elif whence == 2: self._pos = len(self._bytes) + pos
+    def getvalue(self):
+        return self._bytes
+    def getbuffer(self):
+        return memoryview(self._bytes)
+
+# Try to find the user's winvslag2024 file
+import glob
+candidates = glob.glob("/tmp/*winvslag*") + glob.glob("sample_data/*winvslag*") + glob.glob("/tmp/streamlit*/*.xlsx")
+print(f"Looking for winvslag: {candidates}")
+
+# If not found, use a known small file to test the entrypoint shape
+import time
+t0 = time.time()
+try:
+    # Try with the BCN sample
+    f = FakeUploadedFile("sample_data/BCN_combined.xlsx")
+    result = load_survey_inputs(f)
+    print(f"BCN_combined loaded in {time.time()-t0:.1f}s")
+    print(f"Type: {type(result).__name__}")
+    print(f"Schema questions: {len(result.schema.questions) if hasattr(result, 'schema') else 'no schema attr'}")
+except Exception as e:
+    import traceback
+    print(f"FAIL after {time.time()-t0:.1f}s")
+    traceback.print_exc()
+EOF
+
+STEP 5. Examine /tmp/streamlit* directory to see if the actual user upload landed:
+
+ls -la /tmp/streamlit*/ 2>/dev/null | head -10
+
+STEP 6. Check Streamlit's own error log:
+
+grep -E "Error|Exception|Traceback" ~/.streamlit/logs/*.log 2>/dev/null | tail -20
+
+REPORT BACK
+
+- STEP 1 the actual try/except code
+- STEP 3 all error-handling patterns in pipeline area
+- STEP 4 traceback if any
+- STEP 5/6 Streamlit log content
