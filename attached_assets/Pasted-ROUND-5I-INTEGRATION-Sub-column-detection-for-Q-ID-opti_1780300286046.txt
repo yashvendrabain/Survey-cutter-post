@@ -1,0 +1,119 @@
+ROUND 5I INTEGRATION — Sub-column detection for "Q{ID}: {option label}" raw data column naming.
+
+Codex shipped 2 files: src/question_classifier.py (with label-pattern matcher) and tests/test_subcolumn_label_pattern.py (11 new tests). No models.py, no app.py, no exporters.
+
+The matcher runs in _build_question_spec BEFORE _classify_question, only when the question has options but no explicit sub-columns. When 2+ raw columns match the "Q{ID}: {label}" or "Q{ID} - {label}" pattern, the question is promoted to MULTI_SELECT_BINARY.
+
+INSTRUCTIONS
+
+STEP 0. Defensive checks BEFORE install.
+
+cd artifacts/survey-insight-engine && grep -n "def get_effective_values" src/models.py
+grep -n "label_to_numeric_value\|allowed_numeric_range\|manual_cohort_id_column" src/models.py
+
+All must return matches. models.py NOT touched this round.
+
+STEP 1. Install both files.
+
+STEP 1.5. Apply the recurring APP_PATH fix if present.
+
+grep "APP_PATH = Path" tests/test_subcolumn_label_pattern.py 2>/dev/null
+
+If the doubled path is present:
+
+sed -i 's|parents\[1\] / "artifacts" / "survey-insight-engine" / "app.py"|parents[1] / "app.py"|' tests/test_subcolumn_label_pattern.py 2>/dev/null
+
+(This test likely doesn't reference app.py, so the file may not have APP_PATH at all — empty grep is fine.)
+
+STEP 2. Run new tests.
+
+pytest tests/test_subcolumn_label_pattern.py -v 2>&1 | tail -25
+
+Expected: 11 tests pass.
+
+STEP 3. Run classifier regression tests.
+
+pytest tests/test_question_classifier.py -v 2>&1 | tail -15
+
+Expected: all pass (label-pattern matcher must not regress existing classifier behavior).
+
+STEP 4. Full suite chunked.
+
+Expected: ~647 total. 0 failures.
+
+STEP 5. Verify protective fixes in app.py (defensive — should be untouched).
+
+sed -n '1625,1635p' app.py
+grep -n "^def _run_pipeline\|app = _require_streamlit" app.py | head -5
+
+`with app.container():` must remain in chart think-cell section. _run_pipeline must have `app = _require_streamlit()` early.
+
+STEP 6. Restart Streamlit.
+
+cd artifacts/survey-insight-engine && streamlit run app.py
+
+Verify clean startup.
+
+STEP 7. BROWSER SMOKE TEST — the actual verification of the bug fix.
+
+Hard-refresh browser. Upload winvslag2024.xlsx.
+
+Expected behavior:
+- Tool parses the data map (Round 5H success)
+- Tool now identifies Q3, Q10, Q11, Q21, Q44, etc. as MULTI_SELECT_BINARY (not SINGLE_SELECT) — they have label-pattern sub-columns matched
+- Question count in wizard significantly higher than before (questions that previously showed "0 options matched" now have proper sub-columns)
+- Running analysis produces output for these questions with real numbers
+
+If Q3 still shows zero options or wrong values:
+- Run: `cd artifacts/survey-insight-engine && python3 -c "from src.io import load_inputs; from src.question_classifier import classify_questions; ..."` to manually verify the schema
+- Specifically check question Q3's sub_columns list — should contain 6 entries
+
+STEP 8. Verify in the exported workbook.
+
+After running analysis with winvslag2024.xlsx, download the single-cut workbook. Check Q3 specifically:
+
+cd artifacts/survey-insight-engine && python3 << 'EOF'
+import openpyxl, glob, os
+files = sorted(glob.glob('outputs/*single*cut*.xlsx') + glob.glob('outputs/survey_analysis*.xlsx'), key=os.path.getmtime, reverse=True)
+if not files:
+    print("No workbook in outputs/ — run analysis first.")
+else:
+    path = files[0]
+    print(f"Checking: {path}\n")
+    wb = openpyxl.load_workbook(path, data_only=True)
+    # Find a sheet with Q3
+    for sn in wb.sheetnames:
+        if sn.startswith("_") or sn in ("Run_Summary", "Question_Metadata", "Single_Cut_Index", "Calculation_Log", "Filter_Log", "Warnings", "Filters"):
+            continue
+        ws = wb[sn]
+        for r in range(1, ws.max_row + 1):
+            a = ws.cell(row=r, column=1).value
+            if isinstance(a, str) and 'Q3' in a and 'B2B' not in a and ' - ' in a:
+                print(f"Q3 found on sheet '{sn}' at row {r}: {a[:60]}")
+                # Show next 8 rows
+                for offset in range(2, 12):
+                    rr = r + offset
+                    row = [ws.cell(row=rr, column=c).value for c in range(1, 5)]
+                    if any(v is not None for v in row):
+                        print(f"  R{rr}: {row}")
+                break
+        else:
+            continue
+        break
+EOF
+
+REPORT BACK
+
+- STEP 0 / 1.5 protected fields + path fix
+- STEP 2 new test result
+- STEP 3 classifier regression test result
+- STEP 4 full suite total (~647 expected)
+- STEP 5 protective fix verification
+- STEP 6 startup status
+- STEP 7 browser behavior — does Q3 now show 6 options with real counts?
+- STEP 8 Q3 sheet output
+
+CONSTRAINTS
+
+- Do not modify any uploaded file unless STEP 1.5 needs the path fix.
+- If STEP 7 still shows Q3 with zero data, the label-pattern matcher didn't fire correctly — paste the Q3 schema from a Python REPL.
