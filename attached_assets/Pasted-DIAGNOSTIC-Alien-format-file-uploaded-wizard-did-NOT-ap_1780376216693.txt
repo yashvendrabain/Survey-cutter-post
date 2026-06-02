@@ -1,0 +1,55 @@
+DIAGNOSTIC — Alien-format file uploaded, wizard did NOT appear, 0 questions detected.
+
+Two possible causes:
+(a) Hotfix 2's "Sheet1" fallback is producing a false-positive score >= 0.3 on the alien file
+(b) The wizard routing logic in app.py has a separate bug bypassing the wizard
+
+STEP 1. Inspect the Sheet1 fallback logic.
+
+cd artifacts/survey-insight-engine && grep -A 15 "_find_datamap_sheet" src/adapters/compact_two_column.py | head -30
+
+Show me the fallback path. If it falls back to "Sheet1" silently, an alien file with ANY Sheet1 will get scored.
+
+STEP 2. Find the user's alien upload file.
+
+ls -lt /tmp/*.xlsx /tmp/streamlit*/uploaded_files/*.xlsx 2>/dev/null | head -10
+find /tmp /home -name "*.xlsx" -mmin -30 2>/dev/null | head -5
+
+Looking for any xlsx the user uploaded in the last 30 minutes.
+
+STEP 3. If found, score it directly through the registry.
+
+cd artifacts/survey-insight-engine && python3 << 'EOF'
+from openpyxl import load_workbook
+from src.adapters.registry import get_default_registry, CONFIDENCE_REJECT_THRESHOLD
+
+router = get_default_registry()
+path = "<path from step 2>"  # update
+wb = load_workbook(path, data_only=True, read_only=True)
+
+print(f"Sheets in file: {wb.sheetnames}")
+print(f"\nDetection scores:")
+scores = router.detect_all(wb)
+for adapter, result in scores:
+    print(f"  {adapter.name}: {result.confidence:.3f} - {result.reason}")
+
+needs_wiz, _ = router.needs_wizard(wb)
+print(f"\nneeds_wizard returned: {needs_wiz}")
+print(f"REJECT_THRESHOLD: {CONFIDENCE_REJECT_THRESHOLD}")
+print(f"\nIf needs_wiz==True, the wizard should appear in app.py")
+print(f"If needs_wiz==False but UI shows 0 questions, parsing succeeded on wrong sheet")
+wb.close()
+EOF
+
+STEP 4. Check app.py's wizard routing carefully.
+
+grep -n "needs_wizard\|wizard_active\|_probe_format_wizard\|_maybe_start_format_wizard" app.py | head -20
+
+Show me the routing logic. Specifically, what happens when needs_wizard returns True - does the wizard panel reliably render?
+
+REPORT BACK
+
+- STEP 1: the Sheet1 fallback code
+- STEP 2: which file was uploaded
+- STEP 3: the scores (most important — tells us if needs_wizard returned True or False)
+- STEP 4: app.py wizard routing code
