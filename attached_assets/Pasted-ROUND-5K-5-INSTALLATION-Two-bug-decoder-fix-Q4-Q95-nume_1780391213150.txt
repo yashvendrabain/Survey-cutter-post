@@ -1,0 +1,136 @@
+ROUND 5K.5 INSTALLATION — Two-bug decoder fix (Q4/Q95 numeric-label misfire + grid rating-scale preservation).
+
+Codex shipped:
+- src/datamap_parser.py — tightened label_to_numeric_value detection (3+ pure numeric labels, no text/ranges/commas)
+- src/raw_decoder.py — grid detection now works even with helper columns present
+- tests/test_raw_decoder_grid_preservation_real.py — updated fixtures for Q4, Q95, Q27, Q14
+- tests/test_datamap_parser_numeric_coercion_setup.py — updated to match stricter rule
+- 749 tests passing locally
+
+PRIOR FAILURES: 5K.2 and 5K.3 also passed synthetic tests but failed production. Real-file verification is mandatory.
+
+INSTRUCTIONS
+
+STEP 0. Defensive pre-checks.
+
+cd artifacts/survey-insight-engine && grep -n "_run_with_status_heartbeat" app.py | head -3
+grep -n "def get_effective_values\|manual_cohort_id_column" src/models.py
+grep -n "CONFIDENCE_REJECT_THRESHOLD\|min_questions" src/adapters/registry.py | head -5
+
+All must return matches.
+
+STEP 1. Install all uploaded files.
+
+After install, verify:
+
+grep -n "label_to_numeric_value\|NUMERIC_LABEL_RE" src/datamap_parser.py | head -10
+grep -n "Q27\|double_colon\|colon_row\|grid" src/raw_decoder.py | head -20
+
+Show me the new label_to_numeric_value logic and the updated grid detection.
+
+STEP 1.5. Path fix.
+
+grep "APP_PATH = Path" tests/test_raw_decoder_grid_preservation_real.py tests/test_datamap_parser_numeric_coercion_setup.py 2>/dev/null
+
+Apply sed fix to any test files with doubled paths.
+
+STEP 2. Run updated tests.
+
+pytest tests/test_raw_decoder_grid_preservation_real.py tests/test_datamap_parser_numeric_coercion_setup.py -v 2>&1 | tail -30
+
+Expected: all pass.
+
+STEP 3. Run regression tests.
+
+pytest tests/test_raw_decoder.py tests/test_datamap_parser.py tests/test_question_classifier.py tests/test_grid_categorical_row_adapter.py tests/test_grid_rated_double_colon_adapter.py -v 2>&1 | tail -25
+
+Expected: pass.
+
+STEP 4. Full suite chunked.
+
+Expected: ~749.
+
+STEP 5. Restart Streamlit. Verify clean startup.
+
+STEP 6. CRITICAL — Real winvslag2024 upload + comprehensive verification.
+
+User uploads winvslag2024.xlsx in incognito → Run Analysis → Downloads workbook to outputs/.
+
+Then run:
+
+cd artifacts/survey-insight-engine && python3 << 'EOF'
+import openpyxl, glob, os
+files = sorted(glob.glob('outputs/*.xlsx'), key=os.path.getmtime, reverse=True)
+if not files:
+    print("No workbook in outputs/")
+else:
+    path = files[0]
+    print(f"Checking: {path}\n")
+    wb = openpyxl.load_workbook(path, data_only=True)
+    ws_raw = wb["_RawData"]
+    headers = [ws_raw.cell(row=1, column=c).value for c in range(1, ws_raw.max_column + 1)]
+    
+    test_cases = [
+        # (label, matcher, expected_type, description)
+        ("Q1 (regression)", lambda h: h == "Q1", "label_strings", "should be label strings"),
+        ("Q2 (regression)", lambda h: h == "Q2", "label_strings", "should be label strings"),
+        ("Q3 multi-binary (regression)", lambda h: h and "Q3" in str(h) and "B2B" in str(h), "selected_or_none", "should be Selected/None"),
+        ("Q4 (BUG A - numeric labels)", lambda h: h == "Q4", "label_strings", "MUST be label strings like '2,000 to 4,999 employees'"),
+        ("Q5 (DIRECT_NUMERIC regression)", lambda h: h == "Q5", "numeric", "should be numeric"),
+        ("Q13 grid SS (regression)", lambda h: h and "Q13" in str(h) and "Overall" in str(h), "label_strings", "should be label strings"),
+        ("Q27 grid rating (BUG B)", lambda h: h and "Q27" in str(h) and "Field" in str(h), "numeric", "MUST be numeric 1-5"),
+        ("Q97 grid rating (BUG B)", lambda h: h and "Q97" in str(h) and "Opportunity" in str(h), "numeric", "MUST be numeric"),
+        ("Q14 grid rated (BUG B)", lambda h: h and "Q14" in str(h) and "Actual" in str(h) and "Revenue" in str(h), "numeric", "MUST be float"),
+        ("Q95 (BUG A - dash labels)", lambda h: h == "Q95", "label_strings", "MUST be label strings like '3-5'"),
+    ]
+    
+    all_pass = True
+    print(f"{'Question':<35} {'Expected':<18} {'Top 2 values':<45} {'Verdict'}")
+    print("-" * 120)
+    
+    for label, matcher, expected, desc in test_cases:
+        col_idx = next((i+1 for i, h in enumerate(headers) if matcher(h)), None)
+        if not col_idx:
+            print(f"{label:<35} {expected:<18} {'NOT FOUND':<45} SKIP")
+            continue
+        vals = {}
+        for r in range(2, ws_raw.max_row + 1):
+            v = ws_raw.cell(row=r, column=col_idx).value
+            key = f"{type(v).__name__}:{str(v)[:18]}"
+            vals[key] = vals.get(key, 0) + 1
+        top2 = sorted(vals.items(), key=lambda x: -x[1])[:2]
+        top_repr = "; ".join(f"{k}({c})" for k, c in top2)
+        
+        is_selected = any("Selected" in k for k in vals)
+        is_numeric_int = any(k.startswith("int:") for k in vals)
+        is_numeric_float = any(k.startswith("float:") for k in vals)
+        is_labels = any(k.startswith("str:") and "Selected" not in k for k in vals)
+        
+        if expected == "numeric":
+            verdict = "PASS" if (is_numeric_int or is_numeric_float) and not is_selected else "FAIL"
+        elif expected == "label_strings":
+            verdict = "PASS" if is_labels and not is_selected else "FAIL"
+        elif expected == "selected_or_none":
+            verdict = "PASS" if (is_selected or all(k.startswith("NoneType") for k in vals)) else "FAIL"
+        else:
+            verdict = "?"
+        
+        if verdict == "FAIL":
+            all_pass = False
+        
+        print(f"{label:<35} {expected:<18} {top_repr:<45} {verdict}")
+    
+    print()
+    if all_pass:
+        print("🎉 ALL TESTS PASS — Round 5K.5 closes the decoder bug")
+    else:
+        print("⚠️  SOME TESTS FAIL — paste output, we need targeted fix")
+EOF
+
+REPORT BACK
+
+- STEPS 0-5 pass/fail summary
+- STEP 6 verification table (MOST IMPORTANT)
+- All 10 rows must show PASS for the decoder to be closed
+
+If ANY row says FAIL, paste it. We need targeted intervention.
