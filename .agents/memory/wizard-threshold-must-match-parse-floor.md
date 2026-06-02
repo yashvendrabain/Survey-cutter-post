@@ -32,3 +32,25 @@ was wrong. The gate-at-0.3 change is still correct in principle (it should match
 
 **Lesson:** before theorizing about thresholds, confirm the adapter actually produces a score in
 the contested band. Here it never did — the score was a hard 0.0 from a sheet-name miss.
+
+## 3. Second wizard-fallback mechanism: trial-parse min_questions floor
+There are now TWO independent reasons a file routes to the wizard, not one:
+- **(detection)** `needs_wizard` True when best adapter confidence < 0.3, AND
+- **(trial-parse)** `AdapterRouter.parse(..., min_questions=2)` raises `NoAdapterError` when the
+  chosen adapter parses fewer than `min_questions` questions — even at high confidence (e.g. 0.7).
+
+So `needs_wizard` can be **False** while `parse()` still raises. `app._probe_format_wizard()`
+relies on this: it catches `NoAdapterError`, forces `needs_wizard=True`, and sets
+`wizard_parse_failure_note` for the false-positive banner. Don't assume detection confidence alone
+decides wizard routing — the post-parse count gate is the real false-positive backstop.
+
+**Why:** broad `DATAMAP_KEYWORDS` made non-datamap sheets (e.g. the app's own export sheet
+`Question_Metadata`) score 0.7 and bypass the wizard, then parse 0 questions silently. The count
+floor catches that class regardless of detection score.
+
+**How to apply:** production default is `min_questions=2`. It is plumbed through
+`parse_datamap(..., min_questions=)` and `load_survey_inputs(..., min_questions=)` (scenario A & B).
+Tests that legitimately parse 1 question must pass `min_questions=1` (or `=0` for a fake adapter
+returning no `questions` key); otherwise they fail with "parsed only N questions". Trade-off: a
+real single-question survey is now routed to the wizard rather than parsed — controlled
+degradation, not silent failure.
