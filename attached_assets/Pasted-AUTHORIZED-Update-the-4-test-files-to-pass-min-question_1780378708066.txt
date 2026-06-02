@@ -1,0 +1,57 @@
+AUTHORIZED — Update the 4 test files to pass min_questions=1 (or =0 for the fake-adapter case). Same surgical fix Codex was supposed to ship.
+
+For each of the 4 test files, locate parse() or parse_datamap() or load_survey_inputs() calls that currently fail because of the new min_questions=2 default. Add the min_questions kwarg to each failing call:
+
+STEP 1. Investigate exact call sites.
+
+cd artifacts/survey-insight-engine && grep -n "parse_datamap\|router\.parse\|load_survey_inputs\|adapter\.parse" tests/test_adapter_base.py tests/test_datamap_parser_numeric_coercion_setup.py tests/test_datamap_parser.py tests/test_io.py | head -30
+
+This shows exactly which lines need updating.
+
+STEP 2. Apply the edits.
+
+For tests/test_adapter_base.py — the fake adapter returns no "questions" key (parses to 0). Update the parse call to use min_questions=0:
+
+sed -i 's|router\.parse(workbook)|router.parse(workbook, min_questions=0)|g' tests/test_adapter_base.py
+sed -i 's|router\.parse(workbook, raw_df=None)|router.parse(workbook, raw_df=None, min_questions=0)|g' tests/test_adapter_base.py
+
+For the other 3 test files — these have 1-question fixtures. Update to min_questions=1.
+
+For each, find the parse() call signature and add min_questions=1:
+
+# Check exact call signatures first
+grep -n "parse_datamap\|router\.parse\|load_survey_inputs" tests/test_datamap_parser_numeric_coercion_setup.py
+grep -n "parse_datamap\|router\.parse\|load_survey_inputs" tests/test_datamap_parser.py
+grep -n "parse_datamap\|router\.parse\|load_survey_inputs" tests/test_io.py
+
+Then add min_questions=1 to each call:
+
+If call is `parse_datamap(workbook)`:
+    sed -i 's|parse_datamap(\([^)]*\))|parse_datamap(\1, min_questions=1)|g' <file>
+
+If already has min_questions, skip that occurrence.
+
+STEP 3. Verify edits landed correctly.
+
+grep -n "min_questions=" tests/test_adapter_base.py tests/test_datamap_parser_numeric_coercion_setup.py tests/test_datamap_parser.py tests/test_io.py
+
+Should now show min_questions= in each file.
+
+STEP 4. Re-run the previously-failing tests.
+
+pytest tests/test_adapter_base.py tests/test_datamap_parser_numeric_coercion_setup.py tests/test_datamap_parser.py tests/test_io.py -v 2>&1 | tail -30
+
+Expected: all pass.
+
+STEP 5. Full suite chunked.
+
+Expected: ~728 total, 0 failures.
+
+STEP 6. Restart Streamlit and verify clean startup.
+
+REPORT BACK
+
+- Each test file: how many call sites edited
+- STEP 4 result (passed/failed count)
+- STEP 5 full suite total
+- STEP 6 startup
