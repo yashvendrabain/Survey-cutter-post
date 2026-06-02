@@ -15,8 +15,16 @@ differently-named sheet (e.g. `"Data map"`, `"Datamap"`, `"Codebook"`) returned 
 from *every* adapter → `needs_wizard` True → wizard. This is what actually broke `winvslag2024`.
 
 **Fix:** a `_find_datamap_sheet(workbook)` helper in each adapter that matches sheet names by
-normalized substring against a `DATAMAP_KEYWORDS` list (datamap, data map, codebook, schema,
-dictionary, questions, questionnaire, variables, metadata), falling back to `"Sheet1"`.
+normalized substring (strip spaces+underscores, lowercase, `contains`) against a
+`DATAMAP_KEYWORDS` list, falling back to `"Sheet1"`.
+
+**Keyword list was deliberately NARROWED** to exactly `("datamap","codebook","schema")`. The
+original broad list (added "data map", "dictionary", "questions", "questionnaire", "variables",
+"metadata") caused false positives: the app's own export sheet `Question_Metadata` matched via
+"metadata", scored 0.7, bypassed the wizard, then parsed 0 questions. Trade-off of narrowing: a
+legit sheet named only "Data Dictionary"/"Variables"/"Questionnaire" no longer auto-matches and
+routes to the wizard (unless `Sheet1` fallback applies) — controlled by the `min_questions`
+backstop (see §3). Do NOT re-broaden without adding stronger structural identification signals.
 
 **How to apply:** if a real workbook routes to the wizard, FIRST check whether its data map is on
 a sheet named something other than `"Sheet1"` and confirm `_find_datamap_sheet` recognizes it.
