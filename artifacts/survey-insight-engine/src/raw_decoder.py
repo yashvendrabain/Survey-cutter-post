@@ -10,7 +10,7 @@ from typing import Any
 import pandas as pd
 
 from src.datamap_parser import DataMap, ParsedQuestion, derive_numeric_label_metadata
-from src.models import DataQualityReport, QuestionType
+from src.models import DataQualityReport
 
 try:
     from config import MISSING_VALUE_TOKENS, HIGH_MISSING_THRESHOLD
@@ -82,15 +82,8 @@ def decode_raw_data(
     columns_not_in_datamap = tuple(
         column for column in original_columns if column not in expected_columns
     )
-    question_types = _question_types_for_decoding(
-        data_map,
-        dataframe.columns.tolist(),
-        respondent_id_column,
-        len(dataframe),
-        path,
-    )
     value_ranges = _value_ranges_by_column(data_map)
-    no_numeric_coercion_columns = _string_preserved_columns(data_map, question_types)
+    no_numeric_coercion_columns = _string_preserved_columns(data_map)
     numeric_metadata_by_column = _numeric_label_metadata_by_column(data_map)
 
     coercion_log: list[dict] = []
@@ -147,7 +140,7 @@ def decode_raw_data(
     if generated_respondent_id:
         dataframe[respondent_id_column] = dataframe[respondent_id_column].astype("Int64")
 
-    dataframe = _decode_option_columns(dataframe, data_map, question_types)
+    dataframe = _decode_option_columns(dataframe, data_map)
     dataframe = _normalise_dataframe_for_excel(dataframe)
 
     return dataframe, report
@@ -299,22 +292,10 @@ def _value_ranges_by_column(data_map: DataMap) -> dict[str, tuple[int, int]]:
     return value_ranges
 
 
-def _string_preserved_columns(
-    data_map: DataMap,
-    question_types: dict[str, QuestionType] | None = None,
-) -> set[str]:
-    question_types = question_types or {}
+def _string_preserved_columns(data_map: DataMap) -> set[str]:
     preserved: set[str] = set()
     for question in data_map["questions"]:
-        question_type = question_types.get(question["canonical_id"])
-        if question["type_hint"] == "open_text" or (
-            question["type_hint"] == "open_numeric"
-            and question_type
-            not in {
-                QuestionType.GRID_SINGLE_SELECT,
-                QuestionType.GRID_RATED,
-            }
-        ):
+        if question["type_hint"] in {"open_text", "open_numeric"}:
             preserved.update(_question_expected_columns(question))
     return preserved
 
@@ -479,47 +460,12 @@ def _coerce_column_to_numeric(
     return numeric_series
 
 
-def _question_types_for_decoding(
-    data_map: DataMap,
-    raw_columns: list[str],
-    respondent_id_column: str | None,
-    total_respondents: int,
-    source_rawdata_path: str,
-) -> dict[str, QuestionType]:
-    """Classify questions early enough to avoid decoding grid columns as options."""
-
-    try:
-        from src.question_classifier import classify_questions
-
-        schema = classify_questions(
-            data_map,
-            raw_columns,
-            respondent_id_column=respondent_id_column,
-            total_respondents=total_respondents,
-            source_rawdata_path=source_rawdata_path,
-        )
-    except Exception:
-        return {}
-    return {spec.canonical_id: spec.question_type for spec in schema.questions}
-
-
-def _decode_option_columns(
-    dataframe: pd.DataFrame,
-    data_map: DataMap,
-    question_types: dict[str, QuestionType] | None = None,
-) -> pd.DataFrame:
+def _decode_option_columns(dataframe: pd.DataFrame, data_map: DataMap) -> pd.DataFrame:
     decoded = dataframe.copy()
-    question_types = question_types or {}
     for question in data_map["questions"]:
         if question.get("label_to_numeric_value"):
             continue
-        question_type = question_types.get(question["canonical_id"])
-        if question_type is QuestionType.GRID_RATED:
-            continue
-        if (
-            question_type is QuestionType.GRID_SINGLE_SELECT
-            or _is_grid_single_select_question(question)
-        ):
+        if _is_grid_single_select_question(question):
             decoded = _decode_grid_single_select_question(decoded, question)
             continue
 

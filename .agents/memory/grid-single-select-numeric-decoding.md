@@ -35,8 +35,23 @@ If a grid scale column (e.g. Q27) STILL shows "Selected" in `_RawData` after thi
 cause is **upstream** (raw encoding / question classification), NOT the option-map overwrite
 path — that path no longer touches GRID_SINGLE_SELECT. Look earlier in the pipeline.
 
-## Type-gated classifier pre-pass + fail-open risk (later revision)
-A later revision runs the full `question_classifier` EARLY inside `decode_raw_data`
+## Type-gated classifier pre-pass — TRIED AND ROLLED BACK
+A revision (round "5K.3") that ran the classifier pre-pass inside `decode_raw_data` was
+**rolled back** after real-fixture (winvslag2024) testing showed it was net-negative:
+1. **New regression:** plain `SINGLE_SELECT` questions (single column + integer codes, e.g. Q4
+   "2,000 to 4,999 employees") stopped being option-mapped — `_RawData` kept raw ints (5,6,4…),
+   so downstream `COUNTIFS` against label strings all returned 0. Q1/Q2 (same structure) still
+   worked, i.e. the pre-pass mis-gated some SINGLE_SELECT as grid/open and skipped mapping.
+2. **Original bug NOT fixed:** Q27/Q97/Q14 STILL showed "Selected" — the grid collapse is
+   **upstream** (raw encoding / classification), not in the option-map overwrite path.
+**Lesson:** the option-map overwrite path was never the true root cause for the "Selected"
+grids; gating it via a classifier pre-pass only broke working SINGLE_SELECT decoding. Do NOT
+reinstate the pre-pass. Any real fix must be validated against the **real** winvslag2024
+fixture (Q4 must decode to labels; Q1/Q2 must stay working), not synthetic tests.
+The detail below describes the rolled-back design for reference only.
+
+## (rolled-back design detail) Type-gated classifier pre-pass + fail-open risk
+A revision runs the full `question_classifier` EARLY inside `decode_raw_data`
 (`_question_types_for_decoding`) to produce `{canonical_id: QuestionType}`, then
 `_decode_option_columns` gates on it: `GRID_RATED` → skip option mapping entirely;
 `GRID_SINGLE_SELECT` (by classified type OR the `_is_grid_single_select_question` heuristic)
