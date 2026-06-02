@@ -35,6 +35,29 @@ If a grid scale column (e.g. Q27) STILL shows "Selected" in `_RawData` after thi
 cause is **upstream** (raw encoding / question classification), NOT the option-map overwrite
 path — that path no longer touches GRID_SINGLE_SELECT. Look earlier in the pipeline.
 
+## Structural-detection decoder (round "5K.4") — current approach + known gap
+After the classifier pre-pass was rolled back, the decoder was rewritten to detect grids
+**structurally** from raw column headers (no classifier dependency): `_grid_patterns_for_decoding`
+→ `_detect_grid_pattern_for_decoding` tries, in order, `_has_double_colon_grid_columns`
+(`Qx: dim1 :: dim2`), `_has_categorical_grid_row_columns` (`Qx: <rowlabel>` headers whose labels
+do NOT match the question's option labels), `_has_explicit_grid_row_sub_columns` (≥2 sub_columns).
+A detected question is gated OUT of option-mapping so numeric grid values are preserved. This
+**fixes** the Q4 SINGLE_SELECT regression (plain single-col questions detect no pattern → still
+option-mapped) and preserves Q27/Q14 numeric grids.
+
+**KNOWN SEVERE GAP (confirmed, not yet fixed):** the binary-multi-select exemption is asymmetric.
+`_has_explicit_grid_row_sub_columns` calls `_grid_options_look_binary_selection` to bail out when
+options look like Selected/Not-selected; **`_has_categorical_grid_row_columns` does NOT**. So a
+binary multi-select with colon-style headers (`Q3: B2B`, `Q3: B2C`) AND generic options
+(`Selected`/`Not selected`) is mis-detected as `grid_categorical_row` → binary decode is SKIPPED →
+raw codes survive instead of "Selected". Confirmed by repro: options=segment-names → pattern None
+(correct); options=Selected/Not-selected → grid_categorical_row (bug). This directly threatens the
+winvslag Q3 multi-select verification (expects "Selected"). **Fix belongs in Codex:** add the
+`_grid_options_look_binary_selection` guard to `_has_categorical_grid_row_columns`.
+**Why:** the row-label-vs-option-label test passes only when option labels equal the segment
+names; when options are generic Selected/Not-selected they never match the segment row labels, so
+the "looks like a grid" heuristic fires on a plain multi-select.
+
 ## Type-gated classifier pre-pass — TRIED AND ROLLED BACK
 A revision (round "5K.3") that ran the classifier pre-pass inside `decode_raw_data` was
 **rolled back** after real-fixture (winvslag2024) testing showed it was net-negative:
