@@ -1,0 +1,110 @@
+ROUND 5L HOTFIX 3 FOLLOWUP INSTALLATION — min_questions parameter for test opt-out.
+
+Codex shipped:
+- src/adapters/registry.py (added min_questions=2 default parameter)
+- src/datamap_parser.py (plumbed min_questions through)
+- src/io.py (plumbed min_questions through)
+- 4 affected test files updated to pass min_questions=1 (or 0)
+- Removed padded dummy questions
+- 728 tests passing
+
+INSTRUCTIONS
+
+STEP 0. Defensive checks.
+
+cd artifacts/survey-insight-engine && grep -n "_run_with_status_heartbeat" app.py | head -3
+grep -n "def get_effective_values\|manual_cohort_id_column" src/models.py
+grep -n "CONFIDENCE_REJECT_THRESHOLD" src/adapters/registry.py
+
+All must return matches.
+
+STEP 1. Install all uploaded files.
+
+After install, verify min_questions plumbing landed:
+
+grep -n "min_questions" src/adapters/registry.py src/datamap_parser.py src/io.py
+
+Should return matches in all three.
+
+grep -n "min_questions=" tests/test_adapter_base.py tests/test_datamap_parser_numeric_coercion_setup.py tests/test_datamap_parser.py tests/test_io.py
+
+Should show min_questions=0 or =1 in each test file.
+
+STEP 1.5. Path fix check.
+
+grep "APP_PATH = Path" tests/test_adapter_base.py tests/test_datamap_parser*.py tests/test_io.py 2>/dev/null
+
+Apply sed if any have the doubled path.
+
+STEP 2. Run the previously-broken tests.
+
+pytest tests/test_adapter_base.py tests/test_datamap_parser_numeric_coercion_setup.py tests/test_datamap_parser.py tests/test_io.py -v 2>&1 | tail -30
+
+Expected: all pass. The 7 failures from the previous round should now be gone.
+
+STEP 3. Run router tests (no regression from min_questions parameter).
+
+pytest tests/test_wizard_router.py tests/test_adapter_router.py -v 2>&1 | tail -20
+
+Expected: pass. The default min_questions=2 must still trigger NoAdapterError correctly.
+
+STEP 4. Full suite chunked.
+
+Expected: ~728 total.
+
+STEP 5. Verify production behavior unchanged on the bug-trigger file.
+
+cd artifacts/survey-insight-engine && python3 << 'EOF'
+from openpyxl import load_workbook
+from src.adapters.registry import get_default_registry, NoAdapterError
+
+router = get_default_registry()
+path = "/tmp/survey_analysis.xlsx"
+
+import os
+if not os.path.exists(path):
+    print("File not found, skipping")
+else:
+    wb = load_workbook(path, data_only=True, read_only=True)
+    print(f"Sheets: {wb.sheetnames}")
+    
+    # Test default behavior (min_questions=2)
+    try:
+        parsed = router.parse(wb, None)  # default min_questions=2
+        print(f"UNEXPECTED: parse succeeded with {len(parsed.get('questions', []))} questions")
+    except NoAdapterError as e:
+        print(f"Default min_questions=2: NoAdapterError raised correctly: {e}")
+    
+    # Test with min_questions=1 (test opt-out)
+    try:
+        parsed = router.parse(wb, None, min_questions=1)
+        print(f"With min_questions=1: parsed {len(parsed.get('questions', []))} questions")
+    except NoAdapterError as e:
+        print(f"With min_questions=1: still raised (expected if < 1): {e}")
+    
+    # Test with min_questions=0 (extreme test opt-out)
+    try:
+        parsed = router.parse(wb, None, min_questions=0)
+        print(f"With min_questions=0: parsed {len(parsed.get('questions', []))} questions")
+    except NoAdapterError as e:
+        print(f"With min_questions=0: raised (unexpected): {e}")
+    
+    wb.close()
+EOF
+
+Expected output:
+- Default (min_questions=2): raises NoAdapterError (the bug-trigger file produces 0 questions)
+- min_questions=1: also raises (still 0 < 1)
+- min_questions=0: parses successfully (0 questions accepted)
+
+STEP 6. Restart Streamlit.
+
+cd artifacts/survey-insight-engine && streamlit run app.py
+
+Verify clean startup.
+
+REPORT BACK
+
+- STEPS 0-4 pass counts
+- STEP 5 output (most important — confirms production behavior preserved)
+- STEP 6 startup status
