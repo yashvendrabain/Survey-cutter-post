@@ -34,3 +34,21 @@ production file mixes encodings row-by-row.
 If a grid scale column (e.g. Q27) STILL shows "Selected" in `_RawData` after this fix, the
 cause is **upstream** (raw encoding / question classification), NOT the option-map overwrite
 path — that path no longer touches GRID_SINGLE_SELECT. Look earlier in the pipeline.
+
+## Type-gated classifier pre-pass + fail-open risk (later revision)
+A later revision runs the full `question_classifier` EARLY inside `decode_raw_data`
+(`_question_types_for_decoding`) to produce `{canonical_id: QuestionType}`, then
+`_decode_option_columns` gates on it: `GRID_RATED` → skip option mapping entirely;
+`GRID_SINGLE_SELECT` (by classified type OR the `_is_grid_single_select_question` heuristic)
+→ grid decode. Ordering is safe: the classifier keys off data-map metadata + raw column
+names, not post-coercion values, and uses copied dicts so it does not mutate `data_map`.
+
+**FAIL-OPEN HAZARD (durable):** `_question_types_for_decoding` does `except Exception: return {}`
+with no logging. On classifier crash the type map is empty, and **GRID_RATED protection is
+lost** — GRID_RATED is gated ONLY on classified type (no heuristic), so a rated grid WITH
+non-empty options would be re-corrupted by generic option mapping. GRID_SINGLE_SELECT still
+survives via its heuristic; rated grids with empty options also survive (empty option_map →
+skipped). This is fail-open on the critical path: the safe behavior would be to skip option
+mapping for all grid-like sub-column questions in fallback mode.
+**Why:** the whole point of the pre-pass is to prevent numeric-grid corruption; swallowing the
+exception silently re-enables the exact bug it was added to fix.
