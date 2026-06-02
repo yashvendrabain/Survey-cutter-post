@@ -1,0 +1,88 @@
+ROUND 5N INSTALLATION — Two UX refinements: insight expanders + simplified WVL column headers.
+
+Codex shipped:
+- app.py — added _render_trait_backing_table_expander() rendering with app.expander("Show table") under each insight
+- src/excel_exporter.py — simplified WVL column headers from "Winners Count" / "Winners %" / ... to "Count" / "%" / ... (cohort band header preserved above)
+- tests/test_excel_exporter_winners_vs_laggards.py — 3 new tests for column headers + cohort band + formula integrity
+- 754 tests passing locally
+
+CRITICAL CONTEXT
+Round 5K.6 decoder work is still pending (Q27/Q97/Q14 grid rating scale bug). Round 5N is independent of decoder — only touches UI rendering and WVL header strings. Do not let it conflict.
+
+INSTRUCTIONS
+
+STEP 0. Defensive checks.
+
+cd artifacts/survey-insight-engine && grep -n "_run_with_status_heartbeat" app.py | head -3
+grep -n "def get_effective_values\|manual_cohort_id_column" src/models.py
+grep -n "NUMERIC_LABEL_RE\|label_to_numeric_value" src/datamap_parser.py | head -3
+grep -n "_grid_patterns_for_decoding\|_detect_grid_pattern_for_decoding" src/raw_decoder.py | head -5
+
+The first three confirm protective markers. The fourth confirms Round 5K.6 decoder code is still present (not regressed).
+
+STEP 1. Install all three files.
+
+After install, verify:
+
+grep -n "_render_trait_backing_table_expander\|Show table" app.py | head -10
+grep -A 12 "_wvl_write_grouped_header" src/excel_exporter.py | head -20
+
+Should show the new expander function and the simplified header list.
+
+Verify the cohort band header still gets written:
+
+grep -B 2 -A 5 "Winners.*Laggards.*Others\|cohort.*band\|cohort.*header" src/excel_exporter.py | head -25
+
+STEP 1.5. Path fix check.
+
+grep "APP_PATH = Path" tests/test_excel_exporter_winners_vs_laggards.py 2>/dev/null
+
+Apply sed fix if needed.
+
+STEP 2. Run updated WVL tests.
+
+pytest tests/test_excel_exporter_winners_vs_laggards.py -v 2>&1 | tail -25
+
+Expected: all pass, including the 3 new tests.
+
+STEP 3. Full WVL/exporter regression.
+
+pytest tests/test_excel_exporter*.py -v 2>&1 | tail -20
+
+Expected: pass.
+
+STEP 4. Full suite chunked.
+
+Expected: ~754 total.
+
+STEP 5. Restart Streamlit. Verify clean startup.
+
+cd artifacts/survey-insight-engine && pkill -9 -f streamlit; sleep 3
+streamlit run app.py 2>&1 | tee /tmp/streamlit.log &
+
+Wait 5 seconds, then:
+curl -s -o /dev/null -w "HTTP %{http_code}\n" localhost:80/
+
+STEP 6. CRITICAL — browser smoke test for both changes
+
+Hard-refresh incognito. Upload a file that triggers WVL workflow (survey_file_win_vs_lag_sample_input.xlsx). Run outcome segmentation.
+
+Verify Change 1 (expanders):
+- Each AI insight in the differentiator panel has a "Show table" expander beneath it
+- Default state: collapsed
+- Click to expand: shows backing table with Option, cohort count/%, gap, lift
+
+Verify Change 2 (simplified headers):
+- Download the WVL workbook
+- Open in Excel desktop
+- WVL sheets have column headers "Count | % | Count | % | Count | % | Count | %"
+- Above those headers, a merged band shows "Winners | Laggards | Others | Total"
+- Counts and percentages match what they did pre-5N (no formula breakage)
+
+REPORT BACK
+
+- STEPS 0-5 results
+- STEP 6 verification of BOTH UI changes
+- Confirm Round 5K.6 decoder code is intact (Q27/Q97/Q14 fix still present in raw_decoder.py)
+
+If STEP 6 confirms both UI changes work AND the underlying workbook still has correct numbers, Round 5N ships clean.
