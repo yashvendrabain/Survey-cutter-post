@@ -1,0 +1,117 @@
+ROUND 5O INSTALLATION — Remove 17.5s Excel-rewrite overhead in scenario B load path.
+
+Codex shipped:
+- src/io.py — _load_scenario_b now writes raw bytes instead of rename+save round-trip; passes datamap_sheet_hint
+- src/datamap_parser.py — parse_datamap accepts datamap_sheet_hint, uses in-memory Sheet1 alias instead of disk rewrite
+- tests/test_io.py — 3 new scenario B tests
+- 757 tests passing locally (full suite ran in 142s, down from 222s — confirms big speedup)
+
+CRITICAL: Codex could not profile the real winvslag2024 file. We must confirm the real-file load drops from 31s to ~14s.
+
+INSTRUCTIONS
+
+STEP 0. Defensive checks.
+
+cd ~/workspace/artifacts/survey-insight-engine && grep -n "_run_with_status_heartbeat" app.py | head -3
+grep -n "def get_effective_values\|manual_cohort_id_column" src/models.py
+grep -n "_grid_patterns_for_decoding" src/raw_decoder.py | head -3
+
+The last confirms decoder code (Round 5K.6) is untouched.
+
+STEP 1. Install src/io.py, src/datamap_parser.py, tests/test_io.py.
+
+After install, verify the fix:
+
+grep -n "_write_datamap_sheet_as_sheet1\|datamap_sheet_hint\|_write_bytes_to_temp" src/io.py | head -10
+grep -n "datamap_sheet_hint" src/datamap_parser.py | head -5
+
+The _load_scenario_b should now call _write_bytes_to_temp and pass datamap_sheet_hint. The expensive _write_datamap_sheet_as_sheet1 should no longer be called from _load_scenario_b (it may still exist as a function, just unused).
+
+STEP 1.5. Path fix.
+
+grep "APP_PATH = Path" tests/test_io.py 2>/dev/null
+Apply sed if needed.
+
+STEP 2. Run scenario B tests.
+
+pytest tests/test_io.py -v 2>&1 | tail -25
+
+Expected: pass including 3 new tests.
+
+STEP 3. Full suite chunked.
+
+Expected: ~757.
+
+STEP 4. THE CRITICAL TEST — re-profile real winvslag2024.
+
+cd ~/workspace/artifacts/survey-insight-engine && timeout 300 python3 << 'EOF'
+import time, glob, sys, cProfile, pstats, io
+candidates = (glob.glob("/tmp/winvslag*.xlsx") + 
+              glob.glob("../../attached_assets/winvslag*.xlsx") +
+              glob.glob("../attached_assets/winvslag*.xlsx") +
+              glob.glob("attached_assets/winvslag*.xlsx") + 
+              glob.glob("**/winvslag*.xlsx", recursive=True))
+if not candidates:
+    print("winvslag2024 not found"); sys.exit(1)
+path = candidates[0]
+print(f"Profiling: {path}\n")
+
+from pathlib import Path
+class FF:
+    def __init__(s, p):
+        s._p = Path(p); s.name = s._p.name; s._b = s._p.read_bytes(); s._i = 0
+    def read(s, n=-1):
+        if n == -1: d = s._b[s._i:]; s._i = len(s._b)
+        else: d = s._b[s._i:s._i+n]; s._i += n
+        return d
+    def seek(s, p, w=0):
+        s._i = p if w==0 else (s._i+p if w==1 else len(s._b)+p)
+    def getvalue(s): return s._b
+    def getbuffer(s):
+        import io as i2; return memoryview(s._b)
+
+prof = cProfile.Profile()
+t0 = time.time()
+prof.enable()
+from src.io import load_survey_inputs
+result = load_survey_inputs([FF(path)])
+elapsed = time.time() - t0
+prof.disable()
+print(f"\n>>> load_survey_inputs COMPLETED in {elapsed:.1f}s")
+print(f">>> Previous (Round 5N): 31.4s")
+print(f">>> Target: ~14s\n")
+s = io.StringIO()
+ps = pstats.Stats(prof, stream=s).sort_stats('cumulative')
+ps.print_stats(15)
+print(s.getvalue())
+
+# Explicitly check the old function is gone
+stats_text = s.getvalue()
+if "_write_datamap_sheet_as_sheet1" in stats_text:
+    print(">>> WARNING: _write_datamap_sheet_as_sheet1 STILL in profile — fix didn't apply")
+else:
+    print(">>> CONFIRMED: _write_datamap_sheet_as_sheet1 NOT in profile — rewrite eliminated")
+EOF
+
+STEP 5. Restart Streamlit, then BROWSER TEST.
+
+cd ~/workspace/artifacts/survey-insight-engine
+pkill -9 -f streamlit; sleep 3
+mkdir -p ~/.streamlit && printf '[general]\nemail = ""\n' > ~/.streamlit/credentials.toml
+nohup streamlit run app.py > /tmp/streamlit.log 2>&1 &
+disown
+sleep 10
+curl -s -o /dev/null -w "HTTP %{http_code}\n" localhost:8501/
+
+Then in browser (Replit external URL, incognito):
+- Upload winvslag2024
+- Click Run Analysis
+- Does it COMPLETE this time (not silent kill)?
+- Time how long from click to results
+
+REPORT BACK
+- STEP 2/3 test counts
+- STEP 4 profiler: new total time + confirmation _write_datamap_sheet_as_sheet1 is gone
+- STEP 5: did the browser analysis COMPLETE? How long did it take?
+
+The win condition: STEP 4 shows ~14s load, AND STEP 5 browser analysis completes without silent kill.
