@@ -1,0 +1,100 @@
+DEPLOY RUNBOOK — Round 5U (reconciled schema -> exporter)
+
+Files to upload (5U changed only):
+  - artifacts/survey-insight-engine/app.py
+  - tests/test_ui_wizard_outcome_laggard.py
+Everything else (question_classifier.py, models.py, excel_exporter.py + their tests) is
+already deployed from 5S/5T — #58 was built with it. Do NOT re-upload those.
+
+----------------------------------------------------------------------
+STEP 0 — location + Streamlit creds
+----------------------------------------------------------------------
+cd ~/workspace/artifacts/survey-insight-engine
+pwd
+mkdir -p ~/.streamlit && printf '[general]\nemail = ""\n' > ~/.streamlit/credentials.toml
+
+----------------------------------------------------------------------
+STEP 1 — confirm the 5U app.py change is present
+----------------------------------------------------------------------
+grep -n "reconcile_multiselect_value_subtypes(classified_schema" app.py   # the reconcile call
+grep -n "schema=schema" app.py | head                                     # export gets reconciled schema
+grep -c "wiz_schema_override" app.py                                      # expect 1 (set only, never read)
+Expected: reconcile call present; export_single_cuts uses schema=schema; wiz_schema_override
+count is 1. If wiz_schema_override count > 1, STOP and paste the grep — the stale-schema path
+is back.
+
+----------------------------------------------------------------------
+STEP 2 — confirm prior-round code is still in place (clean-redeploy guard)
+----------------------------------------------------------------------
+grep -n "def reconcile_multiselect_value_subtypes" src/question_classifier.py
+grep -n "def _grid_spec_subtype" src/excel_exporter.py
+grep -n "warnings: tuple" src/models.py | head
+All three must return a hit. If any is missing, that round didn't deploy — stop.
+
+----------------------------------------------------------------------
+STEP 3 — protective markers intact (app.py was edited)
+----------------------------------------------------------------------
+grep -c "_run_with_status_heartbeat" app.py            # expect ~6
+grep -n "ThreadPoolExecutor(max_workers=3)" app.py     # expect 1 hit
+
+----------------------------------------------------------------------
+STEP 4 — deps + tests
+----------------------------------------------------------------------
+pip install -r requirements.txt 2>&1 | tail -5
+python -m pytest -q 2>&1 | tail -15
+The wizard-laggard test (tests/test_ui_wizard_outcome_laggard.py) is the relevant new one.
+
+----------------------------------------------------------------------
+STEP 5 — start the app cleanly + health check
+----------------------------------------------------------------------
+pkill -9 -f streamlit; sleep 3
+cd ~/workspace/artifacts/survey-insight-engine
+nohup streamlit run app.py --server.port 21049 --server.address 0.0.0.0 --server.headless true > /tmp/streamlit.log 2>&1 &
+disown; sleep 10
+curl -s -o /dev/null -w "HTTP %{http_code}\n" localhost:21049/
+HTTP 200 = healthy. If not: tail -40 /tmp/streamlit.log
+
+----------------------------------------------------------------------
+STEP 6 — REGENERATE the workbook (the only real 5U test)
+In the running app: upload winvslag, run Analysis with the AI checkbox OFF.
+The workbook is written to /tmp/survey_analysis.xlsx. Then create and run this checker.
+----------------------------------------------------------------------
+File: check_5u.py
+------------------------------------------------------------
+import sys, re, pandas as pd
+from collections import Counter
+P = sys.argv[1] if len(sys.argv) > 1 else "/tmp/survey_analysis.xlsx"
+RANK = ["Q21","Q39","Q82","Q86","Q92","Q100","Q101"]
+ALLOC = ["Q66","Q71","Q94"]
+
+qm = pd.read_excel(P, sheet_name="Question_Metadata")
+qm["QID"] = qm["Question ID"].astype(str)
+typ = qm.set_index("QID")["Type"].to_dict()
+print("type counts:", dict(Counter(qm["Type"])))
+bad = [q for q in RANK if typ.get(q) != "RANK_ORDER"] + \
+      [q for q in ALLOC if typ.get(q) != "NUMERIC_ALLOCATION"]
+assert not bad, f"metadata NOT reconciled: {bad}"
+print("PASS: metadata flipped (RANK_ORDER x7, NUMERIC_ALLOCATION x3)")
+
+rd = pd.read_excel(P, sheet_name="_RawData")
+def cols(q): return [c for c in rd.columns if c == q or re.match(rf"^{q}_", str(c))]
+for q in ["Q21", "Q94"]:
+    vals = set()
+    for c in cols(q):
+        vals |= set(rd[c].dropna().unique())
+    assert "Selected" not in vals, f"{q} _RawData STILL shows 'Selected'"
+    assert any(isinstance(v, (int, float)) for v in vals), f"{q} _RawData has no numbers"
+    print(f"PASS: {q} _RawData shows numbers, not 'Selected'")
+print("5U OUTPUT VERIFIED")
+------------------------------------------------------------
+Run:  python check_5u.py /tmp/survey_analysis.xlsx
+Must end with "5U OUTPUT VERIFIED". If any AssertionError, STOP and paste it.
+
+----------------------------------------------------------------------
+STEP 7 — human sign-off
+----------------------------------------------------------------------
+Download the workbook, open in MICROSOFT EXCEL DESKTOP, and eyeball:
+ - A rank question (Q92) and an allocation question (Q94) in their theme sheets — real
+   numbers (Q92 rank-1 ~198; Q94 means ~20%), which #58 already had.
+ - _RawData for Q21 shows 1..5, Q94 shows percentages — NOT "Selected".
+Do NOT change global filters mid-session (_refresh_full_workbook is still un-hardened).
