@@ -1,0 +1,78 @@
+ROUND 5P INSTALLATION — Fix the production silent kill: parallelize Stage 4 AI calls, lower timeouts to 25s, add skip toggle.
+
+ROOT CAUSE (proven by profiling on real winvslag2024, 107 questions):
+The "silent kill" was NEVER memory, decoder, or single cuts. It was Stage 4's three AI calls running SEQUENTIALLY:
+- themes: 17s, demo: 2s, short_labels: 35.5s = ~54s total
+Plus load 17s + export ~12s = ~85s pipeline, exceeding Replit's ~60s WebSocket timeout.
+
+Round 5P parallelizes the three calls (~54s → ~35s), lowers per-call timeout 60→25s, and adds a skip checkbox.
+
+Codex shipped:
+- app.py — Stage 4 parallelized via ThreadPoolExecutor (separate cache per call), skip_ai_enhancements toggle
+- src/ai_insights.py — three bulk timeouts lowered 60→25s
+- 2 test files updated, 761 tests passing locally
+
+INSTRUCTIONS
+
+STEP 0. Defensive checks.
+cd ~/workspace/artifacts/survey-insight-engine
+grep -n "_run_with_status_heartbeat" app.py | head -5
+grep -n "app = _require_streamlit()" app.py | head -2
+grep -n "with app.container()" app.py | head -3
+grep -n "_grid_patterns_for_decoding" src/raw_decoder.py | head -2
+
+STEP 1. Install app.py, src/ai_insights.py, and the 2 test files.
+
+STEP 2. CRITICAL — verify the parallel block is wrapped in the heartbeat.
+grep -n "ThreadPoolExecutor\|_run_stage4\|skip_ai_enhancements\|_run_with_status_heartbeat" app.py | head -20
+
+Show me the Stage 4 region:
+sed -n '2400,2480p' app.py
+
+I need to confirm: the ThreadPoolExecutor parallel block is the `work=` argument INSIDE a _run_with_status_heartbeat call. If the parallel calls run OUTSIDE the heartbeat, the WebSocket dies during the 35s. This is the make-or-break line.
+
+STEP 3. Verify timeouts.
+grep -n "timeout=" src/ai_insights.py
+Expected: timeout=25 at three bulk-call sites (was 60), plus the unrelated AI_INSIGHT_TIMEOUT_SECONDS untouched.
+
+STEP 4. Path fixes on new test files.
+grep "APP_PATH = Path" tests/test_app_embed_checkbox.py tests/test_ai_insights.py 2>/dev/null
+Apply sed if doubled path present.
+
+STEP 5. Run tests.
+pytest tests/test_ai_insights.py tests/test_app_embed_checkbox.py -v 2>&1 | tail -25
+
+STEP 6. Full suite chunked. Expected ~761.
+
+STEP 7. Restart Streamlit clean.
+pkill -9 -f streamlit; sleep 3
+mkdir -p ~/.streamlit && printf '[general]\nemail = ""\n' > ~/.streamlit/credentials.toml
+nohup streamlit run app.py --server.port 21049 --server.address 0.0.0.0 --server.headless true > /tmp/streamlit.log 2>&1 &
+disown
+sleep 10
+curl -s -o /dev/null -w "HTTP %{http_code}\n" localhost:21049/
+
+STEP 8. THE TEST WE'VE BEEN CHASING ALL DAY — browser, BOTH modes.
+
+Open Replit external URL in incognito. Upload winvslag2024.
+
+Mode A — AI OFF:
+- UNCHECK "Generate AI themes & labels"
+- Run Analysis
+- Should complete in ~30s, NO "Connection error status 0", results display, workbook downloadable
+
+Mode B — AI ON:
+- CHECK the box
+- Run Analysis
+- Should complete in ~50s (parallel AI ~35s + rest). Heartbeat keeps WebSocket alive. Results display.
+
+Watch the log during each:
+tail -f /tmp/streamlit.log
+
+REPORT BACK
+- STEP 2 output (the Stage 4 region — I must confirm heartbeat wraps the parallel block)
+- STEP 3 timeouts
+- STEP 5/6 test counts
+- STEP 8: does the analysis COMPLETE in each mode? Time each. Any "Connection error"?
+
+WIN CONDITION: Mode A completes fast with no silent kill. That's the bug fixed.
