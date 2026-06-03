@@ -35,6 +35,24 @@ class TestOutcomeLaggardUi(unittest.TestCase):
         body = self.app_text[run_pipeline:self.app_text.index("status.update", run_pipeline)]
         self.assertIn("app = _require_streamlit()", body)
 
+    def test_manual_cross_cut_routes_numeric_metric_pairs(self) -> None:
+        start = self.app_text.index("def _render_manual_cross_cut(")
+        end = self.app_text.index("# ---------------------------------------------------------------------------", start)
+        body = self.app_text[start:end]
+
+        self.assertIn("numeric_types = {QuestionType.DIRECT_NUMERIC, QuestionType.NUMERIC_ALLOCATION}", body)
+        self.assertIn("QuestionType.DEMOGRAPHIC_OR_SEGMENT", body)
+        self.assertIn("QuestionType.GRID_SINGLE_SELECT", body)
+        self.assertIn("analysis_type = AnalysisType.GROUP_COMPARISON", body)
+        self.assertIn("source_ids = (segment_id, metric_id)", body)
+        self.assertIn("source_question_ids=source_ids", body)
+        self.assertIn(
+            "GROUP_COMPARISON does not yet support NUMERIC_ALLOCATION metrics",
+            body,
+        )
+        self.assertIn("CROSS_TAB requires two categorical questions", body)
+        self.assertIn("EXPECTED_VS_REALIZED requires two direct numeric questions", body)
+
 
 if __name__ == "__main__":
     unittest.main()
