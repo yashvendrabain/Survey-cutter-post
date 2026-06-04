@@ -3988,74 +3988,59 @@ def _render_format_wizard_step_2(config: dict[str, Any]) -> None:
 
 def _render_format_wizard_step_3(config: dict[str, Any]) -> None:
     app = _require_streamlit()
-    labels = [
-        "Q followed by number (Q1, Q2, Q3)",
-        "Lowercase q followed by number (q1, q2, q3)",
-        "Q with underscore (Q_1, Q_2)",
-        "Question_N (Question_1, Question_2)",
-        "Other (specify regex)",
-    ]
-    mapping = {
-        labels[0]: r"^Q\d+",
-        labels[1]: r"^q\d+",
-        labels[2]: r"^Q_\d+",
-        labels[3]: r"^Question_\d+",
-    }
-    current = str(config.get("question_id_pattern") or r"^Q\d+")
-    reverse = {value: label for label, value in mapping.items()}
-    choice = app.radio(
-        "How are question IDs written in this survey?",
-        labels,
-        index=labels.index(reverse.get(current, labels[-1])),
-        key="wizard_question_id_choice",
+    from src.adapters.wizard_configured import infer_question_id_regex
+
+    example = app.text_input(
+        "Paste ONE example of a question ID, exactly as it appears in the data "
+        "map / codebook sheet (its left column, e.g. q1, 1q, q-1, Q15, Item_3). "
+        "The wizard infers the pattern from it.",
+        value=str(config.get("question_id_example") or ""),
+        placeholder="q1",
+        key="wizard_question_id_example",
     )
-    if choice == labels[-1]:
-        config["question_id_pattern"] = app.text_input(
-            "Question ID regex",
-            value=current,
-            placeholder=r"e.g. ^SQ\d+ or ^Item_\d+",
-            key="wizard_question_id_pattern_custom",
-        )
+    config["question_id_example"] = example.strip()
+    if config["question_id_example"]:
+        try:
+            config["question_id_pattern"] = infer_question_id_regex(
+                config["question_id_example"]
+            ).pattern
+            app.caption(f"Inferred question-ID pattern: {config['question_id_pattern']}")
+        except ValueError:
+            config["question_id_pattern"] = ""
+            app.warning(
+                "That example has no number in it. Include the question number, "
+                "e.g. 'q1' or 'Item_3'."
+            )
     else:
-        config["question_id_pattern"] = mapping[choice]
+        config["question_id_pattern"] = ""
 
 
 def _render_format_wizard_step_4(config: dict[str, Any]) -> None:
     app = _require_streamlit()
-    labels = [
-        "Q1r1, Q1r2, ... (lowercase r separator)",
-        "Q1s1, Q1s2, ... (lowercase s separator)",
-        "Q1_1, Q1_2, ... (underscore separator)",
-        "Q1.1, Q1.2, ... (dot separator)",
-        "Q1: option label, Q1: another label (colon followed by label)",
-        "Other (specify)",
-        "No multi-part questions in this survey",
-    ]
-    mapping = {
-        labels[0]: "r",
-        labels[1]: "s",
-        labels[2]: "_",
-        labels[3]: r"\.",
-        labels[4]: ":",
-        labels[6]: "none",
-    }
-    current = str(config.get("sub_column_separator") or "none")
-    reverse = {value: label for label, value in mapping.items()}
-    choice = app.radio(
-        "How are multi-part questions (grids, multi-select) named in the raw data?",
-        labels,
-        index=labels.index(reverse.get(current, labels[5])),
-        key="wizard_sub_column_separator_choice",
+    from src.adapters.wizard_configured import infer_multi_select_spec
+
+    example = app.text_input(
+        "Paste ONE example of a multi-select / grid option COLUMN, exactly as it "
+        "appears in the raw data sheet header (e.g. 6q1a, Q6r1, q6_1, or "
+        "'Q6: Field sales'). Leave blank only if this survey has no multi-part "
+        "questions.",
+        value=str(config.get("multi_select_example") or ""),
+        placeholder="6q1a",
+        key="wizard_multi_select_example",
     )
-    if choice == labels[5]:
-        example = app.text_input(
-            "Example column name or separator regex",
-            value=current if current not in {"r", "s", "_", r"\.", ":", "none"} else "",
-            key="wizard_sub_column_separator_custom",
-        )
-        config["sub_column_separator"] = _infer_separator_from_example(example)
-    else:
-        config["sub_column_separator"] = mapping[choice]
+    config["multi_select_example"] = example.strip()
+    config["sub_column_separator"] = "none"
+    if config["multi_select_example"]:
+        try:
+            mode, _multi, _single = infer_multi_select_spec(
+                config["multi_select_example"]
+            )
+            app.caption(f"Inferred multi-select mode: {mode}")
+        except ValueError:
+            app.warning(
+                "That example has no number in it. Include the question number, "
+                "e.g. '6q1a' or 'Q6: Field sales'."
+            )
 
 
 def _render_format_wizard_step_5(config: dict[str, Any]) -> None:
@@ -4164,10 +4149,11 @@ def _build_wizard_preview(uploaded_files: list[Any], config: dict[str, Any]) -> 
             for question in questions
             for column, _label in question.get("sub_columns", [])
         }
+        raw_column_set = {str(column) for column in raw_df.columns}
         matched_columns.update(
-            question["canonical_id"]
+            str(question.get("raw_id") or question["canonical_id"])
             for question in questions
-            if question["canonical_id"] in set(str(column) for column in raw_df.columns)
+            if str(question.get("raw_id") or question["canonical_id"]) in raw_column_set
         )
         breakdown = _wizard_question_type_breakdown(questions)
         return {
