@@ -1,0 +1,39 @@
+DEPLOY 6B — outcome-insight source table + framing guard
+Project dir: ~/workspace/artifacts/survey-insight-engine
+
+STEP 0 — setup
+cd ~/workspace/artifacts/survey-insight-engine
+mkdir -p ~/.streamlit && printf '[general]\nemail = ""\n' > ~/.streamlit/credentials.toml
+
+STEP 1 — confirm new code landed
+grep -n "_outcome_diff_insight_framing_is_safe\|_render_outcome_diff_source_table_expander\|_style_outcome_diff_source_table" app.py | head
+grep -n "more likely than" app.py | head                          # selection-share fallback
+grep -n "_format_winner_profile_trait_payload\|selection_share_contract\|forbidden_verbs" src/ai_insights.py | head
+
+STEP 2 — prior rounds intact (regression guard)
+grep -n "_validated_outcome_diff_insight\|_outcome_diff_insight_numbers_are_valid\|_DIFF_INSIGHTS_PER_PAGE" app.py | head
+grep -n "if widget_key not in app.session_state" app.py           # 5Z chart fix still present
+grep -cn "_section_hypothesis_check()\|TEMP DEBUG" app.py          # 5X: expect 0
+
+STEP 3 — protective markers
+grep -c "_run_with_status_heartbeat" app.py                       # ~6
+grep -n "ThreadPoolExecutor(max_workers=3)" app.py
+
+STEP 4 — install + tests
+pip install -r requirements.txt
+python -m pytest tests/test_ai_insights.py tests/test_chart_type_override.py -q
+python -m pytest -q                                               # full suite (expect ~782 OK)
+
+STEP 5 — launch + liveness
+pkill -9 -f streamlit; sleep 1
+nohup streamlit run app.py --server.port 21049 --server.address 0.0.0.0 --server.headless true >/tmp/st.log 2>&1 &
+sleep 6; curl -s -o /dev/null -w "%{http_code}\n" http://localhost:21049   # expect 200
+
+STEP 6 — eyeball the AI Analysis section (run a segmentation, AI ON)
+- Each differentiator card: "Show source table" shows THAT question's full option cut
+  (winner vs laggard), with the insight's option row + winner-% cell highlighted.
+- No insight reads as a magnitude ("allocate X% of budget", "X% growth"); those now read as a
+  selection share ("N× more likely … to select '<option>' (X% vs Y%)").
+- Spot-check a budget/allocation-style question's card to confirm the framing in the live app.
+- Good insights unchanged; Next/Previous-10 paging still works.
+- Don't change global filters mid-session (refresh isn't hardened).
