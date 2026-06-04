@@ -1,0 +1,35 @@
+# ---- DEPLOY: 6C + 6C.1 + 6D (UI-only) ----
+
+# STEP 0 — project dir + Streamlit credentials
+cd ~/workspace/artifacts/survey-insight-engine
+mkdir -p ~/.streamlit && printf '[general]\nemail = ""\n' > ~/.streamlit/credentials.toml
+
+# STEP 1 — confirm the new code is actually the file on Replit (run each line)
+grep -c '_render_wizard_step_filters' app.py            # expect 2
+grep -c 'Step {step} of 3' app.py                       # expect 1
+grep -c 'app.tabs(\["Chart", "Table"\])' app.py         # expect 2
+grep -c 'show_winners_vs_laggards' app.py               # expect 3
+grep -c '_render_wizard_nav("top")' app.py              # expect 0
+grep -c '_render_wizard_nav("bottom")' app.py           # expect 1
+grep -c '_POLISH_CSS_6D' app.py                         # expect 2
+grep -c 'Explain this cut' app.py                       # expect 2
+# If any of these are wrong, the old file is still on Replit — re-copy it.
+
+# STEP 2 — regression guard: prior rounds + src/ untouched
+grep -c 'padding-top: 80px' app.py                      # expect 2 (header layout intact)
+grep -c 'if widget_key not in app.session_state' app.py # expect 3  (5Z)
+grep -c '_DIFF_INSIGHTS_PER_PAGE' app.py                # expect 4  (5Z)
+grep -rl 'reconcile_multiselect_value_subtypes' src/    # expect a src/ path
+grep -rl '_build_multi_select_respondent_count_formula' src/  # expect a src/ path
+
+# STEP 3 — protective markers (silent-kill guards)
+grep -c '_run_with_status_heartbeat' app.py             # expect 6
+grep -c 'ThreadPoolExecutor(max_workers=3)' app.py      # expect 1
+
+# STEP 4 — install + FULL test suite (report the count)
+pip install -r requirements.txt
+python -m pytest -q
+
+# STEP 5 — clean Streamlit restart + health check (single line, safe to paste)
+pkill -9 -f streamlit; sleep 3; nohup streamlit run app.py --server.port 21049 --server.address 0.0.0.0 --server.headless true > /tmp/streamlit.log 2>&1 & disown; sleep 10; curl -s -o /dev/null -w "HTTP %{http_code}\n" localhost:21049/
+# expect HTTP 200    (if not: tail -40 /tmp/streamlit.log)
