@@ -54,20 +54,10 @@ class WizardConfig:
     section_prefixes: tuple[str, ...]
     config_name: str | None = None
     helper_columns: tuple[str, ...] = field(default_factory=tuple)
-    question_id_example: str = ""
-    multi_select_example: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "section_prefixes", tuple(self.section_prefixes))
         object.__setattr__(self, "helper_columns", tuple(self.helper_columns))
-        if self.question_id_example and not str(self.question_id_pattern).strip():
-            object.__setattr__(
-                self,
-                "question_id_pattern",
-                infer_question_id_regex(self.question_id_example).pattern,
-            )
-        if self.multi_select_example and not str(self.sub_column_separator).strip():
-            object.__setattr__(self, "sub_column_separator", "none")
         required = {
             "raw_data_sheet_name": self.raw_data_sheet_name,
             "data_map_sheet_name": self.data_map_sheet_name,
@@ -113,16 +103,13 @@ class WizardConfiguredAdapter(DataMapAdapter):
 
         worksheet = workbook[self._config.data_map_sheet_name]
         raw_columns = _raw_columns_from_sheet_or_df(workbook, raw_df, self._config)
-        if self._config.question_id_example and self._config.multi_select_example:
-            questions = _parse_questions_by_example(worksheet, raw_columns, self._config)
-        else:
-            helper_columns = _configured_helper_columns(raw_columns, self._config)
-            questions = _parse_questions_from_sheet(
-                worksheet,
-                raw_columns=raw_columns,
-                helper_columns=helper_columns,
-                config=self._config,
-            )
+        helper_columns = _configured_helper_columns(raw_columns, self._config)
+        questions = _parse_questions_from_sheet(
+            worksheet,
+            raw_columns=raw_columns,
+            helper_columns=helper_columns,
+            config=self._config,
+        )
         questions = _attach_numeric_label_metadata(questions)
         return {
             "questions": questions,
@@ -397,210 +384,3 @@ def dataframe_from_workbook_sheet(workbook: Any, sheet_name: str) -> pd.DataFram
     headers = [str(value).strip() if value is not None else "" for value in rows[0]]
     data = [list(row) for row in rows[1:]]
     return pd.DataFrame(data, columns=headers)
-
-
-_EXAMPLE_SEP_CLASS = r":\-_/|.\u2013\u2014\s"
-
-
-def _tokenize_example(example: str) -> list[tuple[str, str]]:
-    """Split into alternating ('int', digits) / ('lit', non-digits) runs."""
-    tokens: list[tuple[str, str]] = []
-    for match in re.finditer(r"\d+|\D+", str(example).strip()):
-        piece = match.group(0)
-        tokens.append(("int", piece) if piece.isdigit() else ("lit", piece))
-    return tokens
-
-
-def infer_question_id_regex(example: str) -> "re.Pattern[str]":
-    """Infer a question-ID regex from ONE example (e.g. 'q1','1q','q-1','Q15').
-
-    The first run of digits is the captured question key <key>; everything else
-    is literal. Anchored both ends so a single-answer form can't also match a
-    longer multi-answer column.
-    """
-
-    segments = _tokenize_example(example)
-    int_positions = [i for i, (kind, _) in enumerate(segments) if kind == "int"]
-    if not int_positions:
-        raise ValueError(f"no integer found in question-id example {example!r}")
-    key_index = int_positions[0]
-    parts: list[str] = []
-    for index, (kind, value) in enumerate(segments):
-        if index == key_index:
-            parts.append(r"(?P<key>\d+)")
-        elif kind == "lit":
-            parts.append(re.escape(value))
-        else:
-            parts.append(r"\d+")
-    return re.compile("^" + "".join(parts) + "$", re.IGNORECASE)
-
-
-def infer_multi_select_spec(example: str) -> "tuple[str, re.Pattern[str], re.Pattern[str]]":
-    """Infer multi-select column matching from ONE example.
-
-    Returns (mode, multi_regex, single_regex):
-      mode 'index' -> two integer runs: groups <key>,<opt>  ('6q1a','Q6r1','q6_1')
-      mode 'label' -> one integer run + separator + label    ('Q6: Field sales')
-    single_regex matches a single-answer column for the same key (the multi
-    pattern with the option part removed); used to link single-selects by key.
-    """
-
-    segments = _tokenize_example(example)
-    int_positions = [i for i, (kind, _) in enumerate(segments) if kind == "int"]
-    if not int_positions:
-        raise ValueError(f"no integer found in multi-select example {example!r}")
-
-    if len(int_positions) >= 2:
-        key_index, opt_index = int_positions[0], int_positions[1]
-        multi_parts: list[str] = []
-        single_parts: list[str] = []
-        for index, (kind, value) in enumerate(segments):
-            if index == key_index:
-                multi_parts.append(r"(?P<key>\d+)")
-                single_parts.append(r"(?P<key>\d+)")
-            elif index == opt_index:
-                multi_parts.append(r"(?P<opt>\d+)")
-            elif kind == "lit":
-                multi_parts.append(re.escape(value))
-                if index < opt_index:
-                    single_parts.append(re.escape(value))
-            else:
-                multi_parts.append(r"\d+")
-        multi_regex = re.compile("^" + "".join(multi_parts) + "$", re.IGNORECASE)
-        single_regex = re.compile("^" + "".join(single_parts) + "$", re.IGNORECASE)
-        return "index", multi_regex, single_regex
-
-    key_index = int_positions[0]
-    prefix = "".join(
-        re.escape(value) if kind == "lit" else r"\d+"
-        for kind, value in segments[:key_index]
-    )
-    multi_regex = re.compile(
-        "^" + prefix + r"(?P<key>\d+)\s*[" + _EXAMPLE_SEP_CLASS + r"]+\s*(?P<label>.+?)\s*$",
-        re.IGNORECASE,
-    )
-    single_regex = re.compile("^" + prefix + r"(?P<key>\d+)$", re.IGNORECASE)
-    return "label", multi_regex, single_regex
-
-
-def _new_question_by_key(
-    canonical_id: str,
-    question_key: int,
-    question_text: str,
-    source_row: int,
-) -> ParsedQuestion:
-    question: ParsedQuestion = {
-        "canonical_id": canonical_id,
-        "raw_id": canonical_id,
-        "question_text": question_text,
-        "type_hint": "values_range",
-        "value_range": None,
-        "options": [],
-        "sub_columns": [],
-        "parent_canonical_id": None,
-        "source_row": source_row,
-        "warnings": [],
-    }
-    question["_key"] = question_key  # type: ignore[typeddict-unknown-key]
-    return question
-
-
-def _codebook_questions_by_key(worksheet: Any, qid_regex: "re.Pattern[str]") -> list[ParsedQuestion]:
-    """Walk a compact codebook; start a question on a qid-matching col A with
-    text in col B; collect numeric-coded option rows. A note row (blank col A,
-    non-blank col B) closes the current question's option list."""
-    questions: list[ParsedQuestion] = []
-    current: ParsedQuestion | None = None
-    options_closed = False
-    for row_number, row in enumerate(
-        worksheet.iter_rows(min_col=1, max_col=2, values_only=True), start=1
-    ):
-        col_a = "" if (len(row) < 1 or row[0] is None) else str(row[0]).strip()
-        col_b = "" if (len(row) < 2 or row[1] is None) else str(row[1]).strip()
-        id_match = qid_regex.match(col_a) if col_a else None
-        if id_match is not None:
-            current = _new_question_by_key(
-                col_a, int(id_match.group("key")), col_b or col_a, row_number
-            )
-            questions.append(current)
-            options_closed = False
-            continue
-        if current is None:
-            continue
-        if not col_a and col_b:
-            options_closed = True
-            continue
-        if col_a and re.fullmatch(r"-?\d+", col_a) and col_b and not options_closed:
-            current["options"].append((int(col_a), col_b))
-    return questions
-
-
-def _link_raw_columns_by_key(
-    questions: list[ParsedQuestion],
-    raw_columns: tuple[str, ...],
-    mode: str,
-    multi_regex: "re.Pattern[str]",
-    single_regex: "re.Pattern[str]",
-) -> None:
-    by_key = {question["_key"]: question for question in questions}  # type: ignore[typeddict-item]
-    buckets: dict[int, list[tuple[Any, Any, str]]] = {}
-    for column in raw_columns:
-        text = str(column)
-        match = multi_regex.match(text)
-        if match is None:
-            continue
-        key = int(match.group("key"))
-        if mode == "index":
-            buckets.setdefault(key, []).append((int(match.group("opt")), None, text))
-        else:
-            buckets.setdefault(key, []).append((None, match.group("label").strip(), text))
-    for key, items in buckets.items():
-        question = by_key.get(key)
-        if question is None:
-            continue
-        if mode == "index":
-            items.sort(key=lambda item: item[0])
-            option_label = {code: label for code, label in question["options"]}
-            question["sub_columns"] = [
-                (column, option_label.get(opt, f"option {opt}"))
-                for opt, _none, column in items
-            ]
-        else:
-            question["sub_columns"] = [(column, label) for _none, label, column in items]
-    for column in raw_columns:
-        text = str(column)
-        if multi_regex.match(text) is not None:
-            continue
-        match = single_regex.match(text)
-        if match is None:
-            continue
-        question = by_key.get(int(match.group("key")))
-        if (
-            question is not None
-            and not question["sub_columns"]
-            and question["raw_id"] == question["canonical_id"]
-        ):
-            question["raw_id"] = text
-    for question in questions:
-        numeric_codes = [
-            code for code, _label in question["options"] if isinstance(code, int)
-        ]
-        question["value_range"] = (
-            (min(numeric_codes), max(numeric_codes)) if numeric_codes else None
-        )
-        if not question["options"] and not question["sub_columns"]:
-            question["type_hint"] = "open_numeric"
-
-
-def _parse_questions_by_example(
-    worksheet: Any,
-    raw_columns: tuple[str, ...],
-    config: WizardConfig,
-) -> list[ParsedQuestion]:
-    qid_regex = infer_question_id_regex(config.question_id_example)
-    mode, multi_regex, single_regex = infer_multi_select_spec(config.multi_select_example)
-    questions = _codebook_questions_by_key(worksheet, qid_regex)
-    _link_raw_columns_by_key(questions, raw_columns, mode, multi_regex, single_regex)
-    for question in questions:
-        question.pop("_key", None)  # type: ignore[misc]
-    return questions
