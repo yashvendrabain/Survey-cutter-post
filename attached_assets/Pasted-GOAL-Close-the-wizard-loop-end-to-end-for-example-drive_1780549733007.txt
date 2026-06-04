@@ -1,0 +1,243 @@
+GOAL
+====
+Close the wizard loop end-to-end for example-driven formats:
+(A) src/raw_decoder.py — resolve single-select questions by raw_id (not
+    canonical_id) so a question whose codebook id is "q1" but whose raw column
+    is "1q" actually decodes. No-op for known formats where raw_id == canonical_id.
+(B) app.py — replace the wizard's regex/separator inputs (steps 3 and 4) with
+    ONE typed example each, feeding question_id_example / multi_select_example
+    so the installed example-driven engine activates.
+
+You are an executor. Use the code below verbatim. Touch ONLY src/raw_decoder.py,
+app.py, and the new test file. Do NOT modify wizard_configured.py (already done),
+the adapters, or any other file. If any step fails, STOP and paste everything.
+
+================================================================================
+FILE 1: src/raw_decoder.py
+================================================================================
+
+EDIT 1.1 — Insert this helper immediately BEFORE the existing
+`def _question_expected_columns(` line:
+
+def _effective_raw_id(question: ParsedQuestion) -> str:
+    """Raw-data column id for a question that has no sub-columns.
+
+    Defaults to canonical_id, but the wizard sets raw_id to the actual raw
+    column when the codebook id and the raw column id differ (e.g. codebook
+    "q1" vs raw column "1q"). Falls back to canonical_id when raw_id is unset,
+    so known formats (raw_id == canonical_id) are unaffected.
+    """
+    return str(question.get("raw_id") or question["canonical_id"])
+
+
+EDIT 1.2 — In `_question_expected_columns`, replace this exact line:
+
+    return (question["canonical_id"],)
+
+with:
+
+    return (_effective_raw_id(question),)
+
+
+EDIT 1.3 — In `_expected_columns_from_datamap`, replace this exact line:
+
+        expected.add(question["canonical_id"])
+
+with:
+
+        expected.add(_effective_raw_id(question))
+
+================================================================================
+FILE 2: app.py
+================================================================================
+
+EDIT 2.1 — Replace the ENTIRE function `_render_format_wizard_step_3` (from its
+`def _render_format_wizard_step_3(config: dict[str, Any]) -> None:` line through
+the end of its body, i.e. up to but not including `def _render_format_wizard_step_4`)
+with:
+
+def _render_format_wizard_step_3(config: dict[str, Any]) -> None:
+    app = _require_streamlit()
+    from src.adapters.wizard_configured import infer_question_id_regex
+
+    example = app.text_input(
+        "Paste ONE example of a question ID, exactly as it appears in the data "
+        "map (e.g. q1, 1q, q-1, Q15, Item_3). The wizard infers the pattern from it.",
+        value=str(config.get("question_id_example") or ""),
+        placeholder="q1",
+        key="wizard_question_id_example",
+    )
+    config["question_id_example"] = example.strip()
+    if config["question_id_example"]:
+        try:
+            config["question_id_pattern"] = infer_question_id_regex(
+                config["question_id_example"]
+            ).pattern
+            app.caption(f"Inferred question-ID pattern: {config['question_id_pattern']}")
+        except ValueError:
+            config["question_id_pattern"] = ""
+            app.warning(
+                "That example has no number in it. Include the question number, "
+                "e.g. 'q1' or 'Item_3'."
+            )
+    else:
+        config["question_id_pattern"] = ""
+
+
+EDIT 2.2 — Replace the ENTIRE function `_render_format_wizard_step_4` (from its
+`def _render_format_wizard_step_4(config: dict[str, Any]) -> None:` line through
+the end of its body, i.e. up to but not including the next `def `) with:
+
+def _render_format_wizard_step_4(config: dict[str, Any]) -> None:
+    app = _require_streamlit()
+    from src.adapters.wizard_configured import infer_multi_select_spec
+
+    example = app.text_input(
+        "Paste ONE example of a multi-select / grid option column, exactly as it "
+        "appears in the raw data (e.g. 6q1a, Q6r1, q6_1, or 'Q6: Field sales'). "
+        "Leave blank only if this survey has no multi-part questions.",
+        value=str(config.get("multi_select_example") or ""),
+        placeholder="6q1a",
+        key="wizard_multi_select_example",
+    )
+    config["multi_select_example"] = example.strip()
+    config["sub_column_separator"] = "none"
+    if config["multi_select_example"]:
+        try:
+            mode, _multi, _single = infer_multi_select_spec(
+                config["multi_select_example"]
+            )
+            app.caption(f"Inferred multi-select mode: {mode}")
+        except ValueError:
+            app.warning(
+                "That example has no number in it. Include the question number, "
+                "e.g. '6q1a' or 'Q6: Field sales'."
+            )
+
+
+EDIT 2.3 — In `_build_wizard_preview`, replace this exact block:
+
+        matched_columns.update(
+            question["canonical_id"]
+            for question in questions
+            if question["canonical_id"] in set(str(column) for column in raw_df.columns)
+        )
+
+with:
+
+        raw_column_set = {str(column) for column in raw_df.columns}
+        matched_columns.update(
+            str(question.get("raw_id") or question["canonical_id"])
+            for question in questions
+            if str(question.get("raw_id") or question["canonical_id"]) in raw_column_set
+        )
+
+================================================================================
+FILE 3: tests/test_raw_decoder_raw_id.py  (create new)
+================================================================================
+
+Do NOT add APP_PATH, sys.path edits, or any app import.
+
+"""Single-select questions must resolve to their raw_id column, not canonical_id."""
+
+from __future__ import annotations
+
+from src.raw_decoder import (
+    _effective_raw_id,
+    _expected_columns_from_datamap,
+    _question_expected_columns,
+)
+
+
+def _q(canonical_id, raw_id, sub_columns):
+    return {
+        "canonical_id": canonical_id,
+        "raw_id": raw_id,
+        "question_text": canonical_id,
+        "type_hint": "values_range",
+        "value_range": None,
+        "options": [],
+        "sub_columns": sub_columns,
+        "parent_canonical_id": None,
+        "source_row": 1,
+        "warnings": [],
+    }
+
+
+def test_single_select_resolves_by_raw_id_when_it_differs():
+    q = _q("q1", "1q", [])
+    assert _question_expected_columns(q) == ("1q",)
+
+
+def test_single_select_falls_back_to_canonical_when_raw_id_absent():
+    q = _q("Q1", "Q1", [])
+    assert _question_expected_columns(q) == ("Q1",)
+    q.pop("raw_id")
+    assert _question_expected_columns(q) == ("Q1",)
+
+
+def test_multi_select_resolves_by_sub_columns():
+    q = _q("q6", "q6", [("6q1a", "Field sales"), ("6q2a", "Inside sales")])
+    assert _question_expected_columns(q) == ("6q1a", "6q2a")
+
+
+def test_expected_columns_includes_alien_single_raw_id():
+    single = _q("q1", "1q", [])
+    multi = _q("q6", "q6", [("6q1a", "Field sales"), ("6q2a", "Inside sales")])
+    expected = _expected_columns_from_datamap({"questions": [single, multi]})
+    assert "1q" in expected
+    assert {"6q1a", "6q2a"}.issubset(expected)
+
+
+def test_effective_raw_id_prefers_raw_id():
+    assert _effective_raw_id(_q("q1", "1q", [])) == "1q"
+    assert _effective_raw_id(_q("Q1", "Q1", [])) == "Q1"
+
+================================================================================
+VERIFICATION
+================================================================================
+  cd ~/workspace/artifacts/survey-insight-engine
+
+  # syntax + import sanity (catches a botched app.py edit immediately)
+  python -c "import ast; ast.parse(open('app.py').read()); print('app.py parse OK')"
+  python -c "import src.raw_decoder; print('raw_decoder import OK')"
+
+  # focused decoder tests
+  python -m pytest tests/test_raw_decoder_raw_id.py -v        # expect 5 passed
+
+  # full suite, no regressions
+  python -m pytest tests/ -q 2>&1 | tail -40                 # prior baseline + 5
+
+  # boot the app
+  mkdir -p ~/.streamlit && printf '[general]\nemail = ""\n' > ~/.streamlit/credentials.toml
+  pkill -9 -f streamlit; sleep 3
+  nohup streamlit run app.py --server.port 21049 --server.address 0.0.0.0 --server.headless true > /tmp/streamlit.log 2>&1 &
+  disown; sleep 10
+  curl -s -o /dev/null -w "HTTP %{http_code}\n" localhost:21049/   # expect HTTP 200
+
+  Paste every command's output. If HTTP != 200, paste: tail -40 /tmp/streamlit.log
+
+================================================================================
+REAL-FILE END-TO-END (the actual test of "does it work")
+================================================================================
+After boot, in the live UI:
+  1. Upload WVL_test_suffix_style.xlsx (sheets: responses / codebook).
+  2. The wizard should appear (compact adapter abdicates on this format).
+  3. Step 3: type   q1
+     Step 4: type   6q1a
+  4. Proceed. The preview should report ~17 questions and matched raw columns > 0.
+  5. Run analysis. Confirm SINGLE-SELECT cuts (q1/q2/q5/q10/q11) are NON-EMPTY
+     and MULTI/grid cuts (q6/q7/q12/q14/q16) show the codebook option labels.
+Report what the preview and the single-cut tables show.
+
+================================================================================
+DO-NOT / STOP RULES
+================================================================================
+- Touch ONLY src/raw_decoder.py, app.py, and the new test file.
+- Do NOT modify wizard_configured.py or any adapter.
+- Do NOT delete _infer_separator_from_example (now unused is fine) or any other
+  existing function; the step rewrites are surgical replacements only.
+- Do NOT change ports, the credentials.toml fix, or the start command.
+- Do NOT change a global filter / trigger a full refresh during the check
+  (the _refresh_full_workbook path is still un-hardened).
+- If syntax check, import, or any pytest step fails, STOP and paste everything.

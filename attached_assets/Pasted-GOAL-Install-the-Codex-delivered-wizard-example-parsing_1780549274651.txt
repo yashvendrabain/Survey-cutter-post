@@ -1,0 +1,80 @@
+GOAL
+====
+Install the Codex-delivered wizard example-parsing files into the source tree,
+verify byte-faithful install + tests + clean import, then (re)deploy the
+Streamlit app and confirm it boots. Verification + deploy only — do NOT hand-edit
+any code. If any step fails, STOP and paste everything.
+
+================================================================================
+STEP 0 — LOCATE the attached reference files
+================================================================================
+  cd ~/workspace/artifacts/survey-insight-engine
+  ls -la ../../attached_assets/ | grep -i wizard
+  Paste the output so we have the exact filenames (they may carry hash suffixes,
+  e.g. wizard_configured_<digits>.py). Use those exact names in STEP 1.
+
+================================================================================
+STEP 1 — INSTALL (verbatim copy, then prove faithful)
+================================================================================
+  # substitute the exact filenames from STEP 0 for <ADAPTER_SRC> and <TEST_SRC>
+  cp ../../attached_assets/<ADAPTER_SRC> src/adapters/wizard_configured.py
+  cp ../../attached_assets/<TEST_SRC>    tests/test_wizard_configured_examples.py
+
+  cmp ../../attached_assets/<ADAPTER_SRC> src/adapters/wizard_configured.py && echo "ADAPTER OK"
+  cmp ../../attached_assets/<TEST_SRC>    tests/test_wizard_configured_examples.py && echo "TESTS OK"
+
+================================================================================
+STEP 1.5 — SYMBOL PRESENCE (catches a wrong/partial copy instantly)
+================================================================================
+  grep -n "question_id_example: str = \"\"" src/adapters/wizard_configured.py
+  grep -n "multi_select_example: str = \"\"" src/adapters/wizard_configured.py
+  grep -n "_EXAMPLE_SEP_CLASS =" src/adapters/wizard_configured.py
+  grep -n "def infer_question_id_regex" src/adapters/wizard_configured.py
+  grep -n "def infer_multi_select_spec" src/adapters/wizard_configured.py
+  grep -n "def _parse_questions_by_example" src/adapters/wizard_configured.py
+  grep -n "def _link_raw_columns_by_key" src/adapters/wizard_configured.py
+  # the old path must still be present (additive change, not a rewrite):
+  grep -n "def _parse_questions_from_sheet" src/adapters/wizard_configured.py
+  Paste all output. Every grep must return a line.
+
+================================================================================
+STEP 2 — IMPORT SANITY (catches annotation / missing-export errors at import)
+================================================================================
+  python -c "import src.adapters.wizard_configured as w; print('import OK'); print(hasattr(w,'infer_question_id_regex'), hasattr(w,'_parse_questions_by_example'))"
+  Expect: import OK / True True
+
+================================================================================
+STEP 3 — NEW TESTS ALONE
+================================================================================
+  python -m pytest tests/test_wizard_configured_examples.py -v
+  Expect 10 passed. Paste full output incl. summary line.
+
+================================================================================
+STEP 4 — FULL SUITE, no regressions
+================================================================================
+  python -m pytest tests/ -q 2>&1 | tail -40
+  Expect prior pytest baseline + 10, zero failures. (Replit's chunked total may
+  run ~12 below Codex's count — that's runner variance, not a failure.) Paste tail.
+
+================================================================================
+STEP 5 — DEPLOY / BOOT the app
+================================================================================
+  mkdir -p ~/.streamlit && printf '[general]\nemail = ""\n' > ~/.streamlit/credentials.toml
+  pkill -9 -f streamlit; sleep 3
+  cd ~/workspace/artifacts/survey-insight-engine
+  nohup streamlit run app.py --server.port 21049 --server.address 0.0.0.0 --server.headless true > /tmp/streamlit.log 2>&1 &
+  disown; sleep 10
+  curl -s -o /dev/null -w "HTTP %{http_code}\n" localhost:21049/
+  Expect HTTP 200. If not 200, paste the last 40 lines of /tmp/streamlit.log:
+    tail -40 /tmp/streamlit.log
+
+================================================================================
+DO-NOT / STOP RULES
+================================================================================
+- Do NOT edit any source file. Copy the attached files verbatim only.
+- Do NOT change ports, the credentials.toml fix, or the start command.
+- If STEP 1/1.5/2/3/4 fails, STOP and paste everything — do not attempt a fix.
+- Do NOT change a global filter or trigger a full refresh during boot check
+  (the _refresh_full_workbook path is still un-hardened per the handoff).
+- multi-line commands: if a paste mangles (bracketed-paste ^[[200~ junk), type
+  the command by hand or use Replit's Run button.
