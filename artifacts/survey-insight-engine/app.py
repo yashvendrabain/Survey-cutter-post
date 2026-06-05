@@ -353,6 +353,56 @@ header[data-testid="stHeader"] [data-testid="stToolbar"] {
 </style>
 """
 
+
+_POLISH_CSS_6D = """
+<style>
+/* ===== 6D polish: scoped to .main so header/sidebar are untouched ===== */
+.main .block-container h1 { font-size:26px !important; font-weight:700 !important; color:#15171A !important; letter-spacing:-0.01em !important; }
+.main .block-container h2 { font-size:19px !important; font-weight:600 !important; color:#15171A !important; }
+.main .block-container h3 { font-size:15px !important; font-weight:600 !important; color:#15171A !important; }
+.main .block-container p, .main .block-container li { font-size:14px !important; line-height:1.6 !important; color:#2B2F33 !important; }
+
+.main .stButton > button { border-radius:8px !important; text-transform:none !important; letter-spacing:0 !important; font-weight:600 !important; font-size:13px !important; padding:9px 18px !important; box-shadow:0 1px 2px rgba(16,24,40,0.05) !important; transition:all 0.15s ease !important; }
+.main .stButton > button[kind="primary"], .main .stButton > button:first-child { background:#CC0000 !important; color:#FFFFFF !important; border:none !important; }
+.main .stButton > button[kind="primary"]:hover, .main .stButton > button:first-child:hover { background:#B30000 !important; box-shadow:0 4px 12px rgba(204,0,0,0.20) !important; }
+.main .stButton > button[kind="secondary"] { background:#FFFFFF !important; color:#2B2F33 !important; border:1px solid #D8D8D8 !important; }
+.main .stButton > button[kind="secondary"]:hover { background:#FAFAFA !important; border-color:#CC0000 !important; color:#CC0000 !important; }
+
+.main .stTextInput input, .main .stNumberInput input, .main textarea { border-radius:8px !important; border:1px solid #D8D8D8 !important; font-size:13px !important; padding:8px 12px !important; }
+.main .stTextInput input:focus, .main .stNumberInput input:focus, .main textarea:focus { border-color:#CC0000 !important; box-shadow:0 0 0 3px rgba(204,0,0,0.10) !important; }
+.main .stSelectbox [data-baseweb="select"] > div, .main .stMultiSelect [data-baseweb="select"] > div { border-radius:8px !important; border-color:#D8D8D8 !important; font-size:13px !important; }
+
+.main [data-testid="stExpander"] { border:1px solid #E6E6E6 !important; border-left:1px solid #E6E6E6 !important; border-radius:10px !important; box-shadow:0 1px 2px rgba(16,24,40,0.04) !important; overflow:hidden !important; margin-bottom:10px !important; }
+.main [data-testid="stExpander"]:hover { border-color:#D0D0D0 !important; border-left-color:#CC0000 !important; box-shadow:0 2px 8px rgba(16,24,40,0.06) !important; }
+.main [data-testid="stExpander"] summary { font-size:14px !important; font-weight:600 !important; padding:13px 16px !important; }
+
+.main [data-testid="stMetric"] { border:1px solid #E6E6E6 !important; border-top:3px solid #CC0000 !important; border-radius:10px !important; box-shadow:0 1px 2px rgba(16,24,40,0.04) !important; padding:16px 18px !important; }
+
+.main [data-testid="stTabs"] [data-baseweb="tab-list"] { gap:4px !important; border-bottom:1px solid #E6E6E6 !important; }
+.main [data-testid="stTabs"] [data-baseweb="tab"] { font-size:13px !important; font-weight:600 !important; color:#8A8F94 !important; padding:8px 16px !important; }
+.main [data-testid="stTabs"] [aria-selected="true"] { color:#CC0000 !important; }
+.main [data-testid="stTabs"] [data-baseweb="tab-highlight"] { background:#CC0000 !important; height:2px !important; }
+
+.main [data-testid="stRadio"] > div[role="radiogroup"] { display:inline-flex !important; gap:0 !important; border:1px solid #D8D8D8 !important; border-radius:8px !important; background:#F5F6F7 !important; padding:2px !important; }
+.main [data-testid="stRadio"] > div[role="radiogroup"] > label { margin:0 !important; padding:5px 14px !important; border-radius:6px !important; font-size:12px !important; font-weight:600 !important; color:#5A5A5A !important; cursor:pointer !important; }
+.main [data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) { background:#FFFFFF !important; color:#CC0000 !important; box-shadow:0 1px 2px rgba(16,24,40,0.10) !important; }
+.main [data-testid="stRadio"] > div[role="radiogroup"] > label > div:first-child { display:none !important; }
+
+.main [data-testid="stDataFrame"] { border:1px solid #E6E6E6 !important; border-radius:10px !important; overflow:hidden !important; }
+
+.main .stAlert { border-radius:10px !important; }
+.main [data-testid="stInfo"] { background:#F7F9FB !important; border:1px solid #E3E8EE !important; border-left:4px solid #CC0000 !important; color:#2B2F33 !important; }
+
+.main .section-header-box { border-bottom:1px solid #ECECEC !important; padding:8px 0 12px !important; margin-bottom:18px !important; }
+.main .section-num { border-radius:8px !important; width:28px !important; height:28px !important; box-shadow:0 1px 2px rgba(204,0,0,0.25) !important; }
+.main .section-name { font-size:13px !important; letter-spacing:0.06em !important; }
+
+.main [data-testid="stFileUploader"] { border:1.5px dashed #D8B0B0 !important; border-radius:10px !important; background:#FAFAFA !important; }
+.main [data-testid="stFileUploader"]:hover { border-color:#CC0000 !important; background:#FFF8F8 !important; }
+</style>
+"""
+
+
 def _custom_header_html() -> str:
     app = _require_streamlit()
     schema = app.session_state.get("schema")
@@ -514,6 +564,7 @@ def _inject_global_css() -> None:
     app.markdown(_THEME_CSS, unsafe_allow_html=True)
     app.markdown(_THEME_CSS_DAY18, unsafe_allow_html=True)
     app.markdown(_custom_header_html(), unsafe_allow_html=True)
+    app.markdown(_POLISH_CSS_6D, unsafe_allow_html=True)
 
 def _inject_theme_css() -> None:
     """Backwards-compatible alias retained for any internal callers."""
@@ -892,7 +943,7 @@ def _render_insight_section(
         app.markdown("**AI insight**")
     with cols[1]:
         btn_label = (
-            "Generate insight"
+            "Explain this cut"
             if insight_key not in app.session_state
             else "Regenerate"
         )
@@ -3108,22 +3159,26 @@ def _render_single_cut_result(result: Any, spec: Any) -> None:
         # across Counts / Counts+% / % only toggles.
         ss_counts = [p.get("count", 0) for _, p in sorted_dist.items()]
         ss_flags = _compute_outlier_flags(ss_counts)
-        display_mode = app.radio(
-            "Display",
-            options=["Counts", "Counts + %", "% only"],
-            index=1,
-            horizontal=True,
-            key=f"sc_display_{result.question_id}",
-            label_visibility="collapsed",
-        )
-        _render_recommended_chart_and_thinkcell(result, spec)
-        _render_sc_table_html(
-            sorted_dist,
-            display_mode,
-            result.valid_n,
-            flags=ss_flags,
-            key_suffix=str(result.question_id),
-        )
+        tab_chart, tab_table = app.tabs(["Chart", "Table"])
+        with tab_chart:
+            _render_recommended_chart_and_thinkcell(result, spec)
+        with tab_table:
+            display_mode = app.radio(
+                "Display",
+                options=["Counts", "Counts + %", "% only"],
+                format_func=lambda x: {"Counts": "#", "Counts + %": "# & %", "% only": "%"}[x],
+                index=1,
+                horizontal=True,
+                key=f"sc_display_{result.question_id}",
+                label_visibility="collapsed",
+            )
+            _render_sc_table_html(
+                sorted_dist,
+                display_mode,
+                result.valid_n,
+                flags=ss_flags,
+                key_suffix=str(result.question_id),
+            )
     elif isinstance(result, MultiSelectResult):
         ms_dist: dict[Any, dict[str, Any]] = {}
         for sub_id, payload in result.selections.items():
@@ -3148,26 +3203,30 @@ def _render_single_cut_result(result: Any, spec: Any) -> None:
         # Compute flags ONCE from selected counts.
         ms_counts = [p.get("count", 0) for _, p in ms_dist.items()]
         ms_flags = _compute_outlier_flags(ms_counts)
-        display_mode = app.radio(
-            "Display",
-            options=["Counts", "Counts + %", "% only"],
-            index=1,
-            horizontal=True,
-            key=f"sc_display_{result.question_id}",
-            label_visibility="collapsed",
-        )
-        _render_recommended_chart_and_thinkcell(result, spec)
-        _render_sc_table_html(
-            ms_dist,
-            display_mode,
-            result.valid_n,
-            flags=ms_flags,
-            key_suffix=f"ms_{result.question_id}",
-        )
-        app.caption(
-            "Selected counts only. Unchecked counts remain in the audit trail "
-            "of the downloaded workbook."
-        )
+        tab_chart, tab_table = app.tabs(["Chart", "Table"])
+        with tab_chart:
+            _render_recommended_chart_and_thinkcell(result, spec)
+        with tab_table:
+            display_mode = app.radio(
+                "Display",
+                options=["Counts", "Counts + %", "% only"],
+                format_func=lambda x: {"Counts": "#", "Counts + %": "# & %", "% only": "%"}[x],
+                index=1,
+                horizontal=True,
+                key=f"sc_display_{result.question_id}",
+                label_visibility="collapsed",
+            )
+            _render_sc_table_html(
+                ms_dist,
+                display_mode,
+                result.valid_n,
+                flags=ms_flags,
+                key_suffix=f"ms_{result.question_id}",
+            )
+            app.caption(
+                "Selected counts only. Unchecked counts remain in the audit trail "
+                "of the downloaded workbook."
+            )
     elif isinstance(result, NumericResult):
         rows = [
             {"Statistic": "Valid N", "Value": result.valid_n},
@@ -3229,13 +3288,20 @@ def _render_single_cut_card(
             f"Missing: {result.missing_n:,}"
         )
 
-        app.markdown("**Filters for this question**")
-        app.caption(TOOLTIP_PER_QUESTION_FILTER)
-
         filter_key = f"filters_{spec.canonical_id}"
         if filter_key not in app.session_state:
             app.session_state[filter_key] = []
-        filter_rows: list[tuple[str | None, Any]] = app.session_state[filter_key]
+        filter_rows_current = app.session_state.get(filter_key, [])
+        has_active_filter = bool(app.session_state.get("filtered_results", {}).get(spec.canonical_id))
+        show_filter_ui = bool(filter_rows_current) or has_active_filter
+
+        if show_filter_ui:
+            app.markdown("**Filters for this question**")
+            app.caption(TOOLTIP_PER_QUESTION_FILTER)
+
+        filter_rows: list[tuple[str | None, Any]] = (
+            app.session_state[filter_key] if show_filter_ui else []
+        )
 
         eligible = _eligible_filter_questions()
         question_options: list[tuple[str, Any]] = [("None", None)] + [
@@ -3314,22 +3380,27 @@ def _render_single_cut_card(
             _purge_widget_keys(f"{filter_key}_q_", f"{filter_key}_v_")
             app.rerun()
 
-        cols_btn = app.columns([2, 2, 4])
-        with cols_btn[0]:
-            if app.button("+ Add filter", key=f"{filter_key}_add"):
-                app.session_state[filter_key] = new_rows + [(None, None)]
-                _purge_widget_keys(f"{filter_key}_q_", f"{filter_key}_v_")
-                app.rerun()
-        with cols_btn[1]:
-            apply_clicked = app.button(
-                "Apply filters",
-                key=f"{filter_key}_apply",
-                type="primary",
-                disabled=not any(q is not None for q, _v in new_rows),
-            )
+        apply_clicked = False
+        if show_filter_ui:
+            cols_btn = app.columns([2, 2, 4])
+            with cols_btn[0]:
+                if app.button("+ Add filter", key=f"{filter_key}_add"):
+                    app.session_state[filter_key] = new_rows + [(None, None)]
+                    _purge_widget_keys(f"{filter_key}_q_", f"{filter_key}_v_")
+                    app.rerun()
+            with cols_btn[1]:
+                apply_clicked = app.button(
+                    "Apply filters",
+                    key=f"{filter_key}_apply",
+                    type="primary",
+                    disabled=not any(q is not None for q, _v in new_rows),
+                )
+        elif app.button("+ Add filter just for this question", key=f"{filter_key}_reveal"):
+            app.session_state[filter_key] = [(None, None)]
+            app.rerun()
 
         pq_errors = app.session_state.get("per_question_filter_errors") or {}
-        if spec.canonical_id in pq_errors:
+        if show_filter_ui and spec.canonical_id in pq_errors:
             app.error(f"Filter failed: {pq_errors[spec.canonical_id]}")
 
         if apply_clicked:
@@ -3442,8 +3513,8 @@ def _render_single_cut_card(
     # nesting expanders, and _render_insight_section uses an expander to show
     # the API error detail when the AI call fails.
     if pending_insight is not None:
-        # Auto-generate insight when a per-question filter is active;
-        # otherwise keep the manual "Generate insight" button.
+        # Auto-create an explanation when a per-question filter is active;
+        # otherwise keep the manual "Explain this cut" button.
         if pending_insight["table_kind"] != "single_cut":
             with app.spinner("Generating insight..."):
                 auto_payload = pending_insight["payload_factory"]()
@@ -3988,59 +4059,74 @@ def _render_format_wizard_step_2(config: dict[str, Any]) -> None:
 
 def _render_format_wizard_step_3(config: dict[str, Any]) -> None:
     app = _require_streamlit()
-    from src.adapters.wizard_configured import infer_question_id_regex
-
-    example = app.text_input(
-        "Paste ONE example of a question ID, exactly as it appears in the data "
-        "map / codebook sheet (its left column, e.g. q1, 1q, q-1, Q15, Item_3). "
-        "The wizard infers the pattern from it.",
-        value=str(config.get("question_id_example") or ""),
-        placeholder="q1",
-        key="wizard_question_id_example",
+    labels = [
+        "Q followed by number (Q1, Q2, Q3)",
+        "Lowercase q followed by number (q1, q2, q3)",
+        "Q with underscore (Q_1, Q_2)",
+        "Question_N (Question_1, Question_2)",
+        "Other (specify regex)",
+    ]
+    mapping = {
+        labels[0]: r"^Q\d+",
+        labels[1]: r"^q\d+",
+        labels[2]: r"^Q_\d+",
+        labels[3]: r"^Question_\d+",
+    }
+    current = str(config.get("question_id_pattern") or r"^Q\d+")
+    reverse = {value: label for label, value in mapping.items()}
+    choice = app.radio(
+        "How are question IDs written in this survey?",
+        labels,
+        index=labels.index(reverse.get(current, labels[-1])),
+        key="wizard_question_id_choice",
     )
-    config["question_id_example"] = example.strip()
-    if config["question_id_example"]:
-        try:
-            config["question_id_pattern"] = infer_question_id_regex(
-                config["question_id_example"]
-            ).pattern
-            app.caption(f"Inferred question-ID pattern: {config['question_id_pattern']}")
-        except ValueError:
-            config["question_id_pattern"] = ""
-            app.warning(
-                "That example has no number in it. Include the question number, "
-                "e.g. 'q1' or 'Item_3'."
-            )
+    if choice == labels[-1]:
+        config["question_id_pattern"] = app.text_input(
+            "Question ID regex",
+            value=current,
+            placeholder=r"e.g. ^SQ\d+ or ^Item_\d+",
+            key="wizard_question_id_pattern_custom",
+        )
     else:
-        config["question_id_pattern"] = ""
+        config["question_id_pattern"] = mapping[choice]
 
 
 def _render_format_wizard_step_4(config: dict[str, Any]) -> None:
     app = _require_streamlit()
-    from src.adapters.wizard_configured import infer_multi_select_spec
-
-    example = app.text_input(
-        "Paste ONE example of a multi-select / grid option COLUMN, exactly as it "
-        "appears in the raw data sheet header (e.g. 6q1a, Q6r1, q6_1, or "
-        "'Q6: Field sales'). Leave blank only if this survey has no multi-part "
-        "questions.",
-        value=str(config.get("multi_select_example") or ""),
-        placeholder="6q1a",
-        key="wizard_multi_select_example",
+    labels = [
+        "Q1r1, Q1r2, ... (lowercase r separator)",
+        "Q1s1, Q1s2, ... (lowercase s separator)",
+        "Q1_1, Q1_2, ... (underscore separator)",
+        "Q1.1, Q1.2, ... (dot separator)",
+        "Q1: option label, Q1: another label (colon followed by label)",
+        "Other (specify)",
+        "No multi-part questions in this survey",
+    ]
+    mapping = {
+        labels[0]: "r",
+        labels[1]: "s",
+        labels[2]: "_",
+        labels[3]: r"\.",
+        labels[4]: ":",
+        labels[6]: "none",
+    }
+    current = str(config.get("sub_column_separator") or "none")
+    reverse = {value: label for label, value in mapping.items()}
+    choice = app.radio(
+        "How are multi-part questions (grids, multi-select) named in the raw data?",
+        labels,
+        index=labels.index(reverse.get(current, labels[5])),
+        key="wizard_sub_column_separator_choice",
     )
-    config["multi_select_example"] = example.strip()
-    config["sub_column_separator"] = "none"
-    if config["multi_select_example"]:
-        try:
-            mode, _multi, _single = infer_multi_select_spec(
-                config["multi_select_example"]
-            )
-            app.caption(f"Inferred multi-select mode: {mode}")
-        except ValueError:
-            app.warning(
-                "That example has no number in it. Include the question number, "
-                "e.g. '6q1a' or 'Q6: Field sales'."
-            )
+    if choice == labels[5]:
+        example = app.text_input(
+            "Example column name or separator regex",
+            value=current if current not in {"r", "s", "_", r"\.", ":", "none"} else "",
+            key="wizard_sub_column_separator_custom",
+        )
+        config["sub_column_separator"] = _infer_separator_from_example(example)
+    else:
+        config["sub_column_separator"] = mapping[choice]
 
 
 def _render_format_wizard_step_5(config: dict[str, Any]) -> None:
@@ -4149,11 +4235,10 @@ def _build_wizard_preview(uploaded_files: list[Any], config: dict[str, Any]) -> 
             for question in questions
             for column, _label in question.get("sub_columns", [])
         }
-        raw_column_set = {str(column) for column in raw_df.columns}
         matched_columns.update(
-            str(question.get("raw_id") or question["canonical_id"])
+            question["canonical_id"]
             for question in questions
-            if str(question.get("raw_id") or question["canonical_id"]) in raw_column_set
+            if question["canonical_id"] in set(str(column) for column in raw_df.columns)
         )
         breakdown = _wizard_question_type_breakdown(questions)
         return {
@@ -4599,13 +4684,10 @@ def _clear_global_filter_action() -> None:
 def _section_global_filter() -> None:
     app = _require_streamlit()
     app.markdown('<div id="section-filter"></div>', unsafe_allow_html=True)
-    _section_header("2", SECTION_GLOBAL_FILTER, anchor="section-2", meta="Subset every analysis")
+    _section_header("2", SECTION_GLOBAL_FILTER, anchor="section-2", meta="Apply filters across all cuts")
 
     if not app.session_state["run_complete"]:
-        app.caption(
-            "Run an analysis first \u2014 the global filter becomes available "
-            "once the data is loaded."
-        )
+        app.caption("Available after you run the analysis.")
         return
 
     app.markdown(TOOLTIP_GLOBAL_FILTER)
@@ -4751,6 +4833,20 @@ def _section_survey_classification() -> None:
 
     data_map = app.session_state.get("data_map")
     if data_map is None:
+        return
+
+    toggle_key = "show_winners_vs_laggards"
+    if toggle_key not in app.session_state:
+        app.session_state[toggle_key] = False
+    arrow = "v" if app.session_state[toggle_key] else ">"
+    if app.button(
+        f"{arrow}  Winners vs Laggards analysis",
+        key="toggle_winners_vs_laggards",
+        use_container_width=True,
+    ):
+        app.session_state[toggle_key] = not app.session_state[toggle_key]
+        app.rerun()
+    if not app.session_state["show_winners_vs_laggards"]:
         return
 
     if app.session_state.get("survey_type_result") is None:
@@ -5947,16 +6043,11 @@ def _section_cross_cuts() -> None:
         app.info(EMPTY_NO_CROSS_CUTS)
         return
 
-    if app.checkbox(
-        "Show suggested cross cuts",
-        key="show_suggested_cross_cuts",
-        help=TOOLTIP_CROSS_CUT_SUGGESTIONS,
-    ):
-        with app.expander("Suggested cross cuts", expanded=True):
-            _render_suggested_cross_cuts()
-
-    with app.expander("Run a manual cross cut"):
+    with app.expander("Build a cross cut", expanded=True):
         _render_manual_cross_cut()
+
+    with app.expander("Suggestions", expanded=False):
+        _render_suggested_cross_cuts()
 
     results = app.session_state["cross_cut_results"]
     if not results:
@@ -6351,6 +6442,8 @@ def _normalise_insight_payload(
 def _section_ai_analysis() -> None:
     app = _require_streamlit()
     _section_survey_classification()
+    if not app.session_state.get("show_winners_vs_laggards", False):
+        return
     app.divider()
     app.markdown('<div id="section-ai"></div>', unsafe_allow_html=True)
     if not app.session_state.get("run_complete"):
@@ -6367,10 +6460,7 @@ def _section_ai_analysis() -> None:
         "segmentation_result"
     )
     if seg is None:
-        app.info(
-            "Complete outcome segmentation in the Survey Classification "
-            "section above to unlock AI Analysis."
-        )
+        app.info("Available after you run the analysis.")
         return
 
     _render_outcome_summary_panel(seg)
@@ -7155,16 +7245,11 @@ def _render_setup_wizard(uploaded_files: list[Any]) -> None:
 
     app.markdown("<div class='wiz-shell'>", unsafe_allow_html=True)
     _render_wizard_stepper()
-    _render_wizard_nav("top")
     step = int(app.session_state.get("wiz_step", 1))
     if step == 1:
         _render_wizard_step_categories()
     elif step == 2:
-        _render_wizard_step_demographics()
-    elif step == 3:
-        _render_wizard_step_custom_filters()
-    elif step == 4:
-        _render_wizard_step_per_question_filters()
+        _render_wizard_step_filters()
     else:
         _render_wizard_step_crosscut()
     _render_wizard_nav("bottom")
@@ -7241,6 +7326,10 @@ def _render_wizard_css() -> None:
 .wiz-card-text { font-size: 13px; font-family: Arial, sans-serif; margin: 4px 0; }
 .wiz-card-type { color: #666; font-size: 11px; font-style: italic; font-family: Arial, sans-serif; }
 .wiz-divider { border-top: 1px solid #E5E5E5; margin: 16px 0; }
+.wiz-stepper { position: relative; }
+.wiz-step-circle { box-shadow: 0 1px 2px rgba(16,24,40,0.08); transition: all 0.15s ease; }
+.wiz-step-complete { box-shadow: 0 1px 3px rgba(204,0,0,0.25); }
+.wiz-step-label { color: #5A5A5A; }
 </style>
 """,
         unsafe_allow_html=True,
@@ -7249,13 +7338,13 @@ def _render_wizard_css() -> None:
 
 def _render_wizard_stepper() -> None:
     app = _require_streamlit()
-    labels = ["Categories", "Demographics", "Custom filters", "Per-Q filters", "Cross-cuts"]
+    labels = ["Categories", "Filters", "Cross-cuts"]
     current = int(app.session_state.get("wiz_step", 1))
-    cols = app.columns(5)
+    cols = app.columns(3)
     for index, label in enumerate(labels, start=1):
         if index < current:
             css_class = "wiz-step-complete"
-            marker = "?"
+            marker = str(index)
         elif index == current:
             css_class = "wiz-step-active"
             marker = str(index)
@@ -7277,10 +7366,10 @@ def _render_wizard_nav(location: str) -> None:
     if back_col.button("Back", disabled=(step <= 1), key=f"wiz_back_{location}"):
         app.session_state["wiz_step"] = max(1, step - 1)
         _wizard_rerun(app)
-    step_col.markdown(f"<div style='text-align:center;color:#666;font-size:13px;'>Step {step} of 5</div>", unsafe_allow_html=True)
-    if step < 5:
+    step_col.markdown(f"<div style='text-align:center;color:#666;font-size:13px;'>Step {step} of 3</div>", unsafe_allow_html=True)
+    if step < 3:
         if next_col.button("Next", type="primary", key=f"wiz_next_{location}"):
-            app.session_state["wiz_step"] = min(5, step + 1)
+            app.session_state["wiz_step"] = min(3, step + 1)
             _wizard_rerun(app)
 
 
@@ -7464,7 +7553,7 @@ def _render_wizard_step_categories() -> None:
                         _wizard_rerun(app)
 
 
-def _render_wizard_step_demographics() -> None:
+def _render_wizard_step_filters() -> None:
     app = _require_streamlit()
     from src.ui.wizard import distinct_value_preview, eligible_filter_question_ids, question_display_text
 
@@ -7473,7 +7562,7 @@ def _render_wizard_step_demographics() -> None:
     if schema is None:
         app.info("Upload files to review demographic filters.")
         return
-    app.markdown("### Confirm demographic filters")
+    app.markdown("### Demographic filters")
     selected = set(app.session_state.get("wiz_selected_demographics") or [])
     candidate_ids = [q.canonical_id for q in schema.questions if q.is_demographic or q.canonical_id in selected]
     for question_id in candidate_ids:
@@ -7501,13 +7590,11 @@ def _render_wizard_step_demographics() -> None:
         app.session_state["wiz_selected_demographics"] = sorted(selected)
         _wizard_rerun(app)
 
-
-def _render_wizard_step_custom_filters() -> None:
-    app = _require_streamlit()
+    app.divider()
     from src.ui.wizard import normalise_custom_filter_count
 
     app.markdown("### Custom workbook filters")
-    app.write("Custom filters let partners set arbitrary filters on the entire workbook in addition to demographic ones. How many would you like?")
+    app.caption("Partners can set arbitrary filters across the whole workbook in addition to demographics.")
     value = app.number_input(
         "Custom workbook filters",
         min_value=0,
@@ -7519,13 +7606,11 @@ def _render_wizard_step_custom_filters() -> None:
     app.session_state["wiz_num_custom_filters"] = int(value)
     app.caption("Setting saved ? exporter wiring coming in the next iteration.")
 
-
-def _render_wizard_step_per_question_filters() -> None:
-    app = _require_streamlit()
+    app.divider()
     from src.ui.wizard import normalise_per_question_filter_count
 
-    app.markdown("### Per-question filters")
-    app.write("How many filter rows should appear under each question block?")
+    app.markdown("### Per-question filter rows")
+    app.caption("Number of filter rows shown inside each question card on the dashboard.")
     value = app.number_input(
         "Per-question filters",
         min_value=0,
@@ -7590,3 +7675,4 @@ def _wizard_rerun(app: Any) -> None:
 
 if __name__ == "__main__":
     main()
+    
