@@ -485,6 +485,40 @@ _UI_V2_CSS = """
 """
 
 
+# ---------------------------------------------------------------------------
+# Inline SVG icon library (Feather-derived, Bain-styled: thin strokes,
+# rounded caps, currentColor inheritance so each icon picks up surrounding
+# text color). All icons are 24x24 viewBox; render at any pixel size.
+# ---------------------------------------------------------------------------
+_BAIN_ICONS: dict[str, str] = {
+    # File / data flow
+    "upload":    '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
+    "download":  '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+    # Analyze
+    "chart":     '<line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
+    # Stats / metadata
+    "users":     '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+    "clipboard": '<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>',
+    "list":      '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
+    # Onboarding / start
+    "spark":     '<path d="M12 3l1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6L12 3z"/>',
+    # Navigation chevrons (wizard top nav)
+    "chev-left":  '<polyline points="15 18 9 12 15 6"/>',
+    "chev-right": '<polyline points="9 18 15 12 9 6"/>',
+}
+
+
+def _svg_icon(name: str, size: int = 16, color: str = "currentColor", stroke: float = 1.75) -> str:
+    """Inline SVG icon. color='currentColor' lets it inherit parent text color."""
+    body = _BAIN_ICONS.get(name, "")
+    return (
+        f'<svg width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" '
+        f'stroke="{color}" stroke-width="{stroke}" stroke-linecap="round" '
+        f'stroke-linejoin="round" style="vertical-align:middle;display:inline-block;flex-shrink:0;">'
+        f'{body}</svg>'
+    )
+
+
 def _custom_header_html() -> str:
     app = _require_streamlit()
     return (
@@ -4721,10 +4755,10 @@ def _section_upload() -> None:
         skips = app.session_state["skips"]
         log = app.session_state["log"]
         _render_stat_tiles([
-            ("\U0001F465", int(getattr(schema, "total_respondents", 0) or 0), "Respondents"),
-            ("\U0001F4CB", len(schema.questions), "Total questions"),
-            ("\U0001F4CA", len(results), "Single cuts"),
-            ("\U0001F9FE", len(log), "Audit records"),
+            ("users",     int(getattr(schema, "total_respondents", 0) or 0), "Respondents"),
+            ("clipboard", len(schema.questions), "Total questions"),
+            ("chart",     len(results), "Single cuts"),
+            ("list",      len(log), "Audit records"),
         ])
 
 
@@ -6969,9 +7003,9 @@ def _render_sidebar() -> None:
 
         if not app.session_state.get("run_complete"):
             app.markdown(
-                """
+                f"""
                 <div class="gs-wrap">
-                  <div class="gs-title">\U0001F680 Getting started</div>
+                  <div class="gs-title">{_svg_icon("spark", size=15, color="#CC0000")}<span style="margin-left:7px;">Getting started</span></div>
                   <div class="gs-step">
                     <div class="gs-badge done">1</div>
                     <div class="gs-body">
@@ -7345,9 +7379,11 @@ def _render_stat_tiles(stats: list[tuple[str, int, str]]) -> None:
     tiles = ['<div class="stat-row">']
     for icon, value, label in stats:
         v = int(value)
+        # icon can be either an SVG icon name (use _icon) or raw HTML string for back-compat.
+        icon_html = _svg_icon(icon, size=20, color="#CC0000") if icon in _BAIN_ICONS else str(icon)
         tiles.append(
             '<div class="stat-tile">'
-            f'<div class="stat-icon">{icon}</div>'
+            f'<div class="stat-icon">{icon_html}</div>'
             f'<div class="stat-num" data-target="{v}">{v:,}</div>'
             f'<div class="stat-label">{html.escape(label)}</div></div>'
         )
@@ -7400,17 +7436,17 @@ def _render_journey_rail() -> None:
         states = ["active", "todo", "todo"]
         lines = ["todo", "todo"]
     steps = [
-        ("\U0001F4E4", "Upload survey", "raw data + data map"),
-        ("\U0001F4CA", "Analyze &amp; review", "single &amp; cross cuts"),
-        ("\u2B07\uFE0F", "Download", "consultant-ready workbook"),
+        ("upload",   "Upload survey",       "raw data + data map"),
+        ("chart",    "Analyze &amp; review", "single &amp; cross cuts"),
+        ("download", "Download",            "consultant-ready workbook"),
     ]
     parts = ['<div class="journey">']
-    for i, (icon, title, sub) in enumerate(steps):
+    for i, (icon_name, title, sub) in enumerate(steps):
         st = states[i]
-        dot = "\u2713" if st == "done" else icon
+        dot_inner = "\u2713" if st == "done" else _svg_icon(icon_name, size=16)
         parts.append(
             f'<div class="journey-step {st}">'
-            f'<div class="journey-dot {st}">{dot}</div>'
+            f'<div class="journey-dot {st}">{dot_inner}</div>'
             f'<div class="journey-text"><span class="journey-title">{title}</span>'
             f'<span class="journey-sub">{sub}</span></div></div>'
         )
@@ -7424,7 +7460,7 @@ def main() -> None:
     app = _require_streamlit()
     app.set_page_config(
         page_title=APP_TITLE,
-        page_icon="📊",
+        page_icon="\u25A0",
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -7468,6 +7504,7 @@ def _render_setup_wizard(uploaded_files: list[Any]) -> None:
         return
 
     app.markdown("<div class='wiz-shell'>", unsafe_allow_html=True)
+    _render_wizard_top_nav()
     _render_wizard_stepper()
     step = int(app.session_state.get("wiz_step", 1))
     if step == 1:
@@ -7581,6 +7618,26 @@ def _render_wizard_stepper() -> None:
             f"<div class='wiz-step-label' style='font-weight:{weight}'>{html.escape(label)}</div>",
             unsafe_allow_html=True,
         )
+
+
+def _render_wizard_top_nav() -> None:
+    """Compact chevron-only top nav. Mirrors the bottom Back/Next buttons but
+    sits at the very top of the wizard so the user can advance/retreat without
+    scrolling. Uses thin single-guillemet glyphs for a minimalistic feel."""
+    app = _require_streamlit()
+    step = int(app.session_state.get("wiz_step", 1))
+    back_col, _spacer, next_col = app.columns([1, 12, 1])
+    if back_col.button(
+        "\u2039", disabled=(step <= 1), key="wiz_back_top", help="Back",
+    ):
+        app.session_state["wiz_step"] = max(1, step - 1)
+        _wizard_rerun(app)
+    if step < 3:
+        if next_col.button(
+            "\u203A", type="primary", key="wiz_next_top", help="Next",
+        ):
+            app.session_state["wiz_step"] = min(3, step + 1)
+            _wizard_rerun(app)
 
 
 def _render_wizard_nav(location: str) -> None:
