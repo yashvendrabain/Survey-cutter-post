@@ -1551,13 +1551,11 @@ def _render_chart_for_distribution(
         app.caption(f"Chart unavailable: {type(exc).__name__}: {exc}")
 
 
-def _render_recommended_chart_and_thinkcell(result: Any, spec: Any) -> None:
-    """Render the rule-recommended chart and think-cell copy table."""
-
+def _thinkcell_chart_payload(result: Any, spec: Any):
+    """Compute (recommendation, payload) for the recommended chart, or None on error."""
     app = _require_streamlit()
     try:
         from src.chart_recommender import recommend_chart
-        from src.chart_renderer import render_chart
         from src.thinkcell_table_formatter import format_for_thinkcell
 
         recommendation = recommend_chart(result, spec)
@@ -1573,6 +1571,21 @@ def _render_recommended_chart_and_thinkcell(result: Any, spec: Any) -> None:
             question_text=getattr(spec, "question_text", "") or "",
             survey_name=str(survey_name),
         )
+        return recommendation, payload
+    except Exception as exc:  # noqa: BLE001
+        app.caption(f"Recommended chart unavailable: {type(exc).__name__}: {exc}")
+        return None
+
+
+def _render_recommended_chart(result: Any, spec: Any) -> None:
+    """Render the rule-recommended Plotly chart with a chart-type override."""
+    app = _require_streamlit()
+    computed = _thinkcell_chart_payload(result, spec)
+    if computed is None:
+        return
+    recommendation, payload = computed
+    try:
+        from src.chart_renderer import render_chart
     except Exception as exc:  # noqa: BLE001
         app.caption(f"Recommended chart unavailable: {type(exc).__name__}: {exc}")
         return
@@ -1642,94 +1655,37 @@ def _render_recommended_chart_and_thinkcell(result: Any, spec: Any) -> None:
         else:
             app.caption(f"Inline recommended chart unavailable: {type(exc).__name__}: {exc}")
 
-    button_label = (
-        recommendation.button_label_override
-        if recommendation.artifact_type == "formatted_table"
-        else None
-    ) or "Show think-cell formatted table"
 
-    ppttc_artifact = None
-    ppttc_bundle: tuple[bytes, str] | None = None
-    ppttc_warning: str | None = None
-    try:
-        from src.ppttc_generator import build_ppttc, build_ppttc_bundle
+def _render_thinkcell_layout(result: Any, spec: Any) -> None:
+    """Render the copy-paste think-cell datasheet table (no template, no download)."""
+    app = _require_streamlit()
+    computed = _thinkcell_chart_payload(result, spec)
+    if computed is None:
+        return
+    recommendation, payload = computed
+    app.write(f"**Chart type:** {recommendation.chart_type.value}")
+    app.write(
+        "**Layout for think-cell:** copy the table below and paste directly "
+        "into the think-cell datasheet for the recommended chart type."
+    )
+    app.code(payload.to_tsv(), language="tsv")
+    app.caption(
+        "Click in the box above, Ctrl+A, Ctrl+C to copy. Then in PowerPoint: "
+        "insert a think-cell "
+        + recommendation.chart_type.value.lower().replace("_", " ")
+        + " chart and paste into its datasheet."
+    )
 
-        template_path = PROJECT_ROOT / "sample_data" / "bain_survey_template.pptx"
-        cache_key = str(getattr(spec, "canonical_id", result.question_id))
-        cache_signature = (
-            recommendation.chart_type.value,
-            payload.to_tsv(),
-            str(template_path),
-        )
-        ppttc_cache = app.session_state.setdefault("_ppttc_artifact_cache", {})
-        cached = ppttc_cache.get(cache_key)
-        if cached and cached.get("signature") == cache_signature:
-            ppttc_artifact = cached.get("artifact")
-            ppttc_bundle = cached.get("bundle")
-        else:
-            ppttc_artifact = build_ppttc(
-                recommendation=recommendation,
-                payload=payload,
-                template_path=template_path,
-                question_id=cache_key,
-                question_label=getattr(spec, "question_text", "") or cache_key,
-            )
-            if ppttc_artifact is not None:
-                ppttc_bundle = build_ppttc_bundle(ppttc_artifact, template_path)
-            ppttc_cache[cache_key] = {
-                "signature": cache_signature,
-                "artifact": ppttc_artifact,
-                "bundle": ppttc_bundle,
-            }
-    except FileNotFoundError as exc:
-        ppttc_warning = str(exc)
-    except Exception as exc:  # noqa: BLE001
-        ppttc_warning = f"think-cell chart download unavailable: {type(exc).__name__}: {exc}"
 
-    table_col, download_col = app.columns([3, 1])
-    with table_col:
-        app.markdown(f"**{button_label}**")
-        with app.container():
-            app.write(f"**Chart type:** {recommendation.chart_type.value}")
-            app.write(
-                "**Layout for think-cell:** copy the table below and paste directly "
-                "into the think-cell datasheet for the recommended chart type."
-            )
-            app.code(payload.to_tsv(), language="tsv")
-            app.caption(
-                "Click in the box above, Ctrl+A, Ctrl+C to copy. Then in PowerPoint: "
-                "insert a think-cell "
-                + recommendation.chart_type.value.lower().replace("_", " ")
-                + " chart and paste into its datasheet."
-            )
-    with download_col:
-        if ppttc_artifact is not None:
-            for warning in ppttc_artifact.warnings:
-                app.caption("Warning: " + warning)
-            if ppttc_bundle is not None:
-                zip_bytes, zip_filename = ppttc_bundle
-                app.download_button(
-                    label="Generate think-cell chart (zip)",
-                    data=zip_bytes,
-                    file_name=zip_filename,
-                    mime="application/zip",
-                    key=f"ppttc_zip_{getattr(spec, 'canonical_id', result.question_id)}",
-                    help=(
-                        "Unzip both files into the same folder, then double-click "
-                        "the .ppttc. think-cell will open the template and populate "
-                        "the chart automatically."
-                    ),
-                )
-            with app.expander("Advanced: download .ppttc only", expanded=False):
-                app.download_button(
-                    label=".ppttc only (template must be in same folder)",
-                    data=ppttc_artifact.content_bytes,
-                    file_name=ppttc_artifact.filename,
-                    mime="application/octet-stream",
-                    key=f"ppttc_dl_{getattr(spec, 'canonical_id', result.question_id)}",
-                )
-        elif ppttc_warning:
-            app.caption(ppttc_warning)
+def _render_recommended_chart_and_thinkcell(result: Any, spec: Any) -> None:
+    """Chart up front; think-cell datasheet tucked into a collapsed dropdown.
+
+    Retained for result types not rendered with Chart/Table tabs.
+    """
+    app = _require_streamlit()
+    _render_recommended_chart(result, spec)
+    with app.expander("Think-cell layout", expanded=False):
+        _render_thinkcell_layout(result, spec)
 
 
 def _render_chart_for_cross_tab(
@@ -3159,9 +3115,9 @@ def _render_single_cut_result(result: Any, spec: Any) -> None:
         # across Counts / Counts+% / % only toggles.
         ss_counts = [p.get("count", 0) for _, p in sorted_dist.items()]
         ss_flags = _compute_outlier_flags(ss_counts)
-        tab_chart, tab_table = app.tabs(["Chart", "Table"])
+        tab_chart, tab_table, tab_tc = app.tabs(["Chart", "Table", "Think-cell"])
         with tab_chart:
-            _render_recommended_chart_and_thinkcell(result, spec)
+            _render_recommended_chart(result, spec)
         with tab_table:
             display_mode = app.radio(
                 "Display",
@@ -3179,6 +3135,8 @@ def _render_single_cut_result(result: Any, spec: Any) -> None:
                 flags=ss_flags,
                 key_suffix=str(result.question_id),
             )
+        with tab_tc:
+            _render_thinkcell_layout(result, spec)
     elif isinstance(result, MultiSelectResult):
         ms_dist: dict[Any, dict[str, Any]] = {}
         for sub_id, payload in result.selections.items():
@@ -3203,9 +3161,9 @@ def _render_single_cut_result(result: Any, spec: Any) -> None:
         # Compute flags ONCE from selected counts.
         ms_counts = [p.get("count", 0) for _, p in ms_dist.items()]
         ms_flags = _compute_outlier_flags(ms_counts)
-        tab_chart, tab_table = app.tabs(["Chart", "Table"])
+        tab_chart, tab_table, tab_tc = app.tabs(["Chart", "Table", "Think-cell"])
         with tab_chart:
-            _render_recommended_chart_and_thinkcell(result, spec)
+            _render_recommended_chart(result, spec)
         with tab_table:
             display_mode = app.radio(
                 "Display",
@@ -3227,6 +3185,8 @@ def _render_single_cut_result(result: Any, spec: Any) -> None:
                 "Selected counts only. Unchecked counts remain in the audit trail "
                 "of the downloaded workbook."
             )
+        with tab_tc:
+            _render_thinkcell_layout(result, spec)
     elif isinstance(result, NumericResult):
         rows = [
             {"Statistic": "Valid N", "Value": result.valid_n},
@@ -7675,4 +7635,3 @@ def _wizard_rerun(app: Any) -> None:
 
 if __name__ == "__main__":
     main()
-    
