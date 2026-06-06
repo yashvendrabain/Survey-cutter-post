@@ -51,6 +51,12 @@ from src.ai_insights import (
     generate_table_insight,
 )
 from src.cross_cut_suggestions import score_suggestions_for_outcome
+from src.filter_options import (
+    build_filter_specs_from_selection,
+    cross_cut_question_options,
+    filter_question_options,
+    resolve_cross_cut_question,
+)
 from src.models import InsightResult, OutcomeSegmentationResult, QuestionType
 
 
@@ -485,24 +491,14 @@ _UI_V2_CSS = """
 """
 
 
-# ---------------------------------------------------------------------------
-# Inline SVG icon library (Feather-derived, Bain-styled: thin strokes,
-# rounded caps, currentColor inheritance so each icon picks up surrounding
-# text color). All icons are 24x24 viewBox; render at any pixel size.
-# ---------------------------------------------------------------------------
 _BAIN_ICONS: dict[str, str] = {
-    # File / data flow
     "upload":    '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
     "download":  '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
-    # Analyze
     "chart":     '<line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
-    # Stats / metadata
     "users":     '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
     "clipboard": '<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>',
     "list":      '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
-    # Onboarding / start
     "spark":     '<path d="M12 3l1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6L12 3z"/>',
-    # Navigation chevrons (wizard top nav)
     "chev-left":  '<polyline points="15 18 9 12 15 6"/>',
     "chev-right": '<polyline points="9 18 15 12 9 6"/>',
 }
@@ -2209,7 +2205,9 @@ def _drain_pending_actions() -> None:
                 filters=tuple(pending_gf["filter_specs"])
             )
             filtered_df, stats = apply_global_filter(
-                app.session_state["decoded_df"], state
+                app.session_state["decoded_df"],
+                state,
+                app.session_state.get("schema"),
             )
             app.session_state["global_filter_state"] = state
             app.session_state["global_filter_stats"] = stats
@@ -2838,11 +2836,7 @@ def _eligible_question_options() -> list[str]:
     schema = _require_streamlit().session_state["schema"]
     if schema is None:
         return []
-    return [
-        spec.canonical_id
-        for spec in schema.questions
-        if spec.analysis_eligible
-    ]
+    return [option.question_id for option in cross_cut_question_options(schema)]
 
 
 def _question_label_map() -> dict[str, str]:
@@ -2856,22 +2850,17 @@ def _question_label_map() -> dict[str, str]:
         out[spec.canonical_id] = (
             f"{spec.canonical_id} \u2014 {text}" if text else spec.canonical_id
         )
+    for option in cross_cut_question_options(schema):
+        out[option.question_id] = option.label
     return out
 
 
 def _eligible_filter_questions() -> list[Any]:
-    """Categorical questions with int-coded option maps usable as filters."""
+    """Questions with addressable filter values."""
     schema = _require_streamlit().session_state["schema"]
     if schema is None:
         return []
-    eligible = []
-    for spec in schema.questions:
-        if not spec.option_map:
-            continue
-        if not all(isinstance(key, int) for key in spec.option_map):
-            continue
-        eligible.append(spec)
-    return eligible
+    return filter_question_options(schema)
 
 
 # ---------------------------------------------------------------------------
@@ -3023,6 +3012,64 @@ def _preview_group_comparison(result: Any) -> None:
     seg_q = rt.get("segment_question_id", "")
     met_q = rt.get("metric_question_id", "")
     app.caption(f"Metric: {met_q}   Segments: {seg_q}")
+    if rt.get("grid_rows"):
+        segment_columns: list[tuple[Any, str]] = []
+        for row_payload in (rt.get("grid_rows", {}) or {}).values():
+            if not isinstance(row_payload, dict):
+                continue
+            for seg_val, seg_data in (row_payload.get("per_segment", {}) or {}).items():
+                label = seg_data.get("label", str(seg_val)) if isinstance(seg_data, dict) else str(seg_val)
+                key = (seg_val, label)
+                if key not in segment_columns:
+                    segment_columns.append(key)
+
+        rows = []
+        for row_id, row_payload in (rt.get("grid_rows", {}) or {}).items():
+            row_label = row_payload.get("label", row_id) if isinstance(row_payload, dict) else row_id
+            record = {"Row": row_label}
+            per_segment = row_payload.get("per_segment", {}) if isinstance(row_payload, dict) else {}
+            for seg_val, label in segment_columns:
+                seg_data = per_segment.get(seg_val, {}) if isinstance(per_segment, dict) else {}
+                record[f"{label} Mean"] = seg_data.get("mean") if isinstance(seg_data, dict) else None
+                record[f"{label} Median"] = seg_data.get("median") if isinstance(seg_data, dict) else None
+                record[f"{label} N"] = seg_data.get("n", 0) if isinstance(seg_data, dict) else 0
+            overall = row_payload.get("overall", {}) if isinstance(row_payload, dict) else {}
+            record["Overall Mean"] = overall.get("mean") if isinstance(overall, dict) else None
+            record["Overall Median"] = overall.get("median") if isinstance(overall, dict) else None
+            rows.append(record)
+        _df = pd.DataFrame(rows)
+        _copy_button(_df, f"gc_grid_{result.cross_cut_id}")
+        _styled_dataframe(_df, use_container_width=True, hide_index=True)
+        app.caption("Grid-rated row means by segment in the downloaded workbook.")
+        return
+    if rt.get("nps_entities"):
+        rows = []
+        for entity_id, entity_payload in (rt.get("nps_entities", {}) or {}).items():
+            row = {
+                "Entity": entity_payload.get("label", entity_id)
+                if isinstance(entity_payload, dict)
+                else entity_id
+            }
+            if not isinstance(entity_payload, dict):
+                rows.append(row)
+                continue
+            for seg_val, seg_data in (entity_payload.get("per_segment", {}) or {}).items():
+                if not isinstance(seg_data, dict):
+                    continue
+                label = str(seg_data.get("label", seg_val))
+                row[f"{label} NPS"] = seg_data.get("nps_score")
+                row[f"{label} Promoters %"] = seg_data.get("pct_promoters")
+                row[f"{label} Detractors %"] = seg_data.get("pct_detractors")
+                row[f"{label} Valid N"] = seg_data.get("valid_n", seg_data.get("n", 0))
+            overall = entity_payload.get("overall", {}) or {}
+            row["Overall NPS"] = overall.get("nps_score")
+            row["Overall Valid N"] = overall.get("valid_n", overall.get("n", 0))
+            rows.append(row)
+        _df = pd.DataFrame(rows)
+        _copy_button(_df, f"gc_nps_{result.cross_cut_id}")
+        _styled_dataframe(_df, use_container_width=True, hide_index=True)
+        app.caption("NPS by entity and segment in the downloaded workbook.")
+        return
     _render_chart_for_segment_metric(result, app.session_state.get("schema"))
     rows = []
     for seg_val, seg_data in (rt.get("per_segment", {}) or {}).items():
@@ -3146,10 +3193,31 @@ def _build_filter_spec(
 
     if not vals:
         return FilterSpec(filter_question_id=q_id)
+    specs = build_filter_specs_from_selection(schema, q_id, vals) if schema is not None else []
+    if len(specs) == 1:
+        return specs[0]
     resolved = [_resolve_filter_value(schema, df, q_id, v) for v in vals]
     if len(resolved) == 1:
         return FilterSpec(filter_question_id=q_id, filter_value=resolved[0])
     return FilterSpec(filter_question_id=q_id, filter_values=tuple(resolved))
+
+
+def _build_filter_specs(
+    schema: Any, df: Any, q_id: str, vals: list
+) -> list[Any]:
+    """Build one or more FilterSpecs from a parent question/value selection."""
+    if schema is not None:
+        specs = build_filter_specs_from_selection(schema, q_id, vals)
+        if specs:
+            return specs
+    from src.models import FilterSpec
+
+    if not vals:
+        return [FilterSpec(filter_question_id=q_id)]
+    resolved = [_resolve_filter_value(schema, df, q_id, v) for v in vals]
+    if len(resolved) == 1:
+        return [FilterSpec(filter_question_id=q_id, filter_value=resolved[0])]
+    return [FilterSpec(filter_question_id=q_id, filter_values=tuple(resolved))]
 
 
 def _build_grid_display_rows(
@@ -3422,13 +3490,14 @@ def _render_single_cut_card(
         )
 
         eligible = _eligible_filter_questions()
+        filter_options_by_id = {q.question_id: q for q in eligible}
         question_options: list[tuple[str, Any]] = [("None", None)] + [
             (
-                f"{q.canonical_id}: {(q.question_text or '')[:50]}",
-                q.canonical_id,
+                q.label,
+                q.question_id,
             )
             for q in eligible
-            if q.canonical_id != spec.canonical_id
+            if q.question_id != spec.canonical_id
         ]
 
         new_rows: list[tuple[str | None, Any]] = []
@@ -3447,8 +3516,9 @@ def _render_single_cut_card(
             picked_q_id = q_pick[1]
             with cols[1]:
                 if picked_q_id is not None:
-                    q_spec = schema.get_question(picked_q_id)
-                    value_codes = list(q_spec.option_map.keys())
+                    q_spec = filter_options_by_id[picked_q_id]
+                    value_codes = [choice.value for choice in q_spec.values]
+                    value_labels = {choice.value: choice.label for choice in q_spec.values}
                     prior = _normalize_value_list(val)
                     default_codes = [v for v in prior if v in value_codes]
                     widget_key = f"{filter_key}_v_{i}_{picked_q_id}"
@@ -3462,7 +3532,7 @@ def _render_single_cut_card(
                     v_pick = app.multiselect(
                         "Values (leave empty for breakdown)",
                         options=value_codes,
-                        format_func=lambda v: f"{v}: {q_spec.option_map[v]}",
+                        format_func=lambda v: value_labels.get(v, str(v)),
                         key=widget_key,
                         label_visibility="visible" if i == 0 else "collapsed",
                         help=TOOLTIP_BREAKDOWN if i == 0 else None,
@@ -3523,11 +3593,10 @@ def _render_single_cut_card(
 
         if apply_clicked:
             active_df = app.session_state["active_df"]
-            specs = [
-                _build_filter_spec(schema, active_df, q, _normalize_value_list(v))
-                for q, v in new_rows
-                if q is not None
-            ]
+            specs = []
+            for q, v in new_rows:
+                if q is not None:
+                    specs.extend(_build_filter_specs(schema, active_df, q, _normalize_value_list(v)))
             seen: set[str] = set()
             duplicate = next(
                 (f.filter_question_id for f in specs if f.filter_question_id in seen
@@ -3722,17 +3791,22 @@ def _render_manual_cross_cut() -> None:
 
     analysis_type = AnalysisType(analysis_type_name)
     schema = app.session_state["schema"]
-    first_spec = schema.get_question(first)
-    second_spec = schema.get_question(second)
+    first_spec = resolve_cross_cut_question(schema, first)
+    second_spec = resolve_cross_cut_question(schema, second)
     if first_spec is None or second_spec is None:
         app.error("Selected questions are no longer available in the current schema.")
         return
 
-    numeric_types = {QuestionType.DIRECT_NUMERIC, QuestionType.NUMERIC_ALLOCATION}
+    numeric_types = {
+        QuestionType.DIRECT_NUMERIC,
+        QuestionType.NUMERIC_ALLOCATION,
+        QuestionType.GRID_RATED,
+    }
     categorical_types = {
         QuestionType.SINGLE_SELECT,
         QuestionType.DEMOGRAPHIC_OR_SEGMENT,
         QuestionType.GRID_SINGLE_SELECT,
+        QuestionType.NPS,
     }
     first_is_numeric = first_spec.question_type in numeric_types
     second_is_numeric = second_spec.question_type in numeric_types
@@ -4785,7 +4859,7 @@ def _apply_global_filter_action(rows: list[tuple[str | None, Any]]) -> None:
         vals = _normalize_value_list(v)
         if q is None or not vals:
             continue
-        spec_list.append(_build_filter_spec(schema, decoded_df, q, vals))
+        spec_list.extend(_build_filter_specs(schema, decoded_df, q, vals))
     app.session_state["pending_global_filter"] = {"filter_specs": spec_list}
     app.session_state["global_filter_error"] = None
     app.rerun()
@@ -4839,10 +4913,11 @@ def _section_global_filter() -> None:
         app.warning("No categorical questions available to use as global filters.")
         return
 
+    filter_options_by_id = {q.question_id: q for q in eligible}
     question_options: list[tuple[str, Any]] = [("None", None)] + [
         (
-            f"{q.canonical_id}: {(q.question_text or '')[:50]}",
-            q.canonical_id,
+            q.label,
+            q.question_id,
         )
         for q in eligible
     ]
@@ -4869,8 +4944,9 @@ def _section_global_filter() -> None:
         picked_q_id = q_pick[1]
         with cols[1]:
             if picked_q_id is not None:
-                q_spec = schema.get_question(picked_q_id)
-                value_codes = list(q_spec.option_map.keys())
+                q_spec = filter_options_by_id[picked_q_id]
+                value_codes = [choice.value for choice in q_spec.values]
+                value_labels = {choice.value: choice.label for choice in q_spec.values}
                 prior = _normalize_value_list(val)
                 default_codes = [v for v in prior if v in value_codes]
                 widget_key = f"gf_v_{i}_{picked_q_id}"
@@ -4884,7 +4960,7 @@ def _section_global_filter() -> None:
                 v_pick = app.multiselect(
                     "Values (select one or more)",
                     options=value_codes,
-                    format_func=lambda v: f"{v}: {q_spec.option_map[v]}",
+                    format_func=lambda v: value_labels.get(v, str(v)),
                     key=widget_key,
                     label_visibility="visible" if i == 0 else "collapsed",
                     placeholder="Pick value(s)",
@@ -7379,7 +7455,7 @@ def _render_stat_tiles(stats: list[tuple[str, int, str]]) -> None:
     tiles = ['<div class="stat-row">']
     for icon, value, label in stats:
         v = int(value)
-        # icon can be either an SVG icon name (use _icon) or raw HTML string for back-compat.
+        # icon can be an SVG icon name (resolved via _svg_icon) or raw HTML string for back-compat.
         icon_html = _svg_icon(icon, size=20, color="#CC0000") if icon in _BAIN_ICONS else str(icon)
         tiles.append(
             '<div class="stat-tile">'

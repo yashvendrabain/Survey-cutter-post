@@ -11,6 +11,7 @@ import pandas as pd
 
 from src.calc_primitives import numeric_summary
 from src.calculation_log import CalculationLog
+from src.filter_options import resolve_cross_cut_question
 from src.models import (
     AnalysisType,
     AuditRecord,
@@ -25,6 +26,7 @@ from src.single_cut._grid import compute_grid
 from src.single_cut._multi_select import compute_multi_select
 from src.single_cut._numeric import compute_numeric
 from src.single_cut._single_select import compute_single_select
+from src.single_cut.nps import compute_nps
 
 
 FILTER_PATTERN = re.compile(r"^(\w+)\s*==\s*(\S+)$")
@@ -32,10 +34,13 @@ CATEGORICAL_TYPES = {
     QuestionType.SINGLE_SELECT,
     QuestionType.DEMOGRAPHIC_OR_SEGMENT,
     QuestionType.GRID_SINGLE_SELECT,
+    QuestionType.NPS,
 }
 NUMERIC_TYPES = {
     QuestionType.DIRECT_NUMERIC,
     QuestionType.NUMERIC_ALLOCATION,
+    QuestionType.GRID_RATED,
+    QuestionType.NPS,
 }
 
 
@@ -239,12 +244,28 @@ def _compute_group_comparison(
         )
     if metric_spec.question_type not in NUMERIC_TYPES:
         raise ValueError(
-            f"{metric_spec.canonical_id} is not a supported numeric question"
+            f"{metric_spec.canonical_id} is not a supported metric question"
         )
     if metric_spec.question_type is QuestionType.NUMERIC_ALLOCATION:
         raise ValueError(
             "GROUP_COMPARISON does not yet support NUMERIC_ALLOCATION metrics. "
             "Use cross-cuts on individual allocation sub-columns instead."
+        )
+    if metric_spec.question_type is QuestionType.GRID_RATED:
+        return _compute_grid_rated_group_comparison(
+            spec,
+            segment_spec,
+            metric_spec,
+            df,
+            log,
+        )
+    if metric_spec.question_type is QuestionType.NPS:
+        return _compute_nps_group_comparison(
+            spec,
+            segment_spec,
+            metric_spec,
+            df,
+            log,
         )
 
     segment_series, segment_label_map = _simple_categorical_column(segment_spec, df)
@@ -313,6 +334,193 @@ def _compute_group_comparison(
     )
     log.record(cross_audit)
     return _cross_cut_result(spec, result_table, (cross_audit,))
+
+
+def _compute_grid_rated_group_comparison(
+    spec: CrossCutSpec,
+    segment_spec: QuestionSpec,
+    metric_spec: QuestionSpec,
+    df: pd.DataFrame,
+    log: CalculationLog,
+) -> CrossCutResult:
+    segment_series, segment_label_map = _simple_categorical_column(segment_spec, df)
+    source_columns = tuple(column for column in metric_spec.raw_columns if column in df.columns)
+    if not source_columns:
+        raise ValueError(f"{metric_spec.canonical_id} grid-rated columns not in raw data")
+
+    segment_values = sorted(
+        segment_series.dropna().unique(),
+        key=lambda value: str(value),
+    )
+    grid_rows: dict[str, dict[str, Any]] = {}
+    total_valid_n = 0
+    total_missing_n = 0
+    audit_records: list[AuditRecord] = []
+
+    for source_column in source_columns:
+        per_segment: dict[Any, dict[str, Any]] = {}
+        for segment_value in segment_values:
+            segment_mask = segment_series == segment_value
+            summary, audit = numeric_summary(
+                series=df.loc[segment_mask, source_column],
+                question_id=f"{metric_spec.canonical_id}:{source_column}",
+                source_columns=(source_column,),
+                output_sheet=f"CC_{spec.cross_cut_id}",
+                filter_expr=f"{segment_spec.canonical_id} == {segment_value}",
+            )
+            log.record(audit)
+            audit_records.append(audit)
+            segment_key = _python_scalar(segment_value)
+            per_segment[segment_key] = {
+                "label": segment_label_map.get(segment_key, str(segment_key)),
+                "n": int(summary["valid_n"]),
+                "missing_n": int(summary["missing_n"]),
+                "mean": summary["mean"],
+                "median": summary["median"],
+                "std": summary["std"],
+            }
+
+        overall_summary, overall_audit = numeric_summary(
+            series=df[source_column],
+            question_id=f"{metric_spec.canonical_id}:{source_column}",
+            source_columns=(source_column,),
+            output_sheet=f"CC_{spec.cross_cut_id}",
+            filter_expr=None,
+        )
+        log.record(overall_audit)
+        audit_records.append(overall_audit)
+        total_valid_n += int(overall_summary["valid_n"])
+        total_missing_n += int(overall_summary["missing_n"])
+        grid_rows[source_column] = {
+            "label": _grid_row_label(metric_spec, source_column),
+            "per_segment": per_segment,
+            "overall": {
+                "n": int(overall_summary["valid_n"]),
+                "missing_n": int(overall_summary["missing_n"]),
+                "mean": overall_summary["mean"],
+                "median": overall_summary["median"],
+                "std": overall_summary["std"],
+                "min": overall_summary["min"],
+                "max": overall_summary["max"],
+                "p25": overall_summary["p25"],
+                "p50": overall_summary["p50"],
+                "p75": overall_summary["p75"],
+            },
+        }
+
+    result_table = {
+        "segment_question_id": segment_spec.canonical_id,
+        "metric_question_id": metric_spec.canonical_id,
+        "metric_question_type": QuestionType.GRID_RATED.value,
+        "grid_rows": grid_rows,
+    }
+    cross_audit = _audit(
+        output_sheet=f"CC_{spec.cross_cut_id}",
+        metric_name="grid_rated_group_comparison",
+        source_question_id=f"{segment_spec.canonical_id} x {metric_spec.canonical_id}",
+        source_columns=(segment_spec.canonical_id, *source_columns),
+        filter_expr=None,
+        formula="numeric_summary(each grid-rated row) per unique segment value + overall",
+        value_raw=float(total_valid_n),
+        valid_n=total_valid_n,
+        missing_n=total_missing_n,
+    )
+    log.record(cross_audit)
+    audit_records.append(cross_audit)
+    return _cross_cut_result(spec, result_table, tuple(audit_records))
+
+
+def _compute_nps_group_comparison(
+    spec: CrossCutSpec,
+    segment_spec: QuestionSpec,
+    metric_spec: QuestionSpec,
+    df: pd.DataFrame,
+    log: CalculationLog,
+) -> CrossCutResult:
+    segment_series, segment_label_map = _simple_categorical_column(segment_spec, df)
+    source_columns = tuple(column for column in metric_spec.raw_columns if column in df.columns)
+    if not source_columns:
+        raise ValueError(f"{metric_spec.canonical_id} NPS columns not in raw data")
+
+    segment_values = sorted(
+        segment_series.dropna().unique(),
+        key=lambda value: str(value),
+    )
+    nps_entities: dict[str, dict[str, Any]] = {}
+
+    for segment_value in segment_values:
+        segment_mask = (segment_series == segment_value).fillna(False)
+        segment_result = compute_nps(
+            metric_spec,
+            df,
+            CalculationLog(),
+            filter_mask=segment_mask,
+            filter_expr=f"{segment_spec.canonical_id} == {segment_value}",
+        )
+        segment_key = _python_scalar(segment_value)
+        segment_label = segment_label_map.get(segment_key, str(segment_key))
+        for source_column, entity in zip(source_columns, segment_result.entities):
+            entity_payload = nps_entities.setdefault(
+                source_column,
+                {
+                    "label": entity.entity_label,
+                    "per_segment": {},
+                },
+            )
+            entity_payload["per_segment"][segment_key] = {
+                "label": segment_label,
+                **_nps_entity_payload(entity),
+            }
+
+    overall_result = compute_nps(metric_spec, df, CalculationLog())
+    total_valid_n = 0
+    total_missing_n = 0
+    for source_column, entity in zip(source_columns, overall_result.entities):
+        entity_payload = nps_entities.setdefault(
+            source_column,
+            {
+                "label": entity.entity_label,
+                "per_segment": {},
+            },
+        )
+        entity_payload["overall"] = _nps_entity_payload(entity)
+        total_valid_n += int(entity.valid_n)
+        total_missing_n += int(entity.missing_n)
+
+    result_table = {
+        "segment_question_id": segment_spec.canonical_id,
+        "metric_question_id": metric_spec.canonical_id,
+        "metric_question_type": QuestionType.NPS.value,
+        "nps_entities": nps_entities,
+    }
+    cross_audit = _audit(
+        output_sheet=f"CC_{spec.cross_cut_id}",
+        metric_name="nps_group_comparison",
+        source_question_id=f"{segment_spec.canonical_id} x {metric_spec.canonical_id}",
+        source_columns=(segment_spec.canonical_id, *source_columns),
+        filter_expr=None,
+        formula="compute_nps(entity) per unique segment value + overall",
+        value_raw=float(total_valid_n),
+        valid_n=total_valid_n,
+        missing_n=total_missing_n,
+    )
+    log.record(cross_audit)
+    return _cross_cut_result(spec, result_table, (cross_audit,))
+
+
+def _nps_entity_payload(entity: Any) -> dict[str, Any]:
+    return {
+        "n": int(entity.valid_n),
+        "valid_n": int(entity.valid_n),
+        "missing_n": int(entity.missing_n),
+        "promoters": int(entity.promoters),
+        "passives": int(entity.passives),
+        "detractors": int(entity.detractors),
+        "pct_promoters": float(entity.pct_promoters),
+        "pct_passives": float(entity.pct_passives),
+        "pct_detractors": float(entity.pct_detractors),
+        "nps_score": float(entity.nps_score),
+    }
 
 
 def _compute_expected_vs_realized(
@@ -397,7 +605,8 @@ def _source_specs(
             "source questions"
         )
     question_specs = tuple(
-        schema.get_question(source_id) for source_id in spec.source_question_ids
+        resolve_cross_cut_question(schema, source_id)
+        for source_id in spec.source_question_ids
     )
     if any(question_spec is None for question_spec in question_specs):
         missing = [
@@ -421,13 +630,28 @@ def _simple_categorical_column(
     ):
         if spec.canonical_id not in df.columns:
             raise ValueError(f"{spec.canonical_id} not in raw data")
-        return df[spec.canonical_id], dict(spec.option_map)
+        return df[spec.canonical_id], _label_map_with_decoded_values(spec.option_map)
+
+    if spec.question_type is QuestionType.NPS:
+        columns = [column for column in spec.raw_columns if column in df.columns]
+        if not columns:
+            raise ValueError(f"{spec.canonical_id} NPS columns not in raw data")
+        result = pd.Series(pd.NA, index=df.index, dtype="object")
+        for column in columns:
+            bucket = df[column].map(_nps_bucket_label)
+            result = result.where(result.notna(), bucket)
+        return result, {
+            "Promoter": "Promoter",
+            "Passive": "Passive",
+            "Detractor": "Detractor",
+        }
 
     if spec.question_type is QuestionType.GRID_SINGLE_SELECT:
         if not spec.raw_columns:
             raise ValueError(f"{spec.canonical_id} grid has no raw columns")
 
         selected_value = _grid_selected_value(spec)
+        selected_label = spec.option_map.get(selected_value)
         present_subs = [sub_column for sub_column in spec.raw_columns if sub_column in df.columns]
         if not present_subs:
             raise ValueError(
@@ -436,6 +660,8 @@ def _simple_categorical_column(
 
         sub_df = df[present_subs]
         mask = sub_df == selected_value
+        if selected_label is not None:
+            mask = mask | (sub_df == selected_label)
         has_any_selection = mask.any(axis=1)
         first_match = mask.idxmax(axis=1)
         result = first_match.where(has_any_selection)
@@ -469,6 +695,49 @@ def _grid_selected_value(spec: QuestionSpec) -> int:
     return selected_value
 
 
+def _grid_row_label(spec: QuestionSpec, source_column: str) -> str:
+    if spec.grid_row_labels and source_column in spec.grid_row_labels:
+        return str(spec.grid_row_labels[source_column])
+    if source_column in spec.option_map:
+        return str(spec.option_map[source_column])
+    if source_column in spec.grid_column_labels:
+        return str(spec.grid_column_labels[source_column])
+    return source_column
+
+
+def _nps_bucket_label(value: Any) -> str | None:
+    score = _coerce_nps_score(value)
+    if score is None:
+        return None
+    if score >= 9:
+        return "Promoter"
+    if score >= 7:
+        return "Passive"
+    return "Detractor"
+
+
+def _coerce_nps_score(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+    if isinstance(value, bool):
+        return None
+    try:
+        numeric = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    if not numeric.is_integer():
+        return None
+    score = int(numeric)
+    if 0 <= score <= 10:
+        return score
+    return None
+
+
 def _filter_mask_from_expr(
     filter_expr: str,
     filter_spec: QuestionSpec,
@@ -486,13 +755,17 @@ def _filter_mask_from_expr(
         if filter_value not in df.columns:
             raise ValueError(f"grid sub-column {filter_value} not in data")
         selected_value = _grid_selected_value(filter_spec)
+        selected_label = filter_spec.option_map.get(selected_value)
         label_map = (
             dict(filter_spec.grid_row_labels)
             if filter_spec.grid_row_labels
             else {filter_value: filter_value}
         )
+        selected_mask = (df[filter_value] == selected_value).fillna(False)
+        if selected_label is not None:
+            selected_mask = selected_mask | (df[filter_value] == selected_label).fillna(False)
         return (
-            (df[filter_value] == selected_value).fillna(False),
+            selected_mask,
             f"{filter_spec.canonical_id} = "
             f"{label_map.get(filter_value, filter_value)}",
         )
@@ -501,7 +774,11 @@ def _filter_mask_from_expr(
         raise ValueError(f"filter column not found in data: {filter_column}")
     _, label_map = _simple_categorical_column(filter_spec, df)
     label = label_map.get(filter_value, str(filter_value))
-    return (df[filter_column] == filter_value).fillna(False), (
+    return _categorical_value_mask(
+        df[filter_column],
+        filter_value,
+        filter_spec.option_map,
+    ).fillna(False), (
         f"{filter_spec.canonical_id} = {label}"
     )
 
@@ -525,6 +802,49 @@ def _parse_filter_expr(filter_expr: str, df: pd.DataFrame) -> pd.Series:
     if filter_column not in df.columns:
         raise ValueError(f"filter column not found in data: {filter_column}")
     return (df[filter_column] == filter_value).fillna(False)
+
+
+def _label_map_with_decoded_values(option_map: dict[int | str, str]) -> dict:
+    label_map = dict(option_map)
+    for label in option_map.values():
+        label_map[label] = label
+    return label_map
+
+
+def _categorical_value_mask(
+    series: pd.Series,
+    value: int | str,
+    option_map: dict[int | str, str],
+) -> pd.Series:
+    candidates = _expanded_filter_values(value, option_map)
+    return series.isin(candidates)
+
+
+def _expanded_filter_values(
+    value: int | str,
+    option_map: dict[int | str, str],
+) -> tuple[int | str, ...]:
+    candidates: list[int | str] = [value]
+    if value in option_map:
+        candidates.append(option_map[value])
+    if isinstance(value, str):
+        stripped = value.strip()
+        candidates.append(stripped)
+        try:
+            numeric = float(stripped)
+        except ValueError:
+            numeric = None
+        if numeric is not None and numeric.is_integer():
+            numeric_int = int(numeric)
+            candidates.append(numeric_int)
+            if numeric_int in option_map:
+                candidates.append(option_map[numeric_int])
+
+    deduped: list[int | str] = []
+    for candidate in candidates:
+        if candidate not in deduped:
+            deduped.append(candidate)
+    return tuple(deduped)
 
 
 def _parse_filter_expr_parts(filter_expr: str) -> tuple[str, int | str]:
@@ -551,6 +871,8 @@ def _compute_filtered_single_cut(
         return compute_single_select(target_spec, df, log, filter_mask, filter_expr)
     if target_spec.question_type is QuestionType.MULTI_SELECT_BINARY:
         return compute_multi_select(target_spec, df, log, filter_mask, filter_expr)
+    if target_spec.question_type is QuestionType.NPS:
+        return compute_nps(target_spec, df, log, filter_mask, filter_expr)
     if target_spec.question_type in NUMERIC_TYPES:
         return compute_numeric(target_spec, df, log, filter_mask, filter_expr)
     if target_spec.question_type is QuestionType.GRID_SINGLE_SELECT:

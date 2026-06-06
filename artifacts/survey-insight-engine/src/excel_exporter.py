@@ -25,6 +25,7 @@ except ModuleNotFoundError:
     xlsxwriter = None
 
 from src.calculation_log import CalculationLog
+from src.filter_options import NPS_BUCKETS, filter_question_options
 from src.models import (
     AuditRecord,
     AnalysisType,
@@ -615,6 +616,10 @@ class _LiveColumnSpec:
 
 def _column_data_name(header: str) -> str:
     return f"{header.rstrip('_')}_data"
+
+
+def _nps_filter_column_key(question_id: str) -> str:
+    return f"{question_id}__nps_filter"
 
 
 @dataclass
@@ -2486,6 +2491,8 @@ def _option_values_for_column(
     question = column.question
     if question is None:
         return []
+    if column.kind == "nps_bucket":
+        return [label for label, _low, _high in NPS_BUCKETS]
     if column.kind == "single":
         result = _single_select_result_for_question(context, question.canonical_id)
         if result is not None:
@@ -2497,7 +2504,7 @@ def _option_values_for_column(
             return [str(payload["label"]) for payload in ordered_payloads]
     if column.key in context.option_values and context.option_values[column.key]:
         return context.option_values[column.key]
-    if column.kind in {"multi_select", "grid_single"}:
+    if column.kind in {"multi_select", "grid_single", "grid_binary"}:
         return ["Selected"]
     if question.option_map and column.kind == "single":
         return [str(value) for value in question.option_map.values()]
@@ -2525,23 +2532,70 @@ def _all_questions_dropdown_entries(
 
     entries: list[dict[str, str]] = []
     used_labels: set[str] = {"(None)", "(Inherit)"}
-    for question in schema.questions:
-        if not _is_all_questions_dropdown_eligible(question):
+    result_question_ids = {result.question_id for result in context.results}
+    for filter_option in filter_question_options(schema):
+        question = schema.get_question(filter_option.question_id)
+        if question is None:
             continue
-        column = context.column_by_key.get(question.canonical_id)
-        if column is None:
+        if question.canonical_id not in result_question_ids:
             continue
-        label = _dedupe_dropdown_label(
-            _question_dropdown_label(question, context),
-            used_labels,
-        )
-        entries.append(
-            {
-                "label": label,
-                "data_name": column.data_name,
-                "options_name": f"{column.header}_options",
-            }
-        )
+        if filter_option.question_type in {
+            QuestionType.SINGLE_SELECT,
+            QuestionType.DEMOGRAPHIC_OR_SEGMENT,
+        }:
+            column = context.column_by_key.get(question.canonical_id)
+            if column is None:
+                continue
+            label = _dedupe_dropdown_label(
+                _question_dropdown_label(question, context),
+                used_labels,
+            )
+            entries.append(
+                {
+                    "label": label,
+                    "data_name": column.data_name,
+                    "options_name": f"{column.header}_options",
+                }
+            )
+            continue
+        if filter_option.question_type is QuestionType.NPS:
+            column = context.column_by_key.get(_nps_filter_column_key(question.canonical_id))
+            if column is None:
+                continue
+            label = _dedupe_dropdown_label(
+                _question_dropdown_label(question, context),
+                used_labels,
+            )
+            entries.append(
+                {
+                    "label": label,
+                    "data_name": column.data_name,
+                    "options_name": f"{column.header}_options",
+                }
+            )
+            continue
+
+        grouped: dict[str, str] = {}
+        for value_option in filter_option.values:
+            grouped.setdefault(
+                value_option.filter_question_id,
+                value_option.label.split(":", 1)[0].strip(),
+            )
+        for filter_question_id, row_label in grouped.items():
+            column = context.column_by_key.get(filter_question_id)
+            if column is None:
+                continue
+            label = _dedupe_dropdown_label(
+                f"{_question_dropdown_label(question, context)} - {row_label}",
+                used_labels,
+            )
+            entries.append(
+                {
+                    "label": label,
+                    "data_name": column.data_name,
+                    "options_name": f"{column.header}_options",
+                }
+            )
     return entries
 
 
@@ -5876,13 +5930,12 @@ def _build_nps_count_formula(
 ) -> str:
     del sheet_filters, fv_name
     factors = [
-        f"--ISNUMBER({data_name})",
-        f"--({data_name}>={low})",
-        f"--({data_name}<={high})",
-        f"--(IFERROR(MOD({data_name},1),1)=0)",
+        f"--IFERROR(VALUE({data_name})>={low},FALSE)",
+        f"--IFERROR(VALUE({data_name})<={high},FALSE)",
+        f"--IFERROR(MOD(VALUE({data_name}),1)=0,FALSE)",
     ]
     factors.extend(
-        f"--({range_expr}={criterion_expr})"
+        f"--IFERROR({range_expr}={criterion_expr},FALSE)"
         for range_expr, criterion_expr in _live_filter_criteria_pairs(
             theme_prefix,
             fq_name,
@@ -6091,6 +6144,18 @@ def _live_column_specs(schema: SurveySchema) -> list[_LiveColumnSpec]:
             QuestionType.RANK_ORDER,
             QuestionType.NPS,
         }:
+            if question.question_type is QuestionType.NPS:
+                header = _unique_live_header(f"{question.canonical_id}_NPS_Bucket", used_headers)
+                columns.append(
+                    _LiveColumnSpec(
+                        key=_nps_filter_column_key(question.canonical_id),
+                        header=header,
+                        data_name=_column_data_name(header),
+                        question=question,
+                        source_column=None,
+                        kind="nps_bucket",
+                    )
+                )
             for source_column in question.raw_columns:
                 header = _unique_live_header(source_column, used_headers)
                 columns.append(
@@ -6139,7 +6204,13 @@ def _raw_rows_from_dataframe(
         for column in columns:
             question = column.question
             source_col = column.source_column
-            if question is None or source_col not in df_columns:
+            if question is None:
+                row_payload[column.key] = None
+                continue
+            if column.kind == "nps_bucket":
+                row_payload[column.key] = _nps_bucket_for_row(source_row, question)
+                continue
+            if source_col not in df_columns:
                 row_payload[column.key] = None
                 continue
             raw_value = source_row[source_col]
@@ -6188,7 +6259,13 @@ def _iter_raw_row_payloads(
         for column in columns:
             question = column.question
             source_col = column.source_column
-            if question is None or source_col not in df_columns:
+            if question is None:
+                row_payload[column.key] = None
+                continue
+            if column.kind == "nps_bucket":
+                row_payload[column.key] = _nps_bucket_for_row(source_row, question)
+                continue
+            if source_col not in df_columns:
                 row_payload[column.key] = None
                 continue
             raw_value = source_row[source_col]
@@ -7259,6 +7336,38 @@ def _decode_option_value(value: Any, option_map: dict[int | str, str]) -> Any:
         if candidate in option_map:
             return option_map[candidate]
     return value
+
+
+def _nps_bucket_for_row(source_row: Any, question: Any) -> str | None:
+    for source_column in getattr(question, "raw_columns", ()):
+        try:
+            value = source_row[source_column]
+        except Exception:
+            continue
+        score = _coerce_nps_score(value)
+        if score is None:
+            continue
+        if score >= 9:
+            return "Promoter"
+        if score >= 7:
+            return "Passive"
+        return "Detractor"
+    return None
+
+
+def _coerce_nps_score(value: Any) -> int | None:
+    if not _live_value_present(value) or isinstance(value, bool):
+        return None
+    try:
+        numeric = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    if not numeric.is_integer():
+        return None
+    score = int(numeric)
+    if 0 <= score <= 10:
+        return score
+    return None
 
 
 def _is_selected_value(value: Any) -> bool:
@@ -9158,6 +9267,26 @@ def _write_group_comparison_body(
     sheet_name: str,
 ) -> int:
     result_table = result.result_table
+    if result_table.get("nps_entities"):
+        return _write_nps_group_comparison_body(
+            workbook,
+            ws,
+            result,
+            schema,
+            formats,
+            start_row,
+            sheet_name,
+        )
+    if result_table.get("grid_rows"):
+        return _write_grid_rated_group_comparison_body(
+            workbook,
+            ws,
+            result,
+            schema,
+            formats,
+            start_row,
+            sheet_name,
+        )
     segment_question_id = result_table.get(
         "segment_question_id", result.source_question_ids[0]
     )
@@ -9199,6 +9328,229 @@ def _write_group_comparison_body(
             result.synthetic_question_title,
             "Mean",
         )
+    return row_index
+
+
+def _write_nps_group_comparison_body(
+    workbook: Any,
+    ws: Any,
+    result: CrossCutResult,
+    schema: SurveySchema,
+    formats: dict[str, Any],
+    start_row: int,
+    sheet_name: str,
+) -> int:
+    del workbook, sheet_name
+    result_table = result.result_table
+    segment_question_id = result_table.get(
+        "segment_question_id", result.source_question_ids[0]
+    )
+    metric_question_id = result_table.get(
+        "metric_question_id", result.source_question_ids[1]
+    )
+    _write(ws, start_row, 0, "Segments (rows):", formats["bold"])
+    _write(ws, start_row + 1, 0, _question_label(schema, segment_question_id))
+    _write(ws, start_row + 2, 0, "NPS metric:", formats["bold"])
+    _write(ws, start_row + 3, 0, _question_label(schema, metric_question_id))
+    table_start = start_row + 5
+    segment_columns: list[tuple[Any, str]] = []
+    for entity_payload in (result_table.get("nps_entities", {}) or {}).values():
+        if not isinstance(entity_payload, dict):
+            continue
+        for segment, payload in (entity_payload.get("per_segment", {}) or {}).items():
+            label = payload.get("label", str(segment)) if isinstance(payload, dict) else str(segment)
+            key = (segment, label)
+            if key not in segment_columns:
+                segment_columns.append(key)
+
+    _write(ws, table_start, 0, "NPS by segment", formats["bold"])
+    _write_header_row(
+        ws,
+        table_start + 1,
+        ["Entity", *(label for _segment, label in segment_columns), "Overall"],
+        formats,
+    )
+    row_index = table_start + 2
+    for entity_id, entity_payload in (result_table.get("nps_entities", {}) or {}).items():
+        entity_label = (
+            entity_payload.get("label", entity_id)
+            if isinstance(entity_payload, dict)
+            else entity_id
+        )
+        _write(ws, row_index, 0, entity_label)
+        per_segment = (
+            entity_payload.get("per_segment", {})
+            if isinstance(entity_payload, dict)
+            else {}
+        )
+        for col_offset, (segment, _label) in enumerate(segment_columns, start=1):
+            payload = per_segment.get(segment, {}) if isinstance(per_segment, dict) else {}
+            _write(ws, row_index, col_offset, payload.get("nps_score"), formats["stat"])
+        overall = (
+            entity_payload.get("overall", {})
+            if isinstance(entity_payload, dict)
+            else {}
+        )
+        _write(ws, row_index, len(segment_columns) + 1, overall.get("nps_score"), formats["stat"])
+        row_index += 1
+
+    detail_start = row_index + 2
+    _write(ws, detail_start, 0, "Per-entity segment NPS detail", formats["bold"])
+    _write_header_row(
+        ws,
+        detail_start + 1,
+        [
+            "Entity",
+            "Segment",
+            "Label",
+            "Valid N",
+            "Promoters %",
+            "Passives %",
+            "Detractors %",
+            "NPS",
+        ],
+        formats,
+    )
+    row_index = detail_start + 2
+    for entity_id, entity_payload in (result_table.get("nps_entities", {}) or {}).items():
+        entity_label = (
+            entity_payload.get("label", entity_id)
+            if isinstance(entity_payload, dict)
+            else entity_id
+        )
+        per_segment = (
+            entity_payload.get("per_segment", {})
+            if isinstance(entity_payload, dict)
+            else {}
+        )
+        for segment, payload in per_segment.items():
+            _write(ws, row_index, 0, entity_label)
+            _write(ws, row_index, 1, segment)
+            _write(ws, row_index, 2, payload.get("label", ""))
+            _write(ws, row_index, 3, payload.get("valid_n", payload.get("n", 0)), formats["count"])
+            _write(ws, row_index, 4, payload.get("pct_promoters"), formats["pct"])
+            _write(ws, row_index, 5, payload.get("pct_passives"), formats["pct"])
+            _write(ws, row_index, 6, payload.get("pct_detractors"), formats["pct"])
+            _write(ws, row_index, 7, payload.get("nps_score"), formats["stat"])
+            row_index += 1
+        overall = (
+            entity_payload.get("overall", {})
+            if isinstance(entity_payload, dict)
+            else {}
+        )
+        _write(ws, row_index, 0, entity_label, formats["bold"])
+        _write(ws, row_index, 1, "Overall", formats["bold"])
+        _write(ws, row_index, 3, overall.get("valid_n", overall.get("n", 0)), formats["count"])
+        _write(ws, row_index, 4, overall.get("pct_promoters"), formats["pct"])
+        _write(ws, row_index, 5, overall.get("pct_passives"), formats["pct"])
+        _write(ws, row_index, 6, overall.get("pct_detractors"), formats["pct"])
+        _write(ws, row_index, 7, overall.get("nps_score"), formats["stat"])
+        row_index += 1
+    if row_index > detail_start + 2:
+        _apply_autofilter(ws, detail_start + 1, row_index - 1, 8)
+    return row_index
+
+
+def _write_grid_rated_group_comparison_body(
+    workbook: Any,
+    ws: Any,
+    result: CrossCutResult,
+    schema: SurveySchema,
+    formats: dict[str, Any],
+    start_row: int,
+    sheet_name: str,
+) -> int:
+    result_table = result.result_table
+    segment_question_id = result_table.get(
+        "segment_question_id", result.source_question_ids[0]
+    )
+    metric_question_id = result_table.get(
+        "metric_question_id", result.source_question_ids[1]
+    )
+    _write(ws, start_row, 0, "Segments (rows):", formats["bold"])
+    _write(ws, start_row + 1, 0, _question_label(schema, segment_question_id))
+    _write(ws, start_row + 2, 0, "Grid-rated metric:", formats["bold"])
+    _write(ws, start_row + 3, 0, _question_label(schema, metric_question_id))
+    table_start = start_row + 5
+    segment_columns: list[tuple[Any, str]] = []
+    for row_payload in (result_table.get("grid_rows", {}) or {}).values():
+        if not isinstance(row_payload, dict):
+            continue
+        for segment, payload in (row_payload.get("per_segment", {}) or {}).items():
+            label = payload.get("label", str(segment)) if isinstance(payload, dict) else str(segment)
+            key = (segment, label)
+            if key not in segment_columns:
+                segment_columns.append(key)
+
+    _write(ws, table_start, 0, "Mean rating by segment", formats["bold"])
+    _write_header_row(
+        ws,
+        table_start + 1,
+        ["Metric row", *(label for _segment, label in segment_columns), "Overall"],
+        formats,
+    )
+    row_index = table_start + 2
+    for row_id, row_payload in (result_table.get("grid_rows", {}) or {}).items():
+        row_label = row_payload.get("label", row_id)
+        _write(ws, row_index, 0, row_label)
+        per_segment = row_payload.get("per_segment", {}) if isinstance(row_payload, dict) else {}
+        for col_offset, (segment, _label) in enumerate(segment_columns, start=1):
+            payload = per_segment.get(segment, {}) if isinstance(per_segment, dict) else {}
+            _write(ws, row_index, col_offset, payload.get("mean"), formats["stat"])
+        overall = row_payload.get("overall", {}) if isinstance(row_payload, dict) else {}
+        _write(ws, row_index, len(segment_columns) + 1, overall.get("mean"), formats["stat"])
+        row_index += 1
+
+    median_start = row_index + 2
+    _write(ws, median_start, 0, "Median rating by segment", formats["bold"])
+    _write_header_row(
+        ws,
+        median_start + 1,
+        ["Metric row", *(label for _segment, label in segment_columns), "Overall"],
+        formats,
+    )
+    row_index = median_start + 2
+    for row_id, row_payload in (result_table.get("grid_rows", {}) or {}).items():
+        row_label = row_payload.get("label", row_id)
+        _write(ws, row_index, 0, row_label)
+        per_segment = row_payload.get("per_segment", {}) if isinstance(row_payload, dict) else {}
+        for col_offset, (segment, _label) in enumerate(segment_columns, start=1):
+            payload = per_segment.get(segment, {}) if isinstance(per_segment, dict) else {}
+            _write(ws, row_index, col_offset, payload.get("median"), formats["stat"])
+        overall = row_payload.get("overall", {}) if isinstance(row_payload, dict) else {}
+        _write(ws, row_index, len(segment_columns) + 1, overall.get("median"), formats["stat"])
+        row_index += 1
+
+    detail_start = row_index + 2
+    _write(ws, detail_start, 0, "Per-row segment comparison", formats["bold"])
+    _write_header_row(
+        ws,
+        detail_start + 1,
+        ["Metric row", "Segment", "Label", "N", "Mean", "Median", "Std"],
+        formats,
+    )
+    row_index = detail_start + 2
+    for row_id, row_payload in (result_table.get("grid_rows", {}) or {}).items():
+        row_label = row_payload.get("label", row_id)
+        for segment, payload in (row_payload.get("per_segment", {}) or {}).items():
+            _write(ws, row_index, 0, row_label)
+            _write(ws, row_index, 1, segment)
+            _write(ws, row_index, 2, payload.get("label", ""))
+            _write(ws, row_index, 3, payload.get("n", 0), formats["count"])
+            _write(ws, row_index, 4, payload.get("mean"), formats["stat"])
+            _write(ws, row_index, 5, payload.get("median"), formats["stat"])
+            _write(ws, row_index, 6, payload.get("std"), formats["stat"])
+            row_index += 1
+        overall = row_payload.get("overall", {})
+        _write(ws, row_index, 0, row_label, formats["bold"])
+        _write(ws, row_index, 1, "Overall", formats["bold"])
+        _write(ws, row_index, 3, overall.get("n", 0), formats["count"])
+        _write(ws, row_index, 4, overall.get("mean"), formats["stat"])
+        _write(ws, row_index, 5, overall.get("median"), formats["stat"])
+        _write(ws, row_index, 6, overall.get("std"), formats["stat"])
+        row_index += 1
+    if row_index > detail_start + 2:
+        _apply_autofilter(ws, detail_start + 1, row_index - 1, 7)
     return row_index
 
 
