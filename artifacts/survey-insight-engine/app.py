@@ -3860,6 +3860,10 @@ def _render_manual_cross_cut() -> None:
         QuestionType.DIRECT_NUMERIC,
         QuestionType.NUMERIC_ALLOCATION,
         QuestionType.GRID_RATED,
+        QuestionType.NPS,
+        QuestionType.MULTI_SELECT_BINARY,
+        QuestionType.RANK_ORDER,
+        QuestionType.GRID_BINARY_SELECT,
     }
     categorical_types = {
         QuestionType.SINGLE_SELECT,
@@ -3902,7 +3906,7 @@ def _render_manual_cross_cut() -> None:
             return
     elif analysis_type is AnalysisType.GROUP_COMPARISON:
         app.error(
-            "GROUP_COMPARISON requires one categorical segment and one direct numeric metric."
+            "GROUP_COMPARISON requires one categorical segment and one supported metric."
         )
         return
     elif analysis_type is AnalysisType.EXPECTED_VS_REALIZED:

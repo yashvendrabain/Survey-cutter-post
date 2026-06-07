@@ -4548,6 +4548,7 @@ def _live_write_nps_table(
     fv_name: str,
     theme_prefix: str,
 ) -> int:
+    del sheet_filters, fq_name, fv_name, theme_prefix
     headers = [
         "Entity",
         "Promoters (n)",
@@ -4566,98 +4567,14 @@ def _live_write_nps_table(
         if column is None:
             continue
         worksheet.cell(row=row_index, column=1, value=entity.entity_label)
-        valid_formula = _build_nps_count_formula(
-            column.data_name,
-            0,
-            10,
-            sheet_filters,
-            fq_name,
-            fv_name,
-            theme_prefix,
-        )
-        promoter_formula = _build_nps_count_formula(
-            column.data_name,
-            9,
-            10,
-            sheet_filters,
-            fq_name,
-            fv_name,
-            theme_prefix,
-        )
-        passive_formula = _build_nps_count_formula(
-            column.data_name,
-            7,
-            8,
-            sheet_filters,
-            fq_name,
-            fv_name,
-            theme_prefix,
-        )
-        detractor_formula = _build_nps_count_formula(
-            column.data_name,
-            0,
-            6,
-            sheet_filters,
-            fq_name,
-            fv_name,
-            theme_prefix,
-        )
-        _live_formula(
-            worksheet,
-            row_index,
-            2,
-            promoter_formula,
-            entity.promoters,
-        ).number_format = "#,##0"
-        _live_formula(
-            worksheet,
-            row_index,
-            3,
-            f"=IFERROR(B{row_index}/H{row_index},0)",
-            entity.pct_promoters,
-        ).number_format = "0.0%"
-        _live_formula(
-            worksheet,
-            row_index,
-            4,
-            passive_formula,
-            entity.passives,
-        ).number_format = "#,##0"
-        _live_formula(
-            worksheet,
-            row_index,
-            5,
-            f"=IFERROR(D{row_index}/H{row_index},0)",
-            entity.pct_passives,
-        ).number_format = "0.0%"
-        _live_formula(
-            worksheet,
-            row_index,
-            6,
-            detractor_formula,
-            entity.detractors,
-        ).number_format = "#,##0"
-        _live_formula(
-            worksheet,
-            row_index,
-            7,
-            f"=IFERROR(F{row_index}/H{row_index},0)",
-            entity.pct_detractors,
-        ).number_format = "0.0%"
-        _live_formula(
-            worksheet,
-            row_index,
-            8,
-            valid_formula,
-            entity.valid_n,
-        ).number_format = "#,##0"
-        _live_formula(
-            worksheet,
-            row_index,
-            9,
-            f"=ROUND(IFERROR((C{row_index}-G{row_index})*100,0),0)",
-            round(entity.nps_score),
-        ).number_format = "0"
+        worksheet.cell(row=row_index, column=2, value=entity.promoters).number_format = "#,##0"
+        worksheet.cell(row=row_index, column=3, value=entity.pct_promoters).number_format = "0.0%"
+        worksheet.cell(row=row_index, column=4, value=entity.passives).number_format = "#,##0"
+        worksheet.cell(row=row_index, column=5, value=entity.pct_passives).number_format = "0.0%"
+        worksheet.cell(row=row_index, column=6, value=entity.detractors).number_format = "#,##0"
+        worksheet.cell(row=row_index, column=7, value=entity.pct_detractors).number_format = "0.0%"
+        worksheet.cell(row=row_index, column=8, value=entity.valid_n).number_format = "#,##0"
+        worksheet.cell(row=row_index, column=9, value=round(entity.nps_score)).number_format = "0"
         row_index += 1
 
     data_start = start_row + 1
@@ -5917,31 +5834,6 @@ def _build_countifs_formula(
         for range_expr, criterion_expr in pairs
     )
     return f"=COUNTIFS({args})"
-
-
-def _build_nps_count_formula(
-    data_name: str,
-    low: int,
-    high: int,
-    sheet_filters: list[dict[str, str]],
-    fq_name: str,
-    fv_name: str,
-    theme_prefix: str = "",
-) -> str:
-    del sheet_filters, fv_name
-    factors = [
-        f"--IFERROR(VALUE({data_name})>={low},FALSE)",
-        f"--IFERROR(VALUE({data_name})<={high},FALSE)",
-        f"--IFERROR(MOD(VALUE({data_name}),1)=0,FALSE)",
-    ]
-    factors.extend(
-        f"--IFERROR({range_expr}={criterion_expr},FALSE)"
-        for range_expr, criterion_expr in _live_filter_criteria_pairs(
-            theme_prefix,
-            fq_name,
-        )
-    )
-    return f"=SUMPRODUCT({','.join(factors)})"
 
 
 def _build_multi_select_respondent_count_formula(

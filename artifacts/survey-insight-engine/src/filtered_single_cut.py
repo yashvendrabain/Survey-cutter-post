@@ -12,6 +12,7 @@ except ModuleNotFoundError as exc:
     LOW_SAMPLE_THRESHOLD = 30
 
 from src.calculation_log import CalculationLog
+from src.filter_options import filter_mask_for_spec
 from src.cross_cut_engine import compute_cross_cuts
 from src.models import (
     AnalysisType,
@@ -133,27 +134,14 @@ def _build_value_filter_mask(
     mask = pd.Series(True, index=df.index)
     filter_descriptions = []
     for filter_spec in value_filters:
-        if filter_spec.filter_question_id not in df.columns:
-            raise ValueError(
-                f"filter column {filter_spec.filter_question_id!r} not in raw data"
-            )
-        question = schema.get_question(filter_spec.filter_question_id)
         values = _specific_filter_values(filter_spec)
         if values is not None:
-            value_mask = _filter_values_mask(
-                df[filter_spec.filter_question_id],
-                values,
-                question.option_map if question is not None else {},
-            )
+            value_mask = filter_mask_for_spec(df, schema, filter_spec)
             filter_descriptions.append(
                 f"{filter_spec.filter_question_id} in {values}"
             )
         else:
-            value_mask = _filter_value_mask(
-                df[filter_spec.filter_question_id],
-                filter_spec.filter_value,
-                question.option_map if question is not None else {},
-            )
+            value_mask = filter_mask_for_spec(df, schema, filter_spec)
             filter_descriptions.append(
                 f"{filter_spec.filter_question_id} == {filter_spec.filter_value!r}"
             )
@@ -252,11 +240,17 @@ def _compute_breakdown(
     if target_type in (
         QuestionType.SINGLE_SELECT,
         QuestionType.DEMOGRAPHIC_OR_SEGMENT,
+        QuestionType.GRID_SINGLE_SELECT,
     ):
         analysis_type = AnalysisType.CROSS_TAB
     elif target_type in (
         QuestionType.DIRECT_NUMERIC,
         QuestionType.NUMERIC_ALLOCATION,
+        QuestionType.NPS,
+        QuestionType.MULTI_SELECT_BINARY,
+        QuestionType.GRID_RATED,
+        QuestionType.GRID_BINARY_SELECT,
+        QuestionType.RANK_ORDER,
     ):
         analysis_type = AnalysisType.GROUP_COMPARISON
     else:
