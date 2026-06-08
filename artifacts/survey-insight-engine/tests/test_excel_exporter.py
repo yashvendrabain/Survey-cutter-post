@@ -1157,6 +1157,7 @@ class TestExcelExporter(unittest.TestCase):
         self,
         results: list,
         schema: SurveySchema,
+        **export_kwargs,
     ) -> Path:
         FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
@@ -1180,6 +1181,7 @@ class TestExcelExporter(unittest.TestCase):
             quality_report,
             CalculationLog(),
             str(output_path),
+            **export_kwargs,
         )
         return output_path
 
@@ -2156,8 +2158,10 @@ class TestExcelExporter(unittest.TestCase):
         self.assertEqual(values[0], "(None)")
         self.assertIn("Q_SS_EXPORT - Single Select Export Question", values)
         self.assertIn(f"{LONG_ID} - Long Sheet Name Export Question", values)
-        self.assertTrue(any("Q_MS_EXPORT" in str(value) and "First" in str(value) for value in values))
-        self.assertTrue(any("Q_GRID_EXPORT" in str(value) and "Grid first row" in str(value) for value in values))
+        self.assertEqual(sum("Q_MS_EXPORT" in str(value) for value in values), 1)
+        self.assertEqual(sum("Q_GRID_EXPORT" in str(value) for value in values), 1)
+        self.assertFalse(any("Q_MS_EXPORT" in str(value) and "First" in str(value) for value in values))
+        self.assertFalse(any("Q_GRID_EXPORT" in str(value) and "Grid first row" in str(value) for value in values))
         self.assertNotIn("Yes", values)
         self.assertNotIn("No", values)
         self.assertNotIn("Version 2", values)
@@ -2461,7 +2465,7 @@ class TestExcelExporter(unittest.TestCase):
                     formula_text = formula.text or ""
                     if (
                         "INDEX(INDIRECT" not in formula_text
-                        or "All_Questions_Options_Names" not in formula_text
+                        or "Cross_Tab_Questions_Options_Names" not in formula_text
                     ):
                         continue
                     cached = cell.find(f"{namespace}v")
@@ -2660,18 +2664,49 @@ class TestExcelExporter(unittest.TestCase):
         filter_values = defined_range_values(workbook, "All_Questions")
         self.assertIn("Q_SS_EXPORT - Short Revenue Label", filter_values)
 
-    def test_filter_dropdown_includes_multi_select_and_grid_rows(self) -> None:
+    def test_filter_dropdown_collapses_multi_select_and_grid_questions(self) -> None:
         output_path = self.export_workbook()
         workbook = load_workbook(output_path, read_only=True, data_only=True)
         self.addCleanup(workbook.close)
         filter_values = [str(value) for value in defined_range_values(workbook, "All_Questions")]
 
-        self.assertTrue(
-            any("Q_MS_EXPORT" in value and "First" in value for value in filter_values)
+        self.assertEqual(sum("Q_MS_EXPORT" in value for value in filter_values), 1)
+        self.assertEqual(sum("Q_GRID_EXPORT" in value for value in filter_values), 1)
+        self.assertFalse(any("Q_MS_EXPORT" in value and "First" in value for value in filter_values))
+        self.assertFalse(any("Q_GRID_EXPORT" in value and "Grid first row" in value for value in filter_values))
+        self.assertIn("First", defined_range_values(workbook, "Q_MS_EXPORT_filter_values_options"))
+        self.assertIn("Second", defined_range_values(workbook, "Q_MS_EXPORT_filter_values_options"))
+        self.assertIn(
+            "Grid first row: Low",
+            defined_range_values(workbook, "Q_GRID_EXPORT_filter_values_options"),
         )
-        self.assertTrue(
-            any("Q_GRID_EXPORT" in value and "Grid first row" in value for value in filter_values)
-        )
+
+        lookup_keys = [str(value) for value in defined_range_values(workbook, "All_Questions_Value_Keys")]
+        lookup_data = [str(value) for value in defined_range_values(workbook, "All_Questions_Value_Data_Names")]
+        lookup_criteria = [str(value) for value in defined_range_values(workbook, "All_Questions_Value_Criteria")]
+        first_key = "Q_MS_EXPORT - Multi Select Export Question|First"
+        self.assertIn(first_key, lookup_keys)
+        first_index = lookup_keys.index(first_key)
+        self.assertEqual(lookup_data[first_index], workbook.defined_names["Q_MS_EXPORTr1_data"].attr_text)
+        self.assertEqual(lookup_criteria[first_index], "Selected")
+        grid_key = "Q_GRID_EXPORT - Grid Export Question|Grid first row: Low"
+        self.assertIn(grid_key, lookup_keys)
+        grid_index = lookup_keys.index(grid_key)
+        self.assertEqual(lookup_data[grid_index], workbook.defined_names["Q_GRID_EXPORTr1_data"].attr_text)
+        self.assertEqual(lookup_criteria[grid_index], "Low")
+
+    def test_cross_tab_questions_dropdown_is_dimension_only(self) -> None:
+        output_path = self.export_workbook()
+        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        self.addCleanup(workbook.close)
+        cross_tab_values = [str(value) for value in defined_range_values(workbook, "Cross_Tab_Questions")]
+
+        self.assertEqual(cross_tab_values[0], "(None)")
+        self.assertIn("Q_SS_EXPORT - Single Select Export Question", cross_tab_values)
+        self.assertIn(f"{LONG_ID} - Long Sheet Name Export Question", cross_tab_values)
+        self.assertFalse(any("Q_MS_EXPORT" in value for value in cross_tab_values))
+        self.assertFalse(any("Q_GRID_EXPORT" in value for value in cross_tab_values))
+        self.assertFalse(any("Q_NUM_EXPORT" in value for value in cross_tab_values))
 
     def test_question_heading_row_uses_bain_red_style(self) -> None:
         output_path = self.export_workbook()
@@ -3178,7 +3213,7 @@ class TestExcelExporter(unittest.TestCase):
             formulas,
         )
 
-    def test_rank_cross_tab_by_uses_net_rank_score_formula(self) -> None:
+    def test_rank_cross_tab_by_has_selectable_rank_metric_formula(self) -> None:
         result = RankOrderResult(
             question_id="Q_RANK",
             question_type=QuestionType.RANK_ORDER,
@@ -3224,10 +3259,42 @@ class TestExcelExporter(unittest.TestCase):
             source_rawdata_path="raw.csv",
             parsed_at=UTC_NOW,
         )
-        output_path = self.export_custom_workbook([result], schema)
+        output_path = self.export_custom_workbook(
+            [result],
+            schema,
+            rank_cross_tab_settings={
+                "Q_RANK": {
+                    "metric": "Weighted average",
+                    "weights": [10, 6, 3, 0],
+                    "rank_position": 2,
+                }
+            },
+        )
         workbook = load_workbook(output_path, read_only=False, data_only=False)
         self.addCleanup(workbook.close)
         ws = workbook["All Questions"]
+
+        self.assertIn("All_Questions_Q_RANK_RM", workbook.defined_names)
+        self.assertIn("All_Questions_Q_RANK_W", workbook.defined_names)
+        self.assertIn("All_Questions_Q_RANK_RP", workbook.defined_names)
+        self.assertEqual(
+            defined_range_values(workbook, "All_Questions_Q_RANK_W"),
+            [10.0, 6.0, 3.0, 0.0],
+        )
+        rank_metric_cells = [
+            ws.cell(row=row_index, column=col_index + 1).value
+            for row_index in range(1, ws.max_row + 1)
+            for col_index in range(1, ws.max_column)
+            if ws.cell(row=row_index, column=col_index).value == "Rank metric"
+        ]
+        self.assertIn("Weighted average", rank_metric_cells)
+        rank_position_cells = [
+            ws.cell(row=row_index, column=col_index + 1).value
+            for row_index in range(1, ws.max_row + 1)
+            for col_index in range(1, ws.max_column)
+            if ws.cell(row=row_index, column=col_index).value == "Rank position"
+        ]
+        self.assertIn(2, rank_position_cells)
 
         formulas = [
             cell.value
@@ -3239,7 +3306,8 @@ class TestExcelExporter(unittest.TestCase):
             cell.value
             for row in ws.iter_rows()
             for cell in row
-            if cell.value == "Net Rank Score"
+            if isinstance(cell.value, str)
+            and 'All_Questions_Q_RANK_RM="Weighted average"' in cell.value
         ]
 
         self.assertGreaterEqual(len(subheaders), 2)
@@ -3250,12 +3318,18 @@ class TestExcelExporter(unittest.TestCase):
                 and "SUMPRODUCT(" in formula
                 and "Q_RANK_A_data" in formula
                 and "Q_RANK_B_data" in formula
+                and 'All_Questions_Q_RANK_RM="Weighted average"' in formula
+                and "INDEX(All_Questions_Q_RANK_W,1)*COUNTIFS(Q_RANK_A_data,1" in formula
+                and 'All_Questions_Q_RANK_RM="Sum of ranks"' in formula
+                and 'All_Questions_Q_RANK_RM="Rank position count"' in formula
+                and "COUNTIFS(Q_RANK_A_data,All_Questions_Q_RANK_RP" in formula
                 and "*100" in formula
                 for formula in formulas
             ),
             formulas,
         )
         self.assertFalse(any("AVERAGEIFS(" in formula for formula in formulas), formulas)
+        self.assertFalse(any("VALUE(" in formula for formula in formulas), formulas)
 
     def test_grid_binary_pivot_cross_tab_still_uses_selection_rate_formula(self) -> None:
         segment_result = SingleSelectResult(
@@ -3923,7 +3997,7 @@ class TestExcelExporter(unittest.TestCase):
 
         self.assertEqual(ws.cell(row=header_row, column=6).value, "Option")
         self.assertIn("INDEX(INDIRECT", ws.cell(row=header_row, column=7).value)
-        self.assertIn("All_Questions_Options_Names", ws.cell(row=header_row, column=7).value)
+        self.assertIn("Cross_Tab_Questions_Options_Names", ws.cell(row=header_row, column=7).value)
 
     def test_cross_tab_sheet_includes_chart(self) -> None:
         output_path = self.export_workbook_with_cross_cuts()

@@ -614,6 +614,8 @@ def _compute_rank_group_comparison(
     source_columns = tuple(column for column in metric_spec.raw_columns if column in df.columns)
     if not source_columns:
         raise ValueError(f"{metric_spec.canonical_id} rank columns not in raw data")
+    rank_k = _rank_order_k(metric_spec, source_columns)
+    ranked_frame = df.loc[:, list(source_columns)].apply(pd.to_numeric, errors="coerce")
 
     segment_values = sorted(
         segment_series.dropna().unique(),
@@ -629,6 +631,10 @@ def _compute_rank_group_comparison(
         numeric_column = pd.to_numeric(df[source_column], errors="coerce")
         for segment_value in segment_values:
             segment_mask = (segment_series == segment_value).fillna(False)
+            counts_per_rank = _rank_counts(numeric_column.loc[segment_mask], rank_k)
+            answered_n = _rank_answered_n(ranked_frame.loc[segment_mask])
+            rank_sum = float(numeric_column.loc[segment_mask].dropna().sum())
+            net_rank_score = _rank_net_score(counts_per_rank, rank_k, answered_n)
             summary, audit = numeric_summary(
                 series=numeric_column.loc[segment_mask],
                 question_id=f"{metric_spec.canonical_id}:{source_column}",
@@ -646,8 +652,21 @@ def _compute_rank_group_comparison(
                 "mean": summary["mean"],
                 "median": summary["median"],
                 "std": summary["std"],
+                "counts_per_rank": counts_per_rank,
+                "rank_sum": rank_sum,
+                "answered_n": answered_n,
+                "rank_k": rank_k,
+                "net_rank_score": net_rank_score,
             }
 
+        overall_counts_per_rank = _rank_counts(numeric_column, rank_k)
+        overall_answered_n = _rank_answered_n(ranked_frame)
+        overall_rank_sum = float(numeric_column.dropna().sum())
+        overall_net_rank_score = _rank_net_score(
+            overall_counts_per_rank,
+            rank_k,
+            overall_answered_n,
+        )
         overall_summary, overall_audit = numeric_summary(
             series=numeric_column,
             question_id=f"{metric_spec.canonical_id}:{source_column}",
@@ -668,6 +687,11 @@ def _compute_rank_group_comparison(
                 "mean": overall_summary["mean"],
                 "median": overall_summary["median"],
                 "std": overall_summary["std"],
+                "counts_per_rank": overall_counts_per_rank,
+                "rank_sum": overall_rank_sum,
+                "answered_n": overall_answered_n,
+                "rank_k": rank_k,
+                "net_rank_score": overall_net_rank_score,
             },
         }
 
@@ -691,6 +715,37 @@ def _compute_rank_group_comparison(
     log.record(cross_audit)
     audit_records.append(cross_audit)
     return _cross_cut_result(spec, result_table, tuple(audit_records))
+
+
+def _rank_order_k(metric_spec: QuestionSpec, source_columns: tuple[str, ...]) -> int:
+    if metric_spec.value_range is not None:
+        try:
+            _low, high = metric_spec.value_range
+            rank_k = int(high)
+            if rank_k > 0:
+                return rank_k
+        except (TypeError, ValueError):
+            pass
+    return max(1, len(source_columns))
+
+
+def _rank_counts(series: pd.Series, rank_k: int) -> list[int]:
+    return [int((series == rank).sum()) for rank in range(1, rank_k + 1)]
+
+
+def _rank_answered_n(frame: pd.DataFrame) -> int:
+    if frame.empty:
+        return 0
+    return int(frame.notna().any(axis=1).sum())
+
+
+def _rank_net_score(counts_per_rank: list[int], rank_k: int, answered_n: int) -> float:
+    points_sum = sum(
+        int(count) * (rank_k - rank + 1)
+        for rank, count in enumerate(counts_per_rank, start=1)
+    )
+    denominator = rank_k * answered_n
+    return float(points_sum / denominator * 100.0) if denominator else 0.0
 
 
 def _compute_numeric_allocation_group_comparison(

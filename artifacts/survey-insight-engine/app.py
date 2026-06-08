@@ -61,6 +61,12 @@ from src.models import InsightResult, OutcomeSegmentationResult, QuestionType
 
 
 _INSIGHT_CACHE: dict[str, Any] = {}
+RANK_CROSS_TAB_METRICS = (
+    "Net Rank Score",
+    "Weighted average",
+    "Sum of ranks",
+    "Rank position count",
+)
 
 
 SESSION_DEFAULTS = {
@@ -82,6 +88,8 @@ SESSION_DEFAULTS = {
     "cross_cut_skips": [],
     "cross_cut_suggestions": [],
     "cross_cut_only_bytes": None,
+    "rank_cross_tab_settings": {},
+    "rank_cross_tab_settings_dirty": False,
     "filtered_results": {},
     "filtered_workbook_bytes": None,
     "run_complete": False,
@@ -2616,6 +2624,7 @@ def _run_pipeline(
             short_labels=short_labels,
             workbook_custom_filter_count=workbook_custom_filter_count,
             per_question_filter_count=per_question_filter_count,
+            rank_cross_tab_settings=app.session_state.get("rank_cross_tab_settings"),
             hypothesis_results=hypothesis_results,
             embed_input_files=embed_input_files,
             input_file_sources=input_file_sources,
@@ -2659,6 +2668,8 @@ def _run_pipeline(
     app.session_state["cross_cut_skips"] = []
     app.session_state["cross_cut_suggestions"] = suggest_cross_cuts(schema)
     app.session_state["cross_cut_only_bytes"] = None
+    app.session_state["rank_cross_tab_settings"] = {}
+    app.session_state["rank_cross_tab_settings_dirty"] = False
     app.session_state["hypothesis_results"] = []
     app.session_state["pending_hypothesis_spec"] = None
     app.session_state["filtered_results"] = {}
@@ -2736,10 +2747,12 @@ def _refresh_full_workbook() -> None:
                 app.session_state.get("wiz_num_per_question_filters"),
             )
         ),
+        rank_cross_tab_settings=app.session_state.get("rank_cross_tab_settings"),
         hypothesis_results=app.session_state.get("hypothesis_results", []),
         embed_input_files=app.session_state.get("wizard_embed_input_files", False),
         input_file_sources=app.session_state.get("input_file_embed_sources"),
     )
+    app.session_state["rank_cross_tab_settings_dirty"] = False
 
 
 def _run_cross_cut_specs(specs: list[Any]) -> None:
@@ -3006,6 +3019,160 @@ def _preview_segment_profile(result: Any) -> None:
         app.info("Preview not available for this target type.")
 
 
+def _rank_rows_k(rank_rows: dict[Any, Any]) -> int:
+    for row_payload in rank_rows.values():
+        if not isinstance(row_payload, dict):
+            continue
+        payloads = [row_payload.get("overall")]
+        per_segment = row_payload.get("per_segment", {}) or {}
+        if isinstance(per_segment, dict):
+            payloads.extend(per_segment.values())
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            rank_k = int(payload.get("rank_k", 0) or 0)
+            if rank_k > 0:
+                return rank_k
+            counts = payload.get("counts_per_rank")
+            if isinstance(counts, list) and counts:
+                return len(counts)
+    return 1
+
+
+def _default_rank_cross_tab_settings(rank_k: int) -> dict[str, Any]:
+    return {
+        "metric": "Net Rank Score",
+        "weights": [float(rank_k - offset) for offset in range(rank_k)],
+        "rank_position": 1,
+    }
+
+
+def _normalise_rank_cross_tab_settings(raw: Any, rank_k: int) -> dict[str, Any]:
+    raw = raw if isinstance(raw, dict) else {}
+    defaults = _default_rank_cross_tab_settings(rank_k)
+    metric = str(raw.get("metric") or defaults["metric"])
+    if metric not in RANK_CROSS_TAB_METRICS:
+        metric = defaults["metric"]
+    weights_raw = raw.get("weights")
+    weights: list[float] = []
+    if isinstance(weights_raw, (list, tuple)):
+        for value in weights_raw[:rank_k]:
+            try:
+                weights.append(float(value))
+            except (TypeError, ValueError):
+                weights.append(0.0)
+    if len(weights) != rank_k:
+        weights = list(defaults["weights"])
+    try:
+        rank_position = int(raw.get("rank_position") or defaults["rank_position"])
+    except (TypeError, ValueError):
+        rank_position = int(defaults["rank_position"])
+    rank_position = max(1, min(rank_k, rank_position))
+    return {
+        "metric": metric,
+        "weights": weights,
+        "rank_position": rank_position,
+    }
+
+
+def _render_rank_cross_tab_metric_controls(
+    question_id: str,
+    rank_k: int,
+    key_prefix: str,
+) -> dict[str, Any]:
+    app = _require_streamlit()
+    rank_k = max(1, int(rank_k or 1))
+    state = app.session_state.setdefault("rank_cross_tab_settings", {})
+    prior = _normalise_rank_cross_tab_settings(state.get(question_id), rank_k)
+    metric = app.selectbox(
+        "Rank metric",
+        options=list(RANK_CROSS_TAB_METRICS),
+        index=list(RANK_CROSS_TAB_METRICS).index(prior["metric"]),
+        key=f"{key_prefix}_metric",
+    )
+    weights = list(prior["weights"])
+    if metric == "Weighted average":
+        cols = app.columns(min(rank_k, 4))
+        for offset in range(rank_k):
+            with cols[offset % len(cols)]:
+                weights[offset] = float(
+                    app.number_input(
+                        f"Rank {offset + 1} weight",
+                        value=float(weights[offset]),
+                        step=1.0,
+                        format="%.2f",
+                        key=f"{key_prefix}_weight_{offset + 1}",
+                    )
+                )
+    rank_position = int(prior["rank_position"])
+    if metric == "Rank position count":
+        rank_position = int(
+            app.selectbox(
+                "Rank position",
+                options=list(range(1, rank_k + 1)),
+                index=rank_position - 1,
+                key=f"{key_prefix}_position",
+            )
+        )
+    settings = {
+        "metric": metric,
+        "weights": weights,
+        "rank_position": rank_position,
+    }
+    default_settings = _default_rank_cross_tab_settings(rank_k)
+    existing = state.get(question_id)
+    if existing != settings:
+        state[question_id] = settings
+        if existing is not None or settings != default_settings:
+            app.session_state["rank_cross_tab_settings_dirty"] = True
+    return settings
+
+
+def _rank_cross_tab_metric_value(
+    payload: dict[str, Any],
+    metric: str,
+    weights: list[float],
+    rank_position: int,
+) -> Any:
+    counts_raw = payload.get("counts_per_rank")
+    counts = [int(value or 0) for value in counts_raw] if isinstance(counts_raw, list) else []
+    ranked_n = int(payload.get("n", 0) or sum(counts))
+    rank_sum = payload.get("rank_sum")
+    if rank_sum is None:
+        mean = payload.get("mean")
+        rank_sum = float(mean) * ranked_n if isinstance(mean, (int, float)) else None
+    if metric == "Weighted average":
+        if not counts or ranked_n <= 0:
+            return None
+        numerator = sum(float(weight) * count for weight, count in zip(weights, counts))
+        return round(numerator / ranked_n, 1)
+    if metric == "Sum of ranks":
+        return int(round(float(rank_sum or 0.0)))
+    if metric == "Rank position count":
+        index = max(0, min(len(counts) - 1, int(rank_position) - 1)) if counts else 0
+        return counts[index] if counts else 0
+    value = payload.get("net_rank_score")
+    if value is None and counts:
+        rank_k = len(counts)
+        answered_n = int(payload.get("answered_n", 0) or ranked_n)
+        points_sum = sum(
+            count * (rank_k - rank + 1)
+            for rank, count in enumerate(counts, start=1)
+        )
+        value = (points_sum / (rank_k * answered_n) * 100.0) if answered_n else None
+    return round(float(value), 1) if isinstance(value, (int, float)) else None
+
+
+def _rank_cross_tab_metric_caption(metric: str) -> str:
+    if metric == "Weighted average":
+        return "Weighted rank score per option by segment. Higher is preferred."
+    if metric == "Sum of ranks":
+        return "Sum of raw ranks per option by segment. Lower sums indicate stronger preference when bases are comparable."
+    if metric == "Rank position count":
+        return "Count of respondents placing each option at the selected rank position."
+    return "Net Rank Score per option by segment. Higher is preferred. Audit trail in the downloaded workbook."
+
+
 def _preview_group_comparison(result: Any) -> None:
     app = _require_streamlit()
     rt = result.result_table
@@ -3102,6 +3269,15 @@ def _preview_group_comparison(result: Any) -> None:
         app.caption("Mean allocation per option by segment. Audit trail in the downloaded workbook.")
         return
     if rt.get("rank_rows"):
+        rank_k = _rank_rows_k(rt.get("rank_rows", {}) or {})
+        rank_settings = _render_rank_cross_tab_metric_controls(
+            str(met_q),
+            rank_k,
+            f"rank_metric_{result.cross_cut_id}",
+        )
+        metric = rank_settings["metric"]
+        weights = rank_settings["weights"]
+        rank_position = rank_settings["rank_position"]
         segment_columns: list[tuple[Any, str]] = []
         for row_payload in (rt.get("rank_rows", {}) or {}).values():
             if not isinstance(row_payload, dict):
@@ -3118,17 +3294,22 @@ def _preview_group_comparison(result: Any) -> None:
             per_segment = row_payload.get("per_segment", {}) if isinstance(row_payload, dict) else {}
             for seg_val, label in segment_columns:
                 seg_data = per_segment.get(seg_val, {}) if isinstance(per_segment, dict) else {}
-                record[f"{label} Mean"] = seg_data.get("mean") if isinstance(seg_data, dict) else None
-                record[f"{label} Median"] = seg_data.get("median") if isinstance(seg_data, dict) else None
-                record[f"{label} N"] = seg_data.get("n", 0) if isinstance(seg_data, dict) else 0
+                record[label] = (
+                    _rank_cross_tab_metric_value(seg_data, metric, weights, rank_position)
+                    if isinstance(seg_data, dict)
+                    else None
+                )
             overall = row_payload.get("overall", {}) if isinstance(row_payload, dict) else {}
-            record["Overall Mean"] = overall.get("mean") if isinstance(overall, dict) else None
-            record["Overall Median"] = overall.get("median") if isinstance(overall, dict) else None
+            record["Overall"] = (
+                _rank_cross_tab_metric_value(overall, metric, weights, rank_position)
+                if isinstance(overall, dict)
+                else None
+            )
             rows.append(record)
         _df = pd.DataFrame(rows)
         _copy_button(_df, f"gc_rank_{result.cross_cut_id}")
         _styled_dataframe(_df, use_container_width=True, hide_index=True)
-        app.caption("Mean rank per option by segment (lower = preferred). Audit trail in the downloaded workbook.")
+        app.caption(_rank_cross_tab_metric_caption(metric))
         return
     if rt.get("nps_entities"):
         rows = []
@@ -6452,6 +6633,9 @@ def _section_downloads() -> None:
     if not app.session_state["run_complete"]:
         app.info("Run an analysis to generate downloadable workbooks.")
         return
+
+    if app.session_state.get("rank_cross_tab_settings_dirty"):
+        _refresh_full_workbook()
 
     output_path = app.session_state.get("output_path")
     cross_cut_results = app.session_state.get("cross_cut_results", [])

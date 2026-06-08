@@ -495,8 +495,10 @@ class TestCrossCutEngine(unittest.TestCase):
         self.assertEqual(per_segment[2]["n"], 10)
         self.assertEqual(per_segment[3]["n"], 10)
 
-    def test_group_comparison_rejects_allocation_metric(self) -> None:
+    def test_group_comparison_supports_allocation_metric(self) -> None:
         dataframe = load_cross_cut_golden()
+        dataframe["Q_ALLOCr1"] = [10] * 10 + [20] * 10 + [30] * 10
+        dataframe["Q_ALLOCr2"] = [90] * 10 + [80] * 10 + [70] * 10
         log = CalculationLog()
         allocation_spec = QuestionSpec(
             question_id="[Q_ALLOC]",
@@ -514,16 +516,19 @@ class TestCrossCutEngine(unittest.TestCase):
             source_question_ids=("Q_SEG_1", "Q_ALLOC"),
         )
 
-        with self.assertRaisesRegex(
-            ValueError,
-            "GROUP_COMPARISON does not yet support NUMERIC_ALLOCATION metrics",
-        ):
-            _compute_group_comparison(
-                spec,
-                make_schema_with_extra(allocation_spec),
-                dataframe,
-                log,
-            )
+        result = _compute_group_comparison(
+            spec,
+            make_schema_with_extra(allocation_spec),
+            dataframe,
+            log,
+        )
+
+        rows = result.result_table["allocation_rows"]
+        self.assertEqual(rows["Q_ALLOCr1"]["label"], "First")
+        self.assertEqual(rows["Q_ALLOCr1"]["per_segment"][1]["mean"], 10.0)
+        self.assertEqual(rows["Q_ALLOCr1"]["per_segment"][2]["mean"], 20.0)
+        self.assertEqual(rows["Q_ALLOCr1"]["per_segment"][3]["mean"], 30.0)
+        self.assertEqual(rows["Q_ALLOCr2"]["overall"]["mean"], 80.0)
 
     def test_group_comparison_with_grid_segment(self) -> None:
         dataframe = dataframe_with_grid_segment()
@@ -547,6 +552,237 @@ class TestCrossCutEngine(unittest.TestCase):
         self.assertEqual(per_segment["Q_GRID_SEGr1"]["mean"], EXPECTED_SEGMENT_MEANS[1])
         self.assertEqual(per_segment["Q_GRID_SEGr2"]["mean"], EXPECTED_SEGMENT_MEANS[2])
         self.assertEqual(per_segment["Q_GRID_SEGr3"]["mean"], EXPECTED_SEGMENT_MEANS[3])
+
+    def test_group_comparison_with_grid_rated_metric(self) -> None:
+        dataframe = load_cross_cut_golden()
+        dataframe["Q_RATEr1"] = [1] * 10 + [3] * 10 + [5] * 10
+        dataframe["Q_RATEr2"] = [2] * 10 + [4] * 10 + [None] * 10
+        log = CalculationLog()
+        grid_rated_spec = QuestionSpec(
+            question_id="[Q_RATE]",
+            canonical_id="Q_RATE",
+            question_text="Rated grid metric",
+            question_type=QuestionType.GRID_RATED,
+            raw_columns=("Q_RATEr1", "Q_RATEr2"),
+            option_map={1: "Very low", 2: "Low", 3: "Neutral", 4: "High", 5: "Very high"},
+            value_range=(1, 5),
+            grid_row_labels={"Q_RATEr1": "Capability", "Q_RATEr2": "Adoption"},
+        )
+        spec = CrossCutSpec(
+            cross_cut_id="CC_GRID_RATE",
+            title="Grid-rated metric by segment",
+            analysis_type=AnalysisType.GROUP_COMPARISON,
+            source_question_ids=("Q_SEG_1", "Q_RATE"),
+        )
+
+        results, skips = compute_cross_cuts(
+            [spec],
+            make_schema_with_extra(grid_rated_spec),
+            dataframe,
+            log,
+        )
+
+        self.assertEqual(skips, [])
+        grid_rows = results[0].result_table["grid_rows"]
+        self.assertEqual(grid_rows["Q_RATEr1"]["label"], "Capability")
+        self.assertEqual(grid_rows["Q_RATEr1"]["per_segment"][1]["mean"], 1.0)
+        self.assertEqual(grid_rows["Q_RATEr1"]["per_segment"][2]["mean"], 3.0)
+        self.assertEqual(grid_rows["Q_RATEr1"]["per_segment"][3]["mean"], 5.0)
+        self.assertEqual(grid_rows["Q_RATEr2"]["per_segment"][3]["n"], 0)
+
+    def test_group_comparison_with_nps_metric(self) -> None:
+        dataframe = load_cross_cut_golden()
+        dataframe["Q_NPS_A"] = (
+            [9] * 6
+            + [8] * 2
+            + [6] * 2
+            + [10] * 5
+            + [7] * 3
+            + [0] * 2
+            + [10] * 4
+            + [8] * 3
+            + [5] * 3
+        )
+        dataframe["Q_NPS_B"] = [10] * 10 + [6] * 10 + [None] * 10
+        log = CalculationLog()
+        nps_spec = QuestionSpec(
+            question_id="[Q_NPS]",
+            canonical_id="Q_NPS",
+            question_text="Recommend vendors",
+            question_type=QuestionType.NPS,
+            raw_columns=("Q_NPS_A", "Q_NPS_B"),
+            option_map={"Q_NPS_A": "Vendor A", "Q_NPS_B": "Vendor B"},
+        )
+        spec = CrossCutSpec(
+            cross_cut_id="CC_NPS_GROUP",
+            title="NPS by segment",
+            analysis_type=AnalysisType.GROUP_COMPARISON,
+            source_question_ids=("Q_SEG_1", "Q_NPS"),
+        )
+
+        results, skips = compute_cross_cuts(
+            [spec],
+            make_schema_with_extra(nps_spec),
+            dataframe,
+            log,
+        )
+
+        self.assertEqual(skips, [])
+        entities = results[0].result_table["nps_entities"]
+        self.assertEqual(entities["Q_NPS_A"]["label"], "Vendor A")
+        self.assertEqual(entities["Q_NPS_A"]["per_segment"][1]["valid_n"], 10)
+        self.assertAlmostEqual(entities["Q_NPS_A"]["per_segment"][1]["pct_promoters"], 0.6)
+        self.assertAlmostEqual(entities["Q_NPS_A"]["per_segment"][1]["pct_detractors"], 0.2)
+        self.assertAlmostEqual(entities["Q_NPS_A"]["per_segment"][1]["nps_score"], 40.0)
+        self.assertAlmostEqual(entities["Q_NPS_B"]["per_segment"][1]["nps_score"], 100.0)
+        self.assertEqual(entities["Q_NPS_B"]["per_segment"][3]["valid_n"], 0)
+
+    def test_group_comparison_with_multi_select_metric(self) -> None:
+        dataframe = load_cross_cut_golden()
+        dataframe["Q_MS_A"] = [1] * 4 + [0] * 6 + [1] * 2 + [0] * 18
+        dataframe["Q_MS_B"] = [0] * 5 + [1] * 5 + [0] * 10 + [1] * 10
+        dataframe["Q_MS_count"] = [2] * len(dataframe)
+        log = CalculationLog()
+        multi_spec = QuestionSpec(
+            question_id="[Q_MS]",
+            canonical_id="Q_MS",
+            question_text="Private label brands heard of",
+            question_type=QuestionType.MULTI_SELECT_BINARY,
+            raw_columns=("Q_MS_A", "Q_MS_B", "Q_MS_count"),
+            option_map={
+                "Q_MS_A": "Brand A",
+                "Q_MS_B": "Brand B",
+                "Q_MS_count": "Computed(Count choices)",
+            },
+        )
+        spec = CrossCutSpec(
+            cross_cut_id="CC_MS_GROUP",
+            title="Multi-select by segment",
+            analysis_type=AnalysisType.GROUP_COMPARISON,
+            source_question_ids=("Q_SEG_1", "Q_MS"),
+        )
+
+        results, skips = compute_cross_cuts(
+            [spec],
+            make_schema_with_extra(multi_spec),
+            dataframe,
+            log,
+        )
+
+        self.assertEqual(skips, [])
+        rows = results[0].result_table["selection_rate_rows"]
+        self.assertNotIn("Q_MS_count", rows)
+        self.assertEqual(rows["Q_MS_A"]["label"], "Brand A")
+        self.assertAlmostEqual(rows["Q_MS_A"]["per_segment"][1]["selection_rate"], 0.4)
+        self.assertAlmostEqual(rows["Q_MS_A"]["per_segment"][2]["selection_rate"], 0.2)
+        self.assertEqual(rows["Q_MS_A"]["per_segment"][1]["count"], 4)
+
+    def test_group_comparison_with_rank_order_metric(self) -> None:
+        dataframe = load_cross_cut_golden()
+        dataframe["Q_RANK_A"] = [1] * 10 + [3] * 10 + [2] * 10
+        dataframe["Q_RANK_B"] = [2] * 10 + [1] * 10 + [3] * 10
+        log = CalculationLog()
+        rank_spec = QuestionSpec(
+            question_id="[Q_RANK]",
+            canonical_id="Q_RANK",
+            question_text="Rank vendors",
+            question_type=QuestionType.RANK_ORDER,
+            raw_columns=("Q_RANK_A", "Q_RANK_B"),
+            option_map={"Q_RANK_A": "Vendor A", "Q_RANK_B": "Vendor B"},
+            value_range=(1, 3),
+        )
+        spec = CrossCutSpec(
+            cross_cut_id="CC_RANK_GROUP",
+            title="Rank by segment",
+            analysis_type=AnalysisType.GROUP_COMPARISON,
+            source_question_ids=("Q_SEG_1", "Q_RANK"),
+        )
+
+        results, skips = compute_cross_cuts(
+            [spec],
+            make_schema_with_extra(rank_spec),
+            dataframe,
+            log,
+        )
+
+        self.assertEqual(skips, [])
+        rows = results[0].result_table["rank_rows"]
+        self.assertEqual(rows["Q_RANK_A"]["label"], "Vendor A")
+        self.assertAlmostEqual(rows["Q_RANK_A"]["per_segment"][1]["mean"], 1.0)
+        self.assertAlmostEqual(rows["Q_RANK_A"]["per_segment"][2]["mean"], 3.0)
+        self.assertAlmostEqual(rows["Q_RANK_A"]["overall"]["mean"], 2.0)
+        self.assertAlmostEqual(rows["Q_RANK_B"]["per_segment"][2]["median"], 1.0)
+        self.assertEqual(rows["Q_RANK_A"]["per_segment"][1]["counts_per_rank"], [10, 0, 0])
+        self.assertEqual(rows["Q_RANK_A"]["per_segment"][1]["answered_n"], 10)
+        self.assertEqual(rows["Q_RANK_A"]["overall"]["rank_sum"], 60.0)
+        self.assertAlmostEqual(rows["Q_RANK_A"]["per_segment"][1]["net_rank_score"], 100.0)
+        self.assertAlmostEqual(rows["Q_RANK_A"]["per_segment"][2]["net_rank_score"], 100.0 / 3.0)
+        self.assertAlmostEqual(rows["Q_RANK_A"]["overall"]["net_rank_score"], 200.0 / 3.0)
+
+    def test_group_comparison_with_grid_binary_metric(self) -> None:
+        dataframe = load_cross_cut_golden()
+        dataframe["Q_GB_R1"] = [1] * 5 + [0] * 5 + [1] * 10 + [0] * 10
+        dataframe["Q_GB_R2"] = [0] * 10 + [1] * 5 + [0] * 5 + [1] * 10
+        log = CalculationLog()
+        grid_binary_spec = QuestionSpec(
+            question_id="[Q_GB]",
+            canonical_id="Q_GB",
+            question_text="Grid binary metric",
+            question_type=QuestionType.GRID_BINARY_SELECT,
+            raw_columns=("Q_GB_R1", "Q_GB_R2"),
+            option_map={1: "Selected"},
+            value_range=(0, 1),
+            grid_row_labels={"Q_GB_R1": "Capability", "Q_GB_R2": "Adoption"},
+        )
+        spec = CrossCutSpec(
+            cross_cut_id="CC_GRID_BINARY_GROUP",
+            title="Grid binary by segment",
+            analysis_type=AnalysisType.GROUP_COMPARISON,
+            source_question_ids=("Q_SEG_1", "Q_GB"),
+        )
+
+        results, skips = compute_cross_cuts(
+            [spec],
+            make_schema_with_extra(grid_binary_spec),
+            dataframe,
+            log,
+        )
+
+        self.assertEqual(skips, [])
+        rows = results[0].result_table["selection_rate_rows"]
+        self.assertEqual(rows["Q_GB_R1"]["label"], "Capability")
+        self.assertAlmostEqual(rows["Q_GB_R1"]["per_segment"][1]["selection_rate"], 0.5)
+        self.assertAlmostEqual(rows["Q_GB_R1"]["per_segment"][2]["selection_rate"], 1.0)
+        self.assertAlmostEqual(rows["Q_GB_R2"]["per_segment"][3]["selection_rate"], 1.0)
+
+    def test_new_metric_types_are_not_valid_segments(self) -> None:
+        dataframe = load_cross_cut_golden()
+        dataframe["Q_MS_A"] = [1] * len(dataframe)
+        multi_spec = QuestionSpec(
+            question_id="[Q_MS]",
+            canonical_id="Q_MS",
+            question_text="Multi-select metric",
+            question_type=QuestionType.MULTI_SELECT_BINARY,
+            raw_columns=("Q_MS_A",),
+            option_map={"Q_MS_A": "Brand A"},
+        )
+        spec = CrossCutSpec(
+            cross_cut_id="CC_MS_AS_SEGMENT",
+            title="Invalid metric as segment",
+            analysis_type=AnalysisType.GROUP_COMPARISON,
+            source_question_ids=("Q_MS", "Q_NUM_3"),
+        )
+
+        results, skips = compute_cross_cuts(
+            [spec],
+            make_schema_with_extra(multi_spec),
+            dataframe,
+            CalculationLog(),
+        )
+
+        self.assertEqual(results, [])
+        self.assertEqual(len(skips), 1)
+        self.assertIn("not a supported segment question", skips[0].details)
 
     def test_expected_vs_realized_paired_n(self) -> None:
         dataframe = load_cross_cut_golden()

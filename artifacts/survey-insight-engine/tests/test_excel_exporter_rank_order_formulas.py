@@ -111,7 +111,7 @@ class TestRankOrderExporterFormulas(unittest.TestCase):
 
         formula_cells = []
         for row_index in range(data_start, data_end + 1):
-            for column_index in (3, 4, 5, 6):
+            for column_index in (3, 4, 5, 6, 7):
                 formula_cells.append(ws.cell(row_index, column_index).value)
         total_row = data_end + 1
         responses_row = total_row + 1
@@ -126,7 +126,15 @@ class TestRankOrderExporterFormulas(unittest.TestCase):
 
         for formula in formula_cells:
             self.assertTrue(str(formula).startswith("="), formula)
-        self.assertIn("passes_workbook_filters_data", str(ws.cell(data_start, 3).value))
+        self.assertEqual(ws.cell(header_row, 3).value, "Net Rank Score")
+        self.assertEqual(
+            ws.cell(data_start, 3).value,
+            "=IFERROR((SUM(D18*2,F18*1)/(2*$B$20))*100,0)",
+        )
+        self.assertIn("passes_workbook_filters_data", str(ws.cell(data_start, 4).value))
+        self.assertIn("passes_workbook_filters_data", str(ws.cell(data_start, 6).value))
+        self.assertIn("Q43r1_data", str(ws.cell(data_start, 4).value))
+        self.assertIn("Q43r1_data", str(ws.cell(data_start, 6).value))
         self.assertIn("passes_workbook_filters_data", str(ws.cell(total_row, 2).value))
 
 

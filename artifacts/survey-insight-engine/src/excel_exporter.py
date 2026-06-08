@@ -70,6 +70,12 @@ DEFAULT_WORKBOOK_CUSTOM_FILTER_COUNT = 2
 DEFAULT_PER_QUESTION_FILTER_COUNT = 1
 INPUT_RAW_SHEET_NAME = "Raw Data (Input)"
 INPUT_DATAMAP_SHEET_NAME = "Data Map (Input)"
+RANK_CROSS_TAB_METRICS = (
+    "Net Rank Score",
+    "Weighted average",
+    "Sum of ranks",
+    "Rank position count",
+)
 
 try:
     from config import CROSS_TAB_MAX_GROUPS, RAW_DATA_SHEET_ROW_LIMIT
@@ -109,6 +115,7 @@ def export_single_cuts(
     short_labels: dict[str, str] | None = None,
     workbook_custom_filter_count: int = DEFAULT_WORKBOOK_CUSTOM_FILTER_COUNT,
     per_question_filter_count: int = DEFAULT_PER_QUESTION_FILTER_COUNT,
+    rank_cross_tab_settings: dict[str, Any] | None = None,
     hypothesis_results: list[HypothesisResult] | None = None,
     embed_input_files: bool = False,
     input_file_sources: dict[str, Any] | None = None,
@@ -166,6 +173,7 @@ def export_single_cuts(
             DEFAULT_PER_QUESTION_FILTER_COUNT,
             3,
         ),
+        rank_cross_tab_settings=dict(rank_cross_tab_settings or {}),
     )
     used_sheet_names = _reserved_sheet_names().union({"_RawData", "_Options", "Filters"})
     theme_groups = _theme_groups_for_results(schema, results, themes)
@@ -639,6 +647,7 @@ class _LiveWorkbookContext:
     raw_data_row_count: int = 0
     workbook_custom_filter_count: int = DEFAULT_WORKBOOK_CUSTOM_FILTER_COUNT
     per_question_filter_count: int = DEFAULT_PER_QUESTION_FILTER_COUNT
+    rank_cross_tab_settings: dict[str, Any] = field(default_factory=dict)
 
 
 def _wvl_build_raw_data_sheet(
@@ -905,7 +914,7 @@ def _wvl_write_question_block(
     worksheet.cell(row=row_index, column=1, value="Cross-tab by").font = _live_font(bold=True, size=9)
     ct_cell = worksheet.cell(row=row_index, column=3, value="(None)")
     _add_named_cell(workbook, ct_name, worksheet, ct_cell.coordinate)
-    _add_dropdown_to_cell(worksheet, ct_cell.coordinate, "=All_Questions")
+    _add_dropdown_to_cell(worksheet, ct_cell.coordinate, "=Cross_Tab_Questions")
 
     note = _subset_denominator_note(result, question, schema) or (
         f"Note: This question was shown to {int(getattr(result, 'valid_n', 0)):,} respondents."
@@ -2384,8 +2393,8 @@ def _build_options_sheet(
     all_questions_col = 1
     worksheet.cell(row=1, column=all_questions_col, value="All_Questions")
     worksheet.cell(row=2, column=all_questions_col, value="(None)")
-    filter_labels = _unique_filter_option_labels(context.columns, context)
     question_entries = _all_questions_dropdown_entries(schema, context)
+    cross_tab_entries = _cross_tab_dropdown_entries(schema, context)
     for row_index, entry in enumerate(question_entries, start=3):
         worksheet.cell(row=row_index, column=all_questions_col, value=entry["label"])
     _add_named_range(
@@ -2405,6 +2414,41 @@ def _build_options_sheet(
         "All_Questions_Local",
         "_Options",
         f"$B$2:$B${len(question_entries) + 3}",
+    )
+
+    lookup_start_col = 6 + (2 * len(context.columns))
+    cross_tab_col = lookup_start_col
+    worksheet.cell(row=1, column=cross_tab_col, value="Cross_Tab_Questions")
+    worksheet.cell(row=2, column=cross_tab_col, value="(None)")
+    for row_index, entry in enumerate(cross_tab_entries, start=3):
+        worksheet.cell(row=row_index, column=cross_tab_col, value=entry["label"])
+    cross_tab_letter = _openpyxl_column_letter(cross_tab_col)
+    _add_named_range(
+        workbook,
+        "Cross_Tab_Questions",
+        "_Options",
+        f"${cross_tab_letter}$2:${cross_tab_letter}${len(cross_tab_entries) + 2}",
+    )
+
+    cross_tab_data_col = lookup_start_col + 1
+    worksheet.cell(row=1, column=cross_tab_data_col, value="Cross_Tab_Questions_Data_Names")
+    worksheet.cell(
+        row=2,
+        column=cross_tab_data_col,
+        value=_defined_name_reference(workbook, "respondent_id_data"),
+    )
+    for row_index, entry in enumerate(cross_tab_entries, start=3):
+        worksheet.cell(
+            row=row_index,
+            column=cross_tab_data_col,
+            value=_defined_name_reference(workbook, entry["data_name"]),
+        )
+    cross_tab_data_letter = _openpyxl_column_letter(cross_tab_data_col)
+    _add_named_range(
+        workbook,
+        "Cross_Tab_Questions_Data_Names",
+        "_Options",
+        f"${cross_tab_data_letter}$2:${cross_tab_data_letter}${len(cross_tab_entries) + 2}",
     )
 
     worksheet.cell(row=1, column=5, value="None_options")
@@ -2451,6 +2495,54 @@ def _build_options_sheet(
             f"${local_col_letter}$2:${local_col_letter}${local_last_row}",
         )
 
+    question_option_start_col = lookup_start_col + 3
+    for offset, entry in enumerate(question_entries):
+        values = [str(value) for value in entry.get("option_values", [])][:100]
+        if not values:
+            continue
+        option_name = entry.get("options_name", "")
+        if not option_name or option_name in option_range_refs:
+            continue
+        col_index = question_option_start_col + (offset * 2)
+        worksheet.cell(row=1, column=col_index, value=option_name)
+        worksheet.cell(row=2, column=col_index, value="(All)")
+        for row_offset, value in enumerate(values, start=3):
+            worksheet.cell(row=row_offset, column=col_index, value=value)
+        col_letter = _openpyxl_column_letter(col_index)
+        last_row = max(2, len(values) + 2)
+        _add_named_range(
+            workbook,
+            option_name,
+            "_Options",
+            f"${col_letter}$2:${col_letter}${last_row}",
+        )
+        option_range_refs[option_name] = _sheet_range_reference(
+            "_Options",
+            f"${col_letter}$2:${col_letter}${last_row}",
+        )
+
+        local_option_name = entry.get("local_options_name", "")
+        if not local_option_name:
+            continue
+        local_col_index = col_index + 1
+        worksheet.cell(row=1, column=local_col_index, value=local_option_name)
+        worksheet.cell(row=2, column=local_col_index, value="(Inherit)")
+        worksheet.cell(row=3, column=local_col_index, value="(All)")
+        for row_offset, value in enumerate(values, start=4):
+            worksheet.cell(row=row_offset, column=local_col_index, value=value)
+        local_col_letter = _openpyxl_column_letter(local_col_index)
+        local_last_row = max(3, len(values) + 3)
+        _add_named_range(
+            workbook,
+            local_option_name,
+            "_Options",
+            f"${local_col_letter}$2:${local_col_letter}${local_last_row}",
+        )
+        option_range_refs[local_option_name] = _sheet_range_reference(
+            "_Options",
+            f"${local_col_letter}$2:${local_col_letter}${local_last_row}",
+        )
+
     worksheet.cell(row=1, column=3, value="All_Questions_Data_Names")
     worksheet.cell(
         row=2,
@@ -2483,6 +2575,57 @@ def _build_options_sheet(
         "All_Questions_Options_Names",
         "_Options",
         f"$D$2:$D${len(question_entries) + 2}",
+    )
+
+    cross_tab_options_col = lookup_start_col + 2
+    worksheet.cell(row=1, column=cross_tab_options_col, value="Cross_Tab_Questions_Options_Names")
+    worksheet.cell(row=2, column=cross_tab_options_col, value=option_range_refs["None_options"])
+    for row_index, entry in enumerate(cross_tab_entries, start=3):
+        worksheet.cell(
+            row=row_index,
+            column=cross_tab_options_col,
+            value=option_range_refs.get(entry["options_name"], option_range_refs["None_options"]),
+        )
+    cross_tab_options_letter = _openpyxl_column_letter(cross_tab_options_col)
+    _add_named_range(
+        workbook,
+        "Cross_Tab_Questions_Options_Names",
+        "_Options",
+        f"${cross_tab_options_letter}$2:${cross_tab_options_letter}${len(cross_tab_entries) + 2}",
+    )
+
+    value_lookup_rows = _filter_value_lookup_rows(question_entries, workbook)
+    value_key_col = question_option_start_col + (len(question_entries) * 2) + 1
+    value_data_col = value_key_col + 1
+    value_criteria_col = value_key_col + 2
+    worksheet.cell(row=1, column=value_key_col, value="All_Questions_Value_Keys")
+    worksheet.cell(row=1, column=value_data_col, value="All_Questions_Value_Data_Names")
+    worksheet.cell(row=1, column=value_criteria_col, value="All_Questions_Value_Criteria")
+    for row_index, row in enumerate(value_lookup_rows, start=2):
+        worksheet.cell(row=row_index, column=value_key_col, value=row["key"])
+        worksheet.cell(row=row_index, column=value_data_col, value=row["data_ref"])
+        worksheet.cell(row=row_index, column=value_criteria_col, value=row["criteria"])
+    value_last_row = max(2, len(value_lookup_rows) + 1)
+    value_key_letter = _openpyxl_column_letter(value_key_col)
+    value_data_letter = _openpyxl_column_letter(value_data_col)
+    value_criteria_letter = _openpyxl_column_letter(value_criteria_col)
+    _add_named_range(
+        workbook,
+        "All_Questions_Value_Keys",
+        "_Options",
+        f"${value_key_letter}$2:${value_key_letter}${value_last_row}",
+    )
+    _add_named_range(
+        workbook,
+        "All_Questions_Value_Data_Names",
+        "_Options",
+        f"${value_data_letter}$2:${value_data_letter}${value_last_row}",
+    )
+    _add_named_range(
+        workbook,
+        "All_Questions_Value_Criteria",
+        "_Options",
+        f"${value_criteria_letter}$2:${value_criteria_letter}${value_last_row}",
     )
 
 
@@ -2530,10 +2673,10 @@ def _single_select_result_for_question(
 def _all_questions_dropdown_entries(
     schema: SurveySchema,
     context: _LiveWorkbookContext,
-) -> list[dict[str, str]]:
-    """Return visible question choices and their aligned lookup metadata."""
+) -> list[dict[str, Any]]:
+    """Return filter choices and their aligned lookup metadata."""
 
-    entries: list[dict[str, str]] = []
+    entries: list[dict[str, Any]] = []
     used_labels: set[str] = {"(None)", "(Inherit)"}
     result_question_ids = {result.question_id for result in context.results}
     for filter_option in filter_question_options(schema):
@@ -2558,6 +2701,9 @@ def _all_questions_dropdown_entries(
                     "label": label,
                     "data_name": column.data_name,
                     "options_name": f"{column.header}_options",
+                    "local_options_name": f"{column.header}_local_options",
+                    "option_values": (),
+                    "value_lookup": (),
                 }
             )
             continue
@@ -2574,32 +2720,114 @@ def _all_questions_dropdown_entries(
                     "label": label,
                     "data_name": column.data_name,
                     "options_name": f"{column.header}_options",
+                    "local_options_name": f"{column.header}_local_options",
+                    "option_values": (),
+                    "value_lookup": (),
                 }
             )
             continue
 
-        grouped: dict[str, str] = {}
+        option_values: list[str] = []
+        value_lookup: list[dict[str, str]] = []
+        first_column: _LiveColumnSpec | None = None
         for value_option in filter_option.values:
-            grouped.setdefault(
-                value_option.filter_question_id,
-                value_option.label.split(":", 1)[0].strip(),
-            )
-        for filter_question_id, row_label in grouped.items():
-            column = context.column_by_key.get(filter_question_id)
+            column = context.column_by_key.get(value_option.filter_question_id)
             if column is None:
                 continue
-            label = _dedupe_dropdown_label(
-                f"{_question_dropdown_label(question, context)} - {row_label}",
-                used_labels,
-            )
-            entries.append(
+            first_column = first_column or column
+            value_label = str(value_option.label)
+            if value_label not in option_values:
+                option_values.append(value_label)
+            value_lookup.append(
                 {
-                    "label": label,
+                    "value_label": value_label,
                     "data_name": column.data_name,
-                    "options_name": f"{column.header}_options",
+                    "criteria": str(_filter_value_criteria(question, value_option)),
                 }
             )
+        if first_column is None or not value_lookup:
+            continue
+        label = _dedupe_dropdown_label(
+            _question_dropdown_label(question, context),
+            used_labels,
+        )
+        options_prefix = _safe_defined_name(f"{question.canonical_id}_filter_values")
+        entries.append(
+            {
+                "label": label,
+                "data_name": first_column.data_name,
+                "options_name": f"{options_prefix}_options",
+                "local_options_name": f"{options_prefix}_local_options",
+                "option_values": tuple(option_values),
+                "value_lookup": tuple(value_lookup),
+            }
+        )
     return entries
+
+
+def _cross_tab_dropdown_entries(
+    schema: SurveySchema,
+    context: _LiveWorkbookContext,
+) -> list[dict[str, str]]:
+    """Return categorical dimensions for cross-tab controls, one row per question."""
+
+    entries: list[dict[str, str]] = []
+    used_labels: set[str] = {"(None)"}
+    for question in schema.analysis_eligible_questions():
+        if question.question_type not in {
+            QuestionType.SINGLE_SELECT,
+            QuestionType.DEMOGRAPHIC_OR_SEGMENT,
+        }:
+            continue
+        column = context.column_by_key.get(question.canonical_id)
+        if column is None:
+            continue
+        label = _dedupe_dropdown_label(
+            _question_dropdown_label(question, context),
+            used_labels,
+        )
+        entries.append(
+            {
+                "label": label,
+                "data_name": column.data_name,
+                "options_name": f"{column.header}_options",
+            }
+        )
+    return entries
+
+
+def _filter_value_criteria(question: Any, value_option: Any) -> Any:
+    if question.question_type in {
+        QuestionType.MULTI_SELECT_BINARY,
+        QuestionType.GRID_BINARY_SELECT,
+    }:
+        return "Selected"
+    if question.question_type is QuestionType.GRID_SINGLE_SELECT:
+        if getattr(question, "label_to_numeric_value", None):
+            return value_option.filter_value
+        return question.option_map.get(value_option.filter_value, value_option.filter_value)
+    return value_option.label
+
+
+def _filter_value_lookup_rows(
+    question_entries: list[dict[str, Any]],
+    workbook: Any,
+) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for entry in question_entries:
+        label = str(entry.get("label", ""))
+        for value_row in entry.get("value_lookup", ()) or ():
+            value_label = str(value_row.get("value_label", ""))
+            if not label or not value_label:
+                continue
+            rows.append(
+                {
+                    "key": f"{label}|{value_label}",
+                    "data_ref": _defined_name_reference(workbook, value_row["data_name"]),
+                    "criteria": str(value_row.get("criteria", value_label)),
+                }
+            )
+    return rows
 
 
 def _is_all_questions_dropdown_eligible(question: Any) -> bool:
@@ -2818,6 +3046,7 @@ def _build_raw_filter_helper_columns(
                     value_name=f"{prefix}_V",
                     wrapped_name=f"{prefix}_wrapped",
                     resolved_column_name=f"{prefix}_resolved_column",
+                    criteria_name=f"{prefix}_resolved_criteria",
                 ),
                 1,
             )
@@ -2880,12 +3109,18 @@ def _raw_custom_filter_match_formula(
     value_name: str,
     wrapped_name: str,
     resolved_column_name: str,
+    criteria_name: str | None = None,
 ) -> str:
     selected_value = f"INDEX(INDIRECT({resolved_column_name}),{row_index - 1})"
+    criteria_wrapped = (
+        f'("|" & SUBSTITUTE({criteria_name}, ", ", "|") & "|")'
+        if criteria_name
+        else wrapped_name
+    )
     return (
         f'=IF(OR({question_name}="(None)",{question_name}="",ISBLANK({question_name}),'
         f'{value_name}="(All)",{value_name}="",ISBLANK({value_name})),1,'
-        f'IFERROR(IF(ISNUMBER(SEARCH("|"&{selected_value}&"|",{wrapped_name})),1,0),0))'
+        f'IFERROR(IF(ISNUMBER(SEARCH("|"&{selected_value}&"|",{criteria_wrapped})),1,0),0))'
     )
 
 
@@ -3057,6 +3292,7 @@ def _stream_custom_match_builder(prefix: str) -> Any:
         value_name=f"{prefix}_V",
         wrapped_name=f"{prefix}_wrapped",
         resolved_column_name=f"{prefix}_resolved_column",
+        criteria_name=f"{prefix}_resolved_criteria",
     )
 
 
@@ -3073,6 +3309,7 @@ def _stream_per_question_match_builder(q_filter_prefix: str, slot_count: int) ->
                     value_name=value_name,
                     wrapped_name=f"{slot_prefix}_wrapped",
                     resolved_column_name=f"{slot_prefix}_resolved_column",
+                    criteria_name=f"{slot_prefix}_resolved_criteria",
                 ).lstrip("=")
             )
         return "=" + "*".join(formulas + ["1"])
@@ -3180,6 +3417,7 @@ def _build_per_question_filter_helper_column(
                     value_name=value_name,
                     wrapped_name=f"{slot_prefix}_wrapped",
                     resolved_column_name=f"{slot_prefix}_resolved_column",
+                    criteria_name=f"{slot_prefix}_resolved_criteria",
                 ).lstrip("=")
             )
         _live_formula(
@@ -3690,7 +3928,7 @@ def _live_write_nps_sheet(
     worksheet.cell(row=3, column=1, value="Cross-tab by").font = _live_font(bold=True, size=9)
     ct_cell = worksheet.cell(row=3, column=3, value="(None)")
     _add_named_cell(workbook, ct_name, worksheet, ct_cell.coordinate)
-    _add_dropdown_to_cell(worksheet, ct_cell.coordinate, "=All_Questions")
+    _add_dropdown_to_cell(worksheet, ct_cell.coordinate, "=Cross_Tab_Questions")
     table_end_row = _live_write_nps_table(
         worksheet,
         4,
@@ -3866,13 +4104,21 @@ def _write_theme_custom_filter(
         worksheet,
         row_index,
         6,
-        f"={_question_data_name_formula(resolved_q)}",
+        f"={_question_data_name_formula(resolved_q, resolved_v)}",
         "respondent_id_data",
+    )
+    resolved_criteria_cell = _live_formula(
+        worksheet,
+        row_index,
+        7,
+        f"={_question_filter_criteria_formula(resolved_q, resolved_v)}",
+        "(All)",
     )
     _add_named_cell(workbook, local_v, worksheet, v_cell.coordinate)
     _add_named_cell(workbook, resolved_v, worksheet, v_resolved_cell.coordinate)
     _add_named_cell(workbook, wrapped_name, worksheet, wrapped_cell.coordinate)
     _add_named_cell(workbook, resolved_column, worksheet, resolved_column_cell.coordinate)
+    _add_named_cell(workbook, f"{theme_prefix}_{global_question_name[:-2]}_resolved_criteria", worksheet, resolved_criteria_cell.coordinate)
     _add_dropdown_to_cell(
         worksheet,
         v_cell.coordinate,
@@ -3900,7 +4146,7 @@ def _live_write_custom_filter_slot(
         worksheet,
         row_index,
         col_index + 4,
-        f"={_question_data_name_formula(question_name)}",
+        f"={_question_data_name_formula(question_name, value_name)}",
         "respondent_id_data",
     )
     wrapped_cell = _live_formula(
@@ -3910,10 +4156,18 @@ def _live_write_custom_filter_slot(
         _wrapped_formula(value_name),
         "|(All)|",
     )
+    resolved_criteria = _live_formula(
+        worksheet,
+        row_index,
+        col_index + 6,
+        f"={_question_filter_criteria_formula(question_name, value_name)}",
+        "(All)",
+    )
     _add_named_cell(workbook, question_name, worksheet, q_cell.coordinate)
     _add_named_cell(workbook, value_name, worksheet, v_cell.coordinate)
     _add_named_cell(workbook, f"{prefix}_resolved_column", worksheet, resolved_column.coordinate)
     _add_named_cell(workbook, f"{prefix}_wrapped", worksheet, wrapped_cell.coordinate)
+    _add_named_cell(workbook, f"{prefix}_resolved_criteria", worksheet, resolved_criteria.coordinate)
     _add_dropdown_to_cell(worksheet, q_cell.coordinate, "=All_Questions")
     _add_dropdown_to_cell(
         worksheet,
@@ -3945,7 +4199,7 @@ def _live_write_per_question_filter_slot(
         worksheet,
         row_index,
         6,
-        f"={_question_data_name_formula(fq_name)}",
+        f"={_question_data_name_formula(fq_name, fv_name)}",
         "respondent_id_data",
     )
     wrapped_cell = _live_formula(
@@ -3955,11 +4209,19 @@ def _live_write_per_question_filter_slot(
         _wrapped_formula(fv_name),
         "|(All)|",
     )
+    resolved_criteria = _live_formula(
+        worksheet,
+        row_index,
+        8,
+        f"={_question_filter_criteria_formula(fq_name, fv_name)}",
+        "(All)",
+    )
     slot_prefix = fq_name[:-2] if fq_name.endswith("_Q") else fq_name
     _add_named_cell(workbook, fq_name, worksheet, fq_cell.coordinate)
     _add_named_cell(workbook, fv_name, worksheet, fv_cell.coordinate)
     _add_named_cell(workbook, f"{slot_prefix}_resolved_column", worksheet, resolved_column.coordinate)
     _add_named_cell(workbook, f"{slot_prefix}_wrapped", worksheet, wrapped_cell.coordinate)
+    _add_named_cell(workbook, f"{slot_prefix}_resolved_criteria", worksheet, resolved_criteria.coordinate)
     _add_dropdown_to_cell(worksheet, fq_cell.coordinate, "=All_Questions")
     _add_dropdown_to_cell(
         worksheet,
@@ -4034,7 +4296,7 @@ def _live_write_question_block(
     worksheet.cell(row=row_index, column=1, value="Cross-tab by").font = _live_font(bold=True, size=9)
     ct_cell = worksheet.cell(row=row_index, column=3, value="(None)")
     _add_named_cell(workbook, ct_name, worksheet, ct_cell.coordinate)
-    _add_dropdown_to_cell(worksheet, ct_cell.coordinate, "=All_Questions")
+    _add_dropdown_to_cell(worksheet, ct_cell.coordinate, "=Cross_Tab_Questions")
     row_index += 1
     note = _subset_denominator_note(result, question, schema)
     if note:
@@ -5318,6 +5580,7 @@ def _live_write_cross_tab_table(
     if not rows:
         return start_row
     metric_kind = str(rows[0].get("metric_kind") or "count")
+    rank_controls: dict[str, Any] | None = None
     first_col = 6
     max_groups = int(CROSS_TAB_MAX_GROUPS)
     if max_groups < 2:
@@ -5330,8 +5593,8 @@ def _live_write_cross_tab_table(
 
     worksheet.cell(row=header_row, column=first_col, value="Option").font = _live_font(bold=True)
     worksheet.cell(row=subheader_row, column=first_col, value="").font = _live_font(bold=True)
-    options_formula = _question_options_name_formula(ct_name)
-    ct_range = f"INDIRECT({_question_data_name_formula(ct_name)})"
+    options_formula = _cross_tab_options_name_formula(ct_name)
+    ct_range = f"INDIRECT({_cross_tab_data_name_formula(ct_name)})"
     filtered_total_formula = _build_countifs_formula(
         "respondent_id_data",
         "<>",
@@ -5340,6 +5603,15 @@ def _live_write_cross_tab_table(
         fv_name,
         theme_prefix=theme_prefix,
     )
+    if metric_kind == "net_rank" and int(rows[0].get("rank_k", 0) or 0) > 0:
+        rank_controls = _live_write_rank_cross_tab_controls(
+            worksheet,
+            header_row,
+            total_col + 2,
+            rows,
+            ct_name,
+            context,
+        )
 
     for offset in range(max_groups):
         group_col = first_col + 1 + offset
@@ -5361,18 +5633,38 @@ def _live_write_cross_tab_table(
             header_formula,
             "",
         )
-        worksheet.cell(
-            row=subheader_row,
-            column=group_col,
-            value=_cross_tab_metric_subheader(metric_kind),
-        ).font = _live_font(bold=True)
+        if rank_controls:
+            subheader_cell = _live_formula(
+                worksheet,
+                subheader_row,
+                group_col,
+                _rank_metric_subheader_formula(rank_controls["metric_name"]),
+                rank_controls["metric"],
+            )
+            subheader_cell.font = _live_font(bold=True)
+        else:
+            worksheet.cell(
+                row=subheader_row,
+                column=group_col,
+                value=_cross_tab_metric_subheader(metric_kind),
+            ).font = _live_font(bold=True)
 
     worksheet.cell(row=header_row, column=total_col, value="Total").font = _live_font(bold=True)
-    worksheet.cell(
-        row=subheader_row,
-        column=total_col,
-        value=_cross_tab_metric_subheader(metric_kind),
-    ).font = _live_font(bold=True)
+    if rank_controls:
+        total_subheader_cell = _live_formula(
+            worksheet,
+            subheader_row,
+            total_col,
+            _rank_metric_subheader_formula(rank_controls["metric_name"]),
+            rank_controls["metric"],
+        )
+        total_subheader_cell.font = _live_font(bold=True)
+    else:
+        worksheet.cell(
+            row=subheader_row,
+            column=total_col,
+            value=_cross_tab_metric_subheader(metric_kind),
+        ).font = _live_font(bold=True)
     for col_index in range(first_col, total_col + 1):
         worksheet.cell(row=header_row, column=col_index).fill = _live_fill("F2F2F2")
         worksheet.cell(row=subheader_row, column=col_index).fill = _live_fill("F2F2F2")
@@ -5388,6 +5680,7 @@ def _live_write_cross_tab_table(
             theme_prefix,
             extra_pairs=[],
             header_ref=None,
+            rank_controls=rank_controls,
         )
         for offset in range(max_groups):
             group_col = first_col + 1 + offset
@@ -5401,6 +5694,7 @@ def _live_write_cross_tab_table(
                     theme_prefix,
                     extra_pairs=[(ct_range, header_ref)],
                     header_ref=header_ref,
+                    rank_controls=rank_controls,
                 )
             else:
                 first_group_col = first_col + 1
@@ -5418,6 +5712,7 @@ def _live_write_cross_tab_table(
                         theme_prefix,
                         extra_pairs=[(ct_range, header_ref)],
                         header_ref=header_ref,
+                        rank_controls=rank_controls,
                     )
                     count_expression = (
                         f'IF({header_ref}="Other",'
@@ -5433,6 +5728,7 @@ def _live_write_cross_tab_table(
                         theme_prefix,
                         extra_pairs=[(ct_range, header_ref)],
                         header_ref=header_ref,
+                        rank_controls=rank_controls,
                     )
             cell = _live_formula(
                 worksheet,
@@ -5441,15 +5737,25 @@ def _live_write_cross_tab_table(
                 f'=IF(OR({ct_name}="(None)",{header_ref}=""),"",{count_expression})',
                 row.get("cached_value", 0),
             )
-            _apply_cross_tab_metric_format(cell, metric_kind)
-            _record_live_cross_tab_audit(
-                context,
-                worksheet.title,
-                row,
-                metric_kind,
-                f'=IF(OR({ct_name}="(None)",{header_ref}=""),"",{count_expression})',
-                f"{ct_name} = {header_ref}",
-            )
+            _apply_cross_tab_metric_format(cell, metric_kind, rank_selectable=bool(rank_controls))
+            formula = f'=IF(OR({ct_name}="(None)",{header_ref}=""),"",{count_expression})'
+            if rank_controls:
+                _record_live_rank_cross_tab_audits(
+                    context,
+                    worksheet.title,
+                    row,
+                    formula,
+                    f"{ct_name} = {header_ref}",
+                )
+            else:
+                _record_live_cross_tab_audit(
+                    context,
+                    worksheet.title,
+                    row,
+                    metric_kind,
+                    formula,
+                    f"{ct_name} = {header_ref}",
+                )
 
         total_cell = _live_formula(
             worksheet,
@@ -5458,7 +5764,7 @@ def _live_write_cross_tab_table(
             f'=IF({ct_name}="(None)","",{total_expression})',
             row.get("cached_total", row.get("cached_value", 0)),
         )
-        _apply_cross_tab_metric_format(total_cell, metric_kind)
+        _apply_cross_tab_metric_format(total_cell, metric_kind, rank_selectable=bool(rank_controls))
 
     total_row = data_start + len(rows)
     worksheet.cell(row=total_row, column=first_col, value="Total respondents").font = _live_font(bold=True)
@@ -5473,10 +5779,120 @@ def _live_write_cross_tab_table(
         worksheet.cell(row=total_row, column=col_index).fill = _live_fill("F2F2F2")
     if rows:
         data_end = data_start + len(rows) - 1
-        for offset in range(max_groups):
-            count_col = first_col + 1 + offset
-            _apply_color_scale_range(worksheet, data_start, count_col, data_end, count_col)
+        if not rank_controls:
+            for offset in range(max_groups):
+                count_col = first_col + 1 + offset
+                _apply_color_scale_range(worksheet, data_start, count_col, data_end, count_col)
     return total_row
+
+
+def _live_write_rank_cross_tab_controls(
+    worksheet: Any,
+    header_row: int,
+    start_col: int,
+    rows: list[dict[str, Any]],
+    ct_name: str,
+    context: _LiveWorkbookContext,
+) -> dict[str, Any] | None:
+    workbook = worksheet.parent
+    rank_k = max(int(row.get("rank_k", 0) or 0) for row in rows)
+    if rank_k <= 0:
+        return None
+    question_id = str(rows[0].get("question_id") or "")
+    settings = _normalise_rank_cross_tab_settings(
+        context.rank_cross_tab_settings.get(question_id),
+        rank_k,
+    )
+    base_name = ct_name[:-3] if ct_name.endswith("_CT") else ct_name
+    metric_name = _safe_defined_name(f"{base_name}_RM")
+    weights_name = _safe_defined_name(f"{base_name}_W")
+    position_name = _safe_defined_name(f"{base_name}_RP")
+
+    label_col = start_col
+    value_col = start_col + 1
+    worksheet.cell(row=header_row, column=label_col, value="Rank metric").font = _live_font(bold=True, size=9)
+    metric_cell = worksheet.cell(row=header_row, column=value_col, value=settings["metric"])
+    _add_named_cell(workbook, metric_name, worksheet, metric_cell.coordinate)
+    _add_dropdown_to_cell(
+        worksheet,
+        metric_cell.coordinate,
+        '"' + ",".join(RANK_CROSS_TAB_METRICS) + '"',
+        allow_blank=False,
+    )
+
+    worksheet.cell(row=header_row + 1, column=label_col, value="Rank position").font = _live_font(bold=True, size=9)
+    position_cell = worksheet.cell(row=header_row + 1, column=value_col, value=settings["rank_position"])
+    _add_named_cell(workbook, position_name, worksheet, position_cell.coordinate)
+    _add_dropdown_to_cell(
+        worksheet,
+        position_cell.coordinate,
+        '"' + ",".join(str(rank) for rank in range(1, rank_k + 1)) + '"',
+        allow_blank=False,
+    )
+
+    weights_header_row = header_row + 3
+    worksheet.cell(row=weights_header_row, column=label_col, value="Rank weights").font = _live_font(bold=True, size=9)
+    worksheet.cell(row=weights_header_row, column=value_col, value="Weight").font = _live_font(bold=True, size=9)
+    weight_start_row = weights_header_row + 1
+    weights = settings["weights"]
+    for offset, weight in enumerate(weights):
+        row_index = weight_start_row + offset
+        worksheet.cell(row=row_index, column=label_col, value=f"Rank {offset + 1}")
+        worksheet.cell(row=row_index, column=value_col, value=weight)
+    value_letter = _openpyxl_column_letter(value_col)
+    _add_named_range(
+        workbook,
+        weights_name,
+        worksheet.title,
+        f"${value_letter}${weight_start_row}:${value_letter}${weight_start_row + rank_k - 1}",
+    )
+
+    for col_index in range(label_col, value_col + 1):
+        for row_index in range(header_row, weight_start_row + rank_k):
+            worksheet.cell(row=row_index, column=col_index).fill = _live_fill("F7F7F7")
+    return {
+        "metric_name": metric_name,
+        "weights_name": weights_name,
+        "position_name": position_name,
+        "metric": settings["metric"],
+        "weights": weights,
+        "rank_position": settings["rank_position"],
+    }
+
+
+def _normalise_rank_cross_tab_settings(raw: Any, rank_k: int) -> dict[str, Any]:
+    raw = raw if isinstance(raw, dict) else {}
+    metric = str(raw.get("metric") or "Net Rank Score")
+    if metric not in RANK_CROSS_TAB_METRICS:
+        metric = "Net Rank Score"
+    weights_raw = raw.get("weights")
+    weights: list[float] = []
+    if isinstance(weights_raw, (list, tuple)):
+        for value in weights_raw[:rank_k]:
+            try:
+                weights.append(float(value))
+            except (TypeError, ValueError):
+                weights.append(0.0)
+    if len(weights) != rank_k:
+        weights = [float(rank_k - offset) for offset in range(rank_k)]
+    try:
+        rank_position = int(raw.get("rank_position") or 1)
+    except (TypeError, ValueError):
+        rank_position = 1
+    rank_position = max(1, min(rank_k, rank_position))
+    return {
+        "metric": metric,
+        "weights": weights,
+        "rank_position": rank_position,
+    }
+
+
+def _rank_metric_subheader_formula(metric_name: str) -> str:
+    return (
+        f'=IF({metric_name}="Weighted average","Weighted average",'
+        f'IF({metric_name}="Sum of ranks","Sum of ranks",'
+        f'IF({metric_name}="Rank position count","Rank position count","Net Rank Score")))'
+    )
 
 
 def _cross_tab_metric_subheader(metric_kind: str) -> str:
@@ -5493,7 +5909,15 @@ def _cross_tab_metric_subheader(metric_kind: str) -> str:
     return "# of resp"
 
 
-def _apply_cross_tab_metric_format(cell: Any, metric_kind: str) -> None:
+def _apply_cross_tab_metric_format(
+    cell: Any,
+    metric_kind: str,
+    *,
+    rank_selectable: bool = False,
+) -> None:
+    if rank_selectable:
+        cell.number_format = "General"
+        return
     if metric_kind == "selection_rate":
         cell.number_format = "0.0%"
     elif metric_kind in {"mean", "rank_mean"}:
@@ -5515,6 +5939,7 @@ def _live_cross_tab_metric_expression(
     *,
     extra_pairs: list[tuple[str, str]],
     header_ref: str | None,
+    rank_controls: dict[str, Any] | None = None,
 ) -> str:
     if header_ref is not None and metric_kind != "count":
         other_guard_prefix = f'IF({header_ref}="Other","",'
@@ -5571,6 +5996,28 @@ def _live_cross_tab_metric_expression(
             f'IFERROR(((({rank_k + 1})*{ranked_count})-{rank_sum})/'
             f"({rank_k}*{answered_count})*100,\"\")"
         )
+        if rank_controls:
+            weighted_terms = [
+                (
+                    f"INDEX({rank_controls['weights_name']},{rank})*"
+                    f"{_countifs_expression([(data_name, str(rank)), *all_pairs])}"
+                )
+                for rank in range(1, rank_k + 1)
+            ]
+            weighted_expression = (
+                f'IFERROR(({" + ".join(weighted_terms)})/{ranked_count},"")'
+            )
+            sum_expression = f'IFERROR({rank_sum},"")'
+            position_expression = (
+                f'IFERROR({_countifs_expression([(data_name, rank_controls["position_name"]), *all_pairs])},"")'
+            )
+            metric_name = rank_controls["metric_name"]
+            expression = (
+                f'IF({metric_name}="Weighted average",{weighted_expression},'
+                f'IF({metric_name}="Sum of ranks",{sum_expression},'
+                f'IF({metric_name}="Rank position count",{position_expression},'
+                f"{expression})))"
+            )
         return f"{other_guard_prefix}{expression}{other_guard_suffix}"
 
     if metric_kind == "selection_rate":
@@ -5660,6 +6107,29 @@ def _record_live_cross_tab_audit(
             timestamp=datetime.now(timezone.utc),
         )
     )
+
+
+def _record_live_rank_cross_tab_audits(
+    context: _LiveWorkbookContext,
+    sheet_name: str,
+    row: dict[str, Any],
+    formula: str,
+    filter_expr: str,
+) -> None:
+    for metric_kind in (
+        "net_rank",
+        "rank_weighted_average",
+        "rank_sum_of_ranks",
+        "rank_position_count",
+    ):
+        _record_live_cross_tab_audit(
+            context,
+            sheet_name,
+            row,
+            metric_kind,
+            formula,
+            filter_expr,
+        )
 
 
 def _legacy_unused_cross_tab_table_marker() -> None:
@@ -6972,10 +7442,33 @@ def _question_dropdown_label(question: Any, context: _LiveWorkbookContext) -> st
     return f"{_question_display_id(question)} - {_short_label_for_question(question, context)}"
 
 
-def _question_data_name_formula(question_name: str) -> str:
-    return (
+def _question_data_name_formula(question_name: str, value_name: str | None = None) -> str:
+    fallback = (
         f'IFERROR(INDEX(All_Questions_Data_Names,'
         f'MATCH({question_name},All_Questions,0)),'
+        f'"{_sheet_range_reference("_RawData", "$A:$A")}")'
+    )
+    if not value_name:
+        return fallback
+    return (
+        f'IFERROR(INDEX(All_Questions_Value_Data_Names,'
+        f'MATCH({question_name}&"|"&{value_name},All_Questions_Value_Keys,0)),'
+        f"{fallback})"
+    )
+
+
+def _question_filter_criteria_formula(question_name: str, value_name: str) -> str:
+    return (
+        f'IFERROR(INDEX(All_Questions_Value_Criteria,'
+        f'MATCH({question_name}&"|"&{value_name},All_Questions_Value_Keys,0)),'
+        f"{value_name})"
+    )
+
+
+def _cross_tab_data_name_formula(question_name: str) -> str:
+    return (
+        f'IFERROR(INDEX(Cross_Tab_Questions_Data_Names,'
+        f'MATCH({question_name},Cross_Tab_Questions,0)),'
         f'"{_sheet_range_reference("_RawData", "$A:$A")}")'
     )
 
@@ -6984,6 +7477,14 @@ def _question_options_name_formula(question_name: str) -> str:
     return (
         f'IFERROR(INDEX(All_Questions_Options_Names,'
         f'MATCH({question_name},All_Questions,0)),'
+        f'"{_sheet_range_reference("_Options", "$E$2:$E$2")}")'
+    )
+
+
+def _cross_tab_options_name_formula(question_name: str) -> str:
+    return (
+        f'IFERROR(INDEX(Cross_Tab_Questions_Options_Names,'
+        f'MATCH({question_name},Cross_Tab_Questions,0)),'
         f'"{_sheet_range_reference("_Options", "$E$2:$E$2")}")'
     )
 
