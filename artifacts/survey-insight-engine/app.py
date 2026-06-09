@@ -4304,14 +4304,17 @@ def _render_selected_question_cross_cut_builder(target_id: str) -> None:
         app.info("No eligible dimension questions are available.")
         return
 
-    with app.form(f"selected_question_cross_cut_{target_id}"):
-        dimension_id = app.selectbox(
-            "Dimension",
-            dimension_options,
-            format_func=lambda value: labels.get(value, value),
-            key=f"selected_question_dimension_{target_id}",
-        )
-        submitted = app.form_submit_button("Run cross cut", type="primary")
+    dimension_id = app.selectbox(
+        "Dimension",
+        dimension_options,
+        format_func=lambda value: labels.get(value, value),
+        key=f"selected_question_dimension_{target_id}",
+    )
+    submitted = app.button(
+        "Run cross cut",
+        type="primary",
+        key=f"selected_question_cross_cut_submit_{target_id}",
+    )
 
     result_key = f"selected_question_cross_cut_result_{target_id}"
     if submitted:
