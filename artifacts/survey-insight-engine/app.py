@@ -4304,17 +4304,14 @@ def _render_selected_question_cross_cut_builder(target_id: str) -> None:
         app.info("No eligible dimension questions are available.")
         return
 
-    dimension_id = app.selectbox(
-        "Dimension",
-        dimension_options,
-        format_func=lambda value: labels.get(value, value),
-        key=f"selected_question_dimension_{target_id}",
-    )
-    submitted = app.button(
-        "Run cross cut",
-        type="primary",
-        key=f"selected_question_cross_cut_submit_{target_id}",
-    )
+    with app.form(f"selected_question_cross_cut_{target_id}"):
+        dimension_id = app.selectbox(
+            "Dimension",
+            dimension_options,
+            format_func=lambda value: labels.get(value, value),
+            key=f"selected_question_dimension_{target_id}",
+        )
+        submitted = app.form_submit_button("Run cross cut", type="primary")
 
     result_key = f"selected_question_cross_cut_result_{target_id}"
     if submitted:
@@ -7849,14 +7846,14 @@ def _render_nav_bar() -> None:
     def _tab(view: str, label: str, badge: Any = None, badge_type: str | None = None) -> str:
         active = " active" if active_view == view else ""
         return (
-            f'<a href="{html.escape(_nav_href(view))}" class="nav-tab{active}">'
+            f'<a href="{html.escape(_nav_href(view))}" data-view="{html.escape(view)}" class="nav-tab{active}">'
             f'{html.escape(label)}{_badge(badge, badge_type)}</a>'
         )
 
     def _menu_item(view: str, label: str, badge: Any = None, badge_type: str | None = None) -> str:
         active = " active" if active_view == view else ""
         return (
-            f'<a href="{html.escape(_nav_href(view))}" class="nav-more-item{active}">'
+            f'<a href="{html.escape(_nav_href(view))}" data-view="{html.escape(view)}" class="nav-more-item{active}">'
             f'{html.escape(label)}{_badge(badge, badge_type)}</a>'
         )
 
@@ -7891,6 +7888,11 @@ def _render_nav_bar() -> None:
     except Exception:
         components_html = None
 
+    for _v in _NAV_VIEWS:
+        if app.button(f"navjump_{_v}", key=f"_navjump_{_v}"):
+            _set_current_nav_view(_v)
+            app.rerun()
+
     nav_json = json.dumps(nav_items)
     script = f"""
 <script>
@@ -7905,6 +7907,30 @@ def _render_nav_bar() -> None:
             navContainer.innerHTML = navHTML;
             navContainer.dataset.signature = navHTML;
         }}
+        if (!doc.defaultView.__surveyNavBridgeInstalled) {{
+            doc.defaultView.__surveyNavBridgeInstalled = true;
+            doc.addEventListener('click', function(e) {{
+                var target = e.target;
+                var link = target && target.closest ? target.closest('.nav-tab[data-view], .nav-more-item[data-view]') : null;
+                if (!link) return;
+                var view = link.getAttribute('data-view');
+                if (!view) return;
+                var buttonLabel = 'navjump_' + view;
+                var buttons = doc.querySelectorAll('button');
+                for (var i = 0; i < buttons.length; i++) {{
+                    if ((buttons[i].innerText || '').trim() === buttonLabel) {{
+                        e.preventDefault();
+                        buttons[i].click();
+                        return;
+                    }}
+                }}
+            }}, true);
+        }}
+        Array.prototype.forEach.call(doc.querySelectorAll('button'), function(button) {{
+            if ((button.innerText || '').trim().indexOf('navjump_') === 0) {{
+                (button.closest('[data-testid="stButton"]') || button).style.display = 'none';
+            }}
+        }});
         return true;
     }}
 
