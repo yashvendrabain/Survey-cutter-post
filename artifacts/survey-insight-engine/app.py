@@ -2295,7 +2295,19 @@ def _set_current_nav_view(view: str) -> None:
 
 
 def _nav_href(view: str) -> str:
-    return f"?view={view}"
+    return "#"
+
+
+def _nav_onclick(view: str) -> str:
+    v = view.lower()
+    return (
+        "var b=document.querySelectorAll('button');"
+        "for(var i=0;i<b.length;i++){"
+        "if((b[i].textContent||'').trim().toLowerCase()"
+        ".indexOf('navjump_" + v + "')===0){b[i].click();break;}"
+        "}return false;"
+    )
+
 
 
 def _upload_status(uploaded_file: Any | None) -> str:
@@ -7846,14 +7858,14 @@ def _render_nav_bar() -> None:
     def _tab(view: str, label: str, badge: Any = None, badge_type: str | None = None) -> str:
         active = " active" if active_view == view else ""
         return (
-            f'<a href="{html.escape(_nav_href(view))}" data-view="{html.escape(view)}" class="nav-tab{active}">'
+            f'<a href="{html.escape(_nav_href(view))}" data-view="{html.escape(view)}" onclick="{html.escape(_nav_onclick(view))}" class="nav-tab{active}">'
             f'{html.escape(label)}{_badge(badge, badge_type)}</a>'
         )
 
     def _menu_item(view: str, label: str, badge: Any = None, badge_type: str | None = None) -> str:
         active = " active" if active_view == view else ""
         return (
-            f'<a href="{html.escape(_nav_href(view))}" data-view="{html.escape(view)}" class="nav-more-item{active}">'
+            f'<a href="{html.escape(_nav_href(view))}" data-view="{html.escape(view)}" onclick="{html.escape(_nav_onclick(view))}" class="nav-more-item{active}">'
             f'{html.escape(label)}{_badge(badge, badge_type)}</a>'
         )
 
@@ -7915,10 +7927,11 @@ def _render_nav_bar() -> None:
                 if (!link) return;
                 var view = link.getAttribute('data-view');
                 if (!view) return;
-                var buttonLabel = 'navjump_' + view;
+                e.preventDefault();
+                var buttonLabel = ('navjump_' + view).toLowerCase();
                 var buttons = doc.querySelectorAll('button');
                 for (var i = 0; i < buttons.length; i++) {{
-                    if ((buttons[i].innerText || '').trim() === buttonLabel) {{
+                    if ((buttons[i].textContent || '').trim().toLowerCase().indexOf(buttonLabel) === 0) {{
                         e.preventDefault();
                         buttons[i].click();
                         return;
@@ -7927,7 +7940,7 @@ def _render_nav_bar() -> None:
             }}, true);
         }}
         Array.prototype.forEach.call(doc.querySelectorAll('button'), function(button) {{
-            if ((button.innerText || '').trim().indexOf('navjump_') === 0) {{
+            if ((button.textContent || '').trim().toLowerCase().indexOf('navjump_') === 0) {{
                 (button.closest('[data-testid="stButton"]') || button).style.display = 'none';
             }}
         }});

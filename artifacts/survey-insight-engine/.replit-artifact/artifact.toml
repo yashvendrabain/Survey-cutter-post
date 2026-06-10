@@ -17,6 +17,9 @@ localPort = 21049
 [services.development]
 run = "streamlit run app.py --server.port 21049 --server.address 0.0.0.0 --server.headless true --server.enableCORS=false --server.enableXsrfProtection=false --server.baseUrlPath="
 
+[services.production]
+run = "streamlit run app.py --server.port 21049 --server.address 0.0.0.0 --server.headless true --server.enableCORS=false --server.enableXsrfProtection=false --server.baseUrlPath="
+
 [services.env]
 PORT = "21049"
 BASE_PATH = "/"
