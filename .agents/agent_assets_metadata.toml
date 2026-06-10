@@ -126,3 +126,9 @@ id = "n5_xkHOFaJ3ZH-_QgJCVu"
 uri = "file://attached_assets/clean_app.py.txt"
 type = "text"
 title = "clean_app.py (4585 lines, no wizard, sha256: a9d0e8ff...)"
+
+[[outputs]]
+id = "roEsBeuTr8A14N2Yc5SAA"
+uri = "file://dist/survey-insight-engine-project.zip"
+type = "unspecified"
+title = "Full Project Archive (survey-insight-engine-project.zip)"
