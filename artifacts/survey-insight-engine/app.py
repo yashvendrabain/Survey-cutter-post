@@ -5546,6 +5546,12 @@ def _section_survey_classification(show_toggle: bool = True) -> None:
     else:
         app.session_state[toggle_key] = True
 
+    if app.toggle("Open Advanced", key="outcome_seg_advanced",
+                  help="Multi-metric winner/laggard builder with balance and composition."):
+        from src.advanced_segmentation_ui import render_advanced_outcome_segmentation
+        render_advanced_outcome_segmentation()
+        return
+
     if app.session_state.get("survey_type_result") is None:
         with app.spinner("Detecting survey type..."):
             from src.survey_type_detector import detect_survey_type
