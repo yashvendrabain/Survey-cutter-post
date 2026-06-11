@@ -7716,35 +7716,35 @@ def _render_sidebar() -> None:
         render_chat_panel()
 
         if not app.session_state.get("run_complete"):
-            app.markdown(
-                f"""
-                <div class="gs-wrap">
-                  <div class="gs-title">{_svg_icon("spark", size=15, color="#CC0000")}<span style="margin-left:7px;">Getting started</span></div>
-                  <div class="gs-step">
-                    <div class="gs-badge done">1</div>
-                    <div class="gs-body">
-                      <div class="gs-step-title">Upload your survey</div>
-                      <div class="gs-step-desc">Add your raw data + data map, or a single combined Excel.</div>
+            with app.expander("Getting started", expanded=True):
+                app.markdown(
+                    f"""
+                    <div class="gs-wrap">
+                      <div class="gs-step">
+                        <div class="gs-badge done">1</div>
+                        <div class="gs-body">
+                          <div class="gs-step-title">Upload your survey</div>
+                          <div class="gs-step-desc">Add your raw data + data map, or a single combined Excel.</div>
+                        </div>
+                      </div>
+                      <div class="gs-step todo">
+                        <div class="gs-badge todo">2</div>
+                        <div class="gs-body">
+                          <div class="gs-step-title">Run the analysis</div>
+                          <div class="gs-step-desc">Hit Run analysis \u2014 every cut is computed in seconds.</div>
+                        </div>
+                      </div>
+                      <div class="gs-step todo">
+                        <div class="gs-badge todo">3</div>
+                        <div class="gs-body">
+                          <div class="gs-step-title">Review &amp; download</div>
+                          <div class="gs-step-desc">Explore results here, then download the workbook.</div>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                  <div class="gs-step todo">
-                    <div class="gs-badge todo">2</div>
-                    <div class="gs-body">
-                      <div class="gs-step-title">Run the analysis</div>
-                      <div class="gs-step-desc">Hit Run analysis \u2014 every cut is computed in seconds.</div>
-                    </div>
-                  </div>
-                  <div class="gs-step todo">
-                    <div class="gs-badge todo">3</div>
-                    <div class="gs-body">
-                      <div class="gs-step-title">Review &amp; download</div>
-                      <div class="gs-step-desc">Explore results here, then download the workbook.</div>
-                    </div>
-                  </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+                    """,
+                    unsafe_allow_html=True,
+                )
 
         if app.session_state.get("run_complete"):
             lr = app.session_state.get("load_report")
@@ -7823,21 +7823,6 @@ def _render_sidebar() -> None:
                     text-decoration:none;">╫ 4. Cross Cuts</a><br>
                   <a href="#section-5" style="color:#CC0000;
                     text-decoration:none;">↓ 5. Downloads</a>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-        else:
-            app.markdown(
-                """
-                <div style="font-size:11px;color:#666;font-family:Arial;
-                  line-height:1.9;padding:8px 0;">
-                  <b>Getting started:</b><br>
-                  1. Upload your survey files<br>
-                  2. Click Run Analysis<br>
-                  3. Apply filters if needed<br>
-                  4. Explore and download
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -8054,6 +8039,15 @@ def _render_nav_bar() -> None:
                 wrap.style.width = '1px'; wrap.style.height = '1px';
                 wrap.style.overflow = 'hidden'; wrap.style.opacity = '0';
                 wrap.style.left = '-9999px'; wrap.style.pointerEvents = 'auto';
+                // Also collapse the OUTER element container so it reserves no
+                // vertical space (this was the large empty gap at the top).
+                var outer = button.closest('[data-testid="stElementContainer"]')
+                    || button.closest('[data-testid="element-container"]');
+                if (outer) {{
+                    outer.style.height = '0px'; outer.style.minHeight = '0px';
+                    outer.style.margin = '0px'; outer.style.padding = '0px';
+                    outer.style.overflow = 'hidden';
+                }}
             }}
         }});
         return true;
@@ -8501,63 +8495,56 @@ def _render_wizard_stepper() -> None:
 
 
 def _render_wizard_top_nav() -> None:
-    """Clean centered 3-step stepper (Categories / Filter counts / Cross-cut).
-
-    The visual (circles + connectors + labels) is rendered as ONE HTML flexbox
-    block so it always aligns; small buttons beneath it handle clicks.
-    """
+    """Pretty, NON-clickable 3-step indicator (Categories / Filter counts /
+    Cross-cut), rendered as one aligned HTML flexbox. Navigation is via the
+    Back/Next buttons at the bottom of each step."""
     app = _require_streamlit()
     step = int(app.session_state.get("wiz_step", 1))
     labels = ["Categories", "Filter counts", "Cross-cut"]
+
+    def _circle(n: int) -> str:
+        if n < step:
+            bg = "linear-gradient(180deg,#E00000,#CC0000)"; col = "#fff"; bd = "none"; mark = "\u2713"
+        elif n == step:
+            bg = "linear-gradient(180deg,#E00000,#CC0000)"; col = "#fff"; bd = "none"; mark = str(n)
+        else:
+            bg = "#F4F5F7"; col = "#A8ADB3"; bd = "1.5px solid #E2E4E8"; mark = str(n)
+        lab_color = "#CC0000" if n == step else "#9AA0A6"
+        lab_weight = "700" if n == step else "500"
+        ring = "box-shadow:0 0 0 4px rgba(204,0,0,0.10);" if n == step else "box-shadow:0 1px 3px rgba(16,24,40,0.06);"
+        return (
+            "<div style='display:flex;flex-direction:column;align-items:center;flex:0 0 auto;width:96px;'>"
+            f"<div style='width:38px;height:38px;border-radius:50%;background:{bg};color:{col};"
+            f"border:{bd};{ring}display:flex;align-items:center;justify-content:center;"
+            f"font-weight:700;font-size:15px;font-family:Arial,sans-serif;'>{mark}</div>"
+            f"<div style='margin-top:8px;font-size:11.5px;font-weight:{lab_weight};color:{lab_color};"
+            f"font-family:Arial,sans-serif;white-space:nowrap;letter-spacing:0.02em;'>{html.escape(labels[n-1])}</div>"
+            "</div>"
+        )
+
+    def _conn(after: int) -> str:
+        done = after < step
+        return (
+            "<div style='flex:1 1 40px;height:2px;margin:0 6px;margin-top:18px;border-radius:2px;"
+            f"background:{'linear-gradient(90deg,#CC0000,#E00000)' if done else '#E6E8EB'};'></div>"
+        )
+
+    def _arrow(glyph: str, enabled: bool) -> str:
+        color = "#CC0000" if enabled else "#D8DADE"
+        return (
+            f"<div style='font-size:22px;font-weight:700;color:{color};flex:0 0 auto;"
+            f"margin-top:8px;font-family:Arial,sans-serif;'>{glyph}</div>"
+        )
+
     app.markdown(
-        "<style>"
-        ".wizstep-ctrls + div [data-testid='stHorizontalBlock']{"
-        "max-width:560px;margin:4px auto 2px;gap:0 !important;align-items:center;}"
-        # arrow buttons: borderless glyph, centred with circles
-        ".wizstep-arrow .stButton button{background:transparent !important;border:none !important;"
-        "color:#CC0000 !important;font-size:24px !important;font-weight:700 !important;"
-        "box-shadow:none !important;padding:0 !important;line-height:1 !important;min-height:36px !important;}"
-        ".wizstep-arrow .stButton button:disabled{color:#D8DADE !important;}"
-        # circle buttons: round, sized, centred
-        ".wizstep-circle .stButton button{width:36px !important;height:36px !important;"
-        "min-height:36px !important;border-radius:50% !important;font-size:14px !important;"
-        "font-weight:700 !important;padding:0 !important;margin:0 auto !important;"
-        "display:flex !important;align-items:center !important;justify-content:center !important;}"
-        ".wizstep-circle .stButton button[kind='primary']{"
-        "background:linear-gradient(180deg,#E00000,#CC0000) !important;color:#fff !important;"
-        "border:none !important;box-shadow:0 2px 6px rgba(204,0,0,0.25) !important;}"
-        ".wizstep-circle .stButton button[kind='secondary']{"
-        "background:#F2F3F5 !important;color:#A8ADB3 !important;border:1.5px solid #E2E4E8 !important;"
-        "box-shadow:none !important;}"
-        "</style><div class='wizstep-ctrls'></div>",
+        "<div style='display:flex;align-items:flex-start;justify-content:center;"
+        "gap:6px;max-width:620px;margin:6px auto 10px;'>"
+        + _arrow("\u2039", step > 1)
+        + _circle(1) + _conn(1) + _circle(2) + _conn(2) + _circle(3)
+        + _arrow("\u203a", step < 3)
+        + "</div>",
         unsafe_allow_html=True,
     )
-    bcol, s1, s2, s3, ncol = app.columns([0.8, 1, 1, 1, 0.8])
-    with bcol:
-        app.markdown("<div class='wizstep-arrow'></div>", unsafe_allow_html=True)
-        if app.button("\u2039", disabled=(step <= 1), key="wiz_back_top", help="Back"):
-            app.session_state["wiz_step"] = max(1, step - 1)
-            _wizard_rerun(app)
-    for idx, scol in enumerate([s1, s2, s3], start=1):
-        with scol:
-            app.markdown("<div class='wizstep-circle'></div>", unsafe_allow_html=True)
-            if app.button(str(idx), key=f"wiztop_circle_{idx}",
-                          type=("primary" if idx == step else "secondary")):
-                app.session_state["wiz_step"] = idx
-                _wizard_rerun(app)
-            lab_color = "#CC0000" if idx == step else "#999"
-            lab_weight = "700" if idx == step else "500"
-            app.markdown(
-                f"<div style='text-align:center;font-size:11px;font-weight:{lab_weight};"
-                f"color:{lab_color};font-family:Arial,sans-serif;margin-top:3px;"
-                f"white-space:nowrap;'>{html.escape(labels[idx-1])}</div>",
-                unsafe_allow_html=True,
-            )
-    with ncol:
-        app.markdown("<div class='wizstep-arrow'></div>", unsafe_allow_html=True)
-        if app.button("\u203a", disabled=(step >= 3), key="wiz_next_top", help="Next"):
-            app.session_state["wiz_step"] = min(3, step + 1)
-            _wizard_rerun(app)
 
 
 def _render_wizard_nav(location: str) -> None:

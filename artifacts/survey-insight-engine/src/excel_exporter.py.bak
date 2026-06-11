@@ -551,7 +551,7 @@ def export_winners_vs_laggards_workbook(
         sheet_name = theme_sheet_names[theme_name]
         worksheet = workbook.create_sheet(sheet_name)
         theme_prefix = _theme_defined_prefix(sheet_name)
-        row_index, local_filters = _build_theme_local_filters_block(
+        row_index, local_filters, custom_local_filters = _build_theme_local_filters_block(
             workbook,
             worksheet,
             1,
@@ -564,6 +564,7 @@ def export_winners_vs_laggards_workbook(
             theme_prefix,
             local_filters,
             context,
+            custom_local_filters,
         )
         row_index = _wvl_write_category_sheet_header(worksheet, theme_name, row_index)
         for result in theme_results:
@@ -3350,8 +3351,13 @@ def _build_theme_local_filter_helper_column(
     theme_prefix: str,
     local_filters: list[dict[str, str]],
     context: _LiveWorkbookContext,
+    custom_local_filters: list[dict[str, str]] | None = None,
 ) -> str:
-    """Append a per-theme local-filter pass mask to _RawData."""
+    """Append a per-theme local-filter pass mask to _RawData.
+
+    Includes BOTH the standard local filters AND the per-sheet custom filters
+    (the custom ones were previously omitted, so they never filtered the data).
+    """
 
     if context.raw_data_streamed:
         return _theme_local_pass_data_name(theme_prefix)
@@ -3381,6 +3387,36 @@ def _build_theme_local_filter_helper_column(
                     data_cell=data_cell,
                     value_name=local_filter["value_name"],
                     wrapped_name=local_filter["wrapped_name"],
+                ),
+                1,
+            )
+        col_letter = _openpyxl_column_letter(next_col)
+        _add_named_range(
+            workbook,
+            match_name,
+            "_RawData",
+            f"${col_letter}$2:${col_letter}${last_row}",
+        )
+        match_columns.append(next_col)
+        next_col += 1
+
+    # Per-sheet CUSTOM filters: build a match column each, using the custom
+    # (resolved_column / INDIRECT) formula, and fold into the same pass mask.
+    for custom in (custom_local_filters or []):
+        match_name = _safe_defined_name(f"{custom['match_basename']}_match_data")
+        worksheet.cell(row=1, column=next_col, value=match_name.removesuffix("_data"))
+        for row_index in range(2, last_row + 1):
+            _live_formula(
+                worksheet,
+                row_index,
+                next_col,
+                _raw_custom_filter_match_formula(
+                    row_index=row_index,
+                    question_name=custom["question_name"],
+                    value_name=custom["value_name"],
+                    wrapped_name=custom["wrapped_name"],
+                    resolved_column_name=custom["resolved_column_name"],
+                    criteria_name=custom["criteria_name"],
                 ),
                 1,
             )
@@ -3893,7 +3929,7 @@ def _live_write_theme_sheet(
     worksheet = workbook.create_sheet(sheet_name)
     row_index = _live_write_theme_header(worksheet, theme_name)
     theme_prefix = _theme_defined_prefix(sheet_name)
-    row_index, local_filters = _build_theme_local_filters_block(
+    row_index, local_filters, custom_local_filters = _build_theme_local_filters_block(
         workbook,
         worksheet,
         row_index,
@@ -3906,6 +3942,7 @@ def _live_write_theme_sheet(
         theme_prefix,
         local_filters,
         context,
+        custom_local_filters,
     )
     for result in results:
         question = schema.get_question(result.question_id)
@@ -4067,8 +4104,9 @@ def _build_theme_local_filters_block(
         )
         row_index += 1
 
+    custom_local_filters: list[dict[str, str]] = []
     for slot in range(1, context.workbook_custom_filter_count + 1):
-        row_index = _write_theme_custom_filter(
+        row_index, _custom_meta = _write_theme_custom_filter(
             workbook,
             worksheet,
             row_index,
@@ -4077,7 +4115,8 @@ def _build_theme_local_filters_block(
             f"F_Custom{slot}_Q",
             f"F_Custom{slot}_V",
         )
-    return row_index + 2, local_filters
+        custom_local_filters.append(_custom_meta)
+    return row_index + 2, local_filters, custom_local_filters
 
 
 def _write_theme_custom_filter(
@@ -4152,7 +4191,18 @@ def _write_theme_custom_filter(
         v_cell.coordinate,
         f"=INDIRECT({_question_options_name_formula(resolved_q)})",
     )
-    return row_index + 1
+    # Return metadata so the caller can build a per-sheet custom MATCH column
+    # (previously omitted -> per-sheet custom filters never filtered the data).
+    custom_meta = {
+        "is_custom": True,
+        "question_name": resolved_q,
+        "value_name": resolved_v,
+        "wrapped_name": wrapped_name,
+        "resolved_column_name": resolved_column,
+        "criteria_name": f"{theme_prefix}_{global_question_name[:-2]}_resolved_criteria",
+        "match_basename": f"{theme_prefix}_{global_question_name[:-2]}_local",
+    }
+    return row_index + 1, custom_meta
 
 
 def _live_write_custom_filter_slot(
