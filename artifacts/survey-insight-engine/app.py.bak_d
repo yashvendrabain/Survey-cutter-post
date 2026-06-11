@@ -8620,10 +8620,36 @@ def _render_wizard_step_filters() -> None:
         "(e.g. show only respondents where Region = APAC). Pick the questions "
         "you want available as slicers below."
     )
-    app.caption(
-        "Example: with Region and Company size as filters, a reader opens a sheet "
-        "and sets Region = APAC to instantly see only APAC respondents \u2014 no "
-        "re-running needed."
+    # Sneak peek: how Local Filters appear to a reader — clean pill cards.
+    app.markdown(
+        "<div style='margin:8px 0 16px;font-family:Arial,sans-serif;'>"
+        "<div style='font-size:11px;font-weight:700;letter-spacing:0.08em;"
+        "text-transform:uppercase;color:#CC0000;margin-bottom:8px;'>"
+        "Preview \u00b7 how a reader slices a sheet</div>"
+        "<div style='display:flex;gap:12px;flex-wrap:wrap;'>"
+        # card 1
+        "<div style='flex:1;min-width:180px;background:linear-gradient(180deg,#fff,#FCFCFC);"
+        "border:1px solid #EAEAEA;border-radius:12px;padding:14px 16px;"
+        "box-shadow:0 2px 8px rgba(0,0,0,0.05);'>"
+        "<div style='font-size:11px;color:#999;margin-bottom:6px;'>Region</div>"
+        "<div style='display:flex;align-items:center;justify-content:space-between;"
+        "background:#fff;border:1.5px solid #CC0000;border-radius:8px;padding:8px 12px;'>"
+        "<span style='font-size:13px;font-weight:600;color:#0A0A0A;'>APAC</span>"
+        "<span style='color:#CC0000;font-size:11px;'>\u25be</span></div></div>"
+        # card 2
+        "<div style='flex:1;min-width:180px;background:linear-gradient(180deg,#fff,#FCFCFC);"
+        "border:1px solid #EAEAEA;border-radius:12px;padding:14px 16px;"
+        "box-shadow:0 2px 8px rgba(0,0,0,0.05);'>"
+        "<div style='font-size:11px;color:#999;margin-bottom:6px;'>Company size</div>"
+        "<div style='display:flex;align-items:center;justify-content:space-between;"
+        "background:#fff;border:1.5px solid #E0E0E0;border-radius:8px;padding:8px 12px;'>"
+        "<span style='font-size:13px;font-weight:600;color:#0A0A0A;'>Enterprise</span>"
+        "<span style='color:#999;font-size:11px;'>\u25be</span></div></div>"
+        "</div>"
+        "<div style='font-size:11px;color:#aaa;margin-top:8px;'>"
+        "Each slicer sits atop its sheet \u2014 change the value to re-slice instantly.</div>"
+        "</div>",
+        unsafe_allow_html=True,
     )
     selected = set(app.session_state.get("wiz_selected_demographics") or [])
     candidate_ids = [q.canonical_id for q in schema.questions if q.is_demographic or q.canonical_id in selected]

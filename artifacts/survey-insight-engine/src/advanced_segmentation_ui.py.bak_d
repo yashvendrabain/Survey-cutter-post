@@ -144,7 +144,6 @@ def render_advanced_outcome_segmentation() -> None:
         return
     import pandas as pd
     cols = list(df.columns)
-    work_df = df  # may be narrowed by the optional pool filter below
 
     st.markdown("#### Advanced segmentation builder")
     st.caption(
@@ -191,6 +190,7 @@ def render_advanced_outcome_segmentation() -> None:
             if s: specs.append(s)
 
     # Optional pool filter (kept compact, below the boxes)
+    work_df = df
     if balance_dims:
         with st.expander("Filter the pool (optional)", expanded=False):
             for dim in balance_dims:
