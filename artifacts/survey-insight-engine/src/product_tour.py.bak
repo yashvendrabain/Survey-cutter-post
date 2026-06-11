@@ -230,7 +230,17 @@ def _tour_html(steps: list[dict[str, str]], force: bool = False) -> str:
     doc.addEventListener("mouseup", function(){ drag=false; }, true);
   }
 
-  if (__FORCE__){ setTimeout(win.__saeBuild,120); setTimeout(win.__saeBuild,450); return; }
+  if (__FORCE__){
+    // Retry several times in case the parent DOM/body isn't ready yet — this is
+    // the robustness fix for "take the tour does nothing".
+    var tries = 0;
+    var iv = setInterval(function(){
+      tries++;
+      if (doc && doc.body){ win.__saeBuild(); }
+      if (tries > 12 || doc.getElementById("sae-tour-card")){ clearInterval(iv); }
+    }, 120);
+    return;
+  }
   if (win.__saeDone) return;
   if (doc.getElementById("sae-tour-card")) return;
   var seen=null; try{ seen=win.sessionStorage.getItem("sae_tour_seen"); }catch(e){}
@@ -254,8 +264,10 @@ def maybe_render_tour(force: bool = False) -> None:
         return
     st.session_state[_TOUR_SEEN_KEY] = True
     st.session_state[_TOUR_FORCE_KEY] = False
-    # Forced tours need more height so the injected iframe definitely executes JS.
-    components_html(_tour_html(TOUR_STEPS, force=forced), height=1)
+    # Height must be > 0 for Streamlit to reliably execute the injected <script>.
+    # A 1px iframe frequently gets skipped; 10px is safe and visually negligible
+    # (the actual tour UI is injected into the PARENT document, not this iframe).
+    components_html(_tour_html(TOUR_STEPS, force=forced), height=10)
 
 
 def restart_tour() -> None:
