@@ -99,7 +99,7 @@ def _launcher_html(is_open: bool) -> str:
     if (__SHOW_PROMPT__){
       if(!prompt){
         prompt = doc.createElement("div"); prompt.id="sae-chat-prompt";
-        prompt.textContent = "Have a question? Ask away.";
+        prompt.textContent = "Have a question? Ask it \u2014 I can help.";
         doc.body.appendChild(prompt);
       }
     } else if (prompt){ prompt.remove(); }
