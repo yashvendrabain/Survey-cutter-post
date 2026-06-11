@@ -54,7 +54,6 @@ class WinnerScoringConfig:
     balance_dimensions: tuple[str, ...] = ()
     stratify_dimension: Optional[str] = None
     min_metrics_present: int = 1
-    combination_mode: str = "blend"  # "blend" (weighted composite) | "intersection" (top X% on every metric)
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,16 +262,7 @@ def compute_winner_scoring(df: pd.DataFrame, config: WinnerScoringConfig,
     scored = [(rid, composite[rid]) for rid in index if composite[rid] is not None]
     excluded_ids = tuple(rid for rid in index if composite[rid] is None)
 
-    if config.combination_mode == "intersection":
-        # Winner = in the top X% on EVERY metric individually (strict intersection).
-        # Laggard = in the bottom X% on every metric. Composite still used only for
-        # ranking/tie-breaks and the middle group.
-        winner_set, laggard_set = _intersection_cohorts(pct_by_metric, config, calc_log)
-        # keep only respondents who actually have a composite (present metrics)
-        scored_ids = {rid for rid, _ in scored}
-        winner_set &= scored_ids
-        laggard_set = (laggard_set & scored_ids) - winner_set
-    elif config.balance_strategy == BalanceStrategy.STRATIFIED and config.stratify_dimension:
+    if config.balance_strategy == BalanceStrategy.STRATIFIED and config.stratify_dimension:
         winner_set, laggard_set = _stratified_cohorts(df, scored, config, calc_log)
     else:
         winner_set, laggard_set = _global_cohorts(scored, config)
@@ -325,40 +315,6 @@ def compute_winner_scoring(df: pd.DataFrame, config: WinnerScoringConfig,
         respondent_scores=scores, composition=composition,
         calc_log=tuple(calc_log),
     )
-
-
-def _intersection_cohorts(pct_by_metric, config, calc_log):
-    """Strict intersection: winner iff percentile >= (100 - X) on EVERY metric.
-
-    pct_by_metric: {question_id: pd.Series of 0-100 percentiles}.
-    A respondent must have a non-null percentile on every present metric and clear
-    the threshold on all of them. Laggard is the mirror (<= X on every metric).
-    """
-    import pandas as pd
-    win_cut = (1.0 - config.winner_pct) * 100.0   # e.g. top 25% -> >= 75th pct
-    lag_cut = config.laggard_pct * 100.0          # bottom 25% -> <= 25th pct
-    if not pct_by_metric:
-        return set(), set()
-    metric_ids = list(pct_by_metric)
-    # Align all metric percentile series on a common index.
-    common_index = None
-    for s in pct_by_metric.values():
-        common_index = s.index if common_index is None else common_index.intersection(s.index)
-    winner_set, laggard_set = set(), set()
-    for rid in common_index:
-        vals = [pct_by_metric[q].loc[rid] for q in metric_ids]
-        if any(pd.isna(v) for v in vals):
-            continue
-        if all(float(v) >= win_cut for v in vals):
-            winner_set.add(rid)
-        elif all(float(v) <= lag_cut for v in vals):
-            laggard_set.add(rid)
-    calc_log.append({"stage": "intersection_cohorts",
-                     "winner_cut_pct": win_cut, "laggard_cut_pct": lag_cut,
-                     "metrics": metric_ids,
-                     "winner_count": len(winner_set), "laggard_count": len(laggard_set),
-                     "formula": "winner iff percentile>=100-X on ALL metrics"})
-    return winner_set, laggard_set
 
 
 def _sk(rid):
@@ -465,3 +421,39 @@ def winner_mask(df: pd.DataFrame, result: WinnerScoringResult) -> pd.Series:
 
 def laggard_mask(df: pd.DataFrame, result: WinnerScoringResult) -> pd.Series:
     return pd.Series(df.index.isin(result.laggard_ids), index=df.index)
+
+
+# --------------------------------------------------------------------------
+# Cohort comparison (deterministic — feeds the winners-vs-laggards table/chart)
+# --------------------------------------------------------------------------
+def compute_cohort_comparison(df: pd.DataFrame, config: WinnerScoringConfig,
+                              result: WinnerScoringResult, schema=None) -> list[dict]:
+    """Per-metric mean for winners vs laggards, with gap and lift.
+
+    Raw metric values (band->midpoint applied), NOT percentiles, so the
+    numbers are interpretable for an analyst. Deterministic.
+    """
+    win = list(result.winner_ids)
+    lag = list(result.laggard_ids)
+    rows: list[dict] = []
+    for spec in config.metrics:
+        try:
+            series = resolve_metric_series(df, spec, schema=schema)
+        except Exception:  # noqa: BLE001
+            continue
+        w_vals = pd.to_numeric(series.reindex(win), errors="coerce").dropna()
+        l_vals = pd.to_numeric(series.reindex(lag), errors="coerce").dropna()
+        w_mean = float(w_vals.mean()) if len(w_vals) else float("nan")
+        l_mean = float(l_vals.mean()) if len(l_vals) else float("nan")
+        gap = (w_mean - l_mean) if (len(w_vals) and len(l_vals)) else float("nan")
+        lift = (w_mean / l_mean) if (len(l_vals) and l_mean not in (0, 0.0)) else None
+        rows.append({
+            "metric": spec.question_id,
+            "winner_mean": w_mean,
+            "laggard_mean": l_mean,
+            "gap": gap,
+            "lift": lift,
+            "winner_n": int(len(w_vals)),
+            "laggard_n": int(len(l_vals)),
+        })
+    return rows

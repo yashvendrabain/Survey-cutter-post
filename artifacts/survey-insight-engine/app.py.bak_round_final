@@ -5641,13 +5641,7 @@ def _section_survey_classification(show_toggle: bool = True) -> None:
                 )
 
     result = app.session_state["survey_type_result"]
-    app.markdown("### Step 1 \u2014 Pick your outcome")
-    app.caption(
-        "The outcome is the single measure that defines 'success' for this analysis "
-        "\u2014 for example revenue growth %, overall satisfaction, or an NPS score. "
-        "The tool suggests one automatically; change it if a different measure better "
-        "captures what you care about."
-    )
+    app.markdown("### Outcome Variable Selection")
     manual_cohort = app.session_state.get("manual_cohort_input")
     if manual_cohort is not None and "seg_mode_radio" not in app.session_state:
         app.session_state["seg_mode_radio"] = "manual_uuid"
@@ -5774,16 +5768,10 @@ def _render_segment_definition_ui() -> None:
     from src.io import parse_manual_cohort_workbook
 
     app.markdown("---")
-    app.markdown("### Step 2 \u2014 Define the top group")
+    app.markdown("### Segment Definition")
     app.info(
-        "Now decide who counts as the **top group** on that outcome. Four ways:\n\n"
-        "\u2022 **Categorical** \u2014 pick the answer(s) that mean success "
-        "(e.g. outcome = 'grew revenue', top group = those who chose '20%+').\n"
-        "\u2022 **Numeric threshold** \u2014 top group scored at/above a value "
-        "(e.g. growth \u2265 15%).\n"
-        "\u2022 **Quartile** \u2014 top 25% vs bottom 25% on a numeric outcome.\n"
-        "\u2022 **Manual upload** \u2014 you provide the exact list of who's in each group.\n\n"
-        "Everyone not in the top group becomes the comparison group ('the rest')."
+        "Define what 'winner' means for your outcome variable. This splits "
+        "respondents into two groups for segmentation analysis."
     )
     if manual_available:
         app.success(
@@ -7204,16 +7192,6 @@ def _section_ai_analysis() -> None:
         f'{_icon("analysis", "#CC0000")}Outcome Segmentation Insights</h2>',
         unsafe_allow_html=True,
     )
-    app.info(
-        "**What this does:** it splits your respondents into a top group and the "
-        "rest based on an outcome you choose (e.g. revenue growth), then finds the "
-        "questions where the two groups answered most differently \u2014 i.e. what "
-        "separates the best from the rest.\n\n"
-        "**How to read it:** *Lift* = how many times more likely the top group is "
-        "to pick an option than the rest (2\u00d7 = twice as often). *Gap* = the raw "
-        "percentage-point difference. Every number here is computed from your data, "
-        "not estimated."
-    )
 
     seg: OutcomeSegmentationResult | None = app.session_state.get(
         "segmentation_result"
@@ -8125,104 +8103,9 @@ def main() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _render_output_structure_gate() -> bool:
-    """WS1: ask how the Excel output should be organised BEFORE building categories.
-
-    Returns True once the user has chosen (so the wizard may proceed). The choice
-    is stored in session_state["wiz_output_structure"] as "grouped" | "one_sheet".
-    Truthful preview: "one_sheet" means questions are NOT grouped into topic
-    categories \u2014 they go into a single "All Questions" sheet (a separate
-    "Demographics" sheet is still added when demographic questions exist).
-    """
-    app = _require_streamlit()
-    if app.session_state.get("wiz_output_structure"):
-        return True
-
-    app.markdown("### First: how should your Excel output be organised?")
-    app.caption(
-        "This decides how the question sheets are laid out in the downloaded "
-        "workbook. You can change everything later \u2014 this is just the starting point."
-    )
-
-    col_a, col_b = app.columns(2)
-    with col_a:
-        app.markdown(
-            "<div style='border:1px solid #E0E0E0;border-top:4px solid #CC0000;"
-            "border-radius:10px;padding:14px 16px;min-height:230px;'>"
-            "<div style='font-weight:700;font-size:14px;margin-bottom:6px;'>"
-            "Grouped into categories</div>"
-            "<div style='font-size:12px;color:#444;line-height:1.5;'>"
-            "Questions are sorted into themed sheets \u2014 e.g. <b>Pricing</b>, "
-            "<b>Brand</b>, <b>Loyalty</b> \u2014 so a reader jumps straight to a topic. "
-            "You can rename categories and move questions between them in the next step."
-            "</div>"
-            "<div style='margin-top:12px;font-size:11px;color:#888;'>Excel tabs look like:</div>"
-            "<div style='margin-top:4px;'>"
-            "<span style='background:#CC0000;color:#fff;font-size:11px;padding:3px 9px;"
-            "border-radius:4px 4px 0 0;margin-right:2px;'>Pricing</span>"
-            "<span style='background:#F0F0F0;color:#333;font-size:11px;padding:3px 9px;"
-            "border-radius:4px 4px 0 0;margin-right:2px;'>Brand</span>"
-            "<span style='background:#F0F0F0;color:#333;font-size:11px;padding:3px 9px;"
-            "border-radius:4px 4px 0 0;'>Loyalty</span>"
-            "</div></div>",
-            unsafe_allow_html=True,
-        )
-        if app.button("Use categories", key="wiz_struct_grouped", use_container_width=True):
-            app.session_state["wiz_output_structure"] = "grouped"
-            _wizard_rerun(app)
-    with col_b:
-        app.markdown(
-            "<div style='border:1px solid #E0E0E0;border-top:4px solid #888;"
-            "border-radius:10px;padding:14px 16px;min-height:230px;'>"
-            "<div style='font-weight:700;font-size:14px;margin-bottom:6px;'>"
-            "One sheet (no categories)</div>"
-            "<div style='font-size:12px;color:#444;line-height:1.5;'>"
-            "All questions go onto a single <b>All Questions</b> sheet in the order they "
-            "appear \u2014 simplest layout. (A separate <b>Demographics</b> sheet is still "
-            "added if your survey has demographic questions.)"
-            "</div>"
-            "<div style='margin-top:12px;font-size:11px;color:#888;'>Excel tabs look like:</div>"
-            "<div style='margin-top:4px;'>"
-            "<span style='background:#888;color:#fff;font-size:11px;padding:3px 9px;"
-            "border-radius:4px 4px 0 0;margin-right:2px;'>All Questions</span>"
-            "<span style='background:#F0F0F0;color:#333;font-size:11px;padding:3px 9px;"
-            "border-radius:4px 4px 0 0;'>Demographics</span>"
-            "</div></div>",
-            unsafe_allow_html=True,
-        )
-        if app.button("Keep it on one sheet", key="wiz_struct_one", use_container_width=True):
-            app.session_state["wiz_output_structure"] = "one_sheet"
-            # One-sheet path: skip topic categorisation entirely.
-            app.session_state["wiz_category_assignments"] = None
-            app.session_state["wiz_skip_categories"] = True
-            _wizard_rerun(app)
-    return False
-
-
 def _render_setup_wizard(uploaded_files: list[Any]) -> None:
     app = _require_streamlit()
     _render_wizard_css()
-    if not _render_output_structure_gate():
-        return
-    # One-sheet mode skips category prep + the categories step entirely.
-    if app.session_state.get("wiz_skip_categories"):
-        app.markdown("<div class='wiz-shell'>", unsafe_allow_html=True)
-        _render_wizard_top_nav()
-        app.info(
-            "Output set to a single **All Questions** sheet (plus Demographics if "
-            "present). No category step needed \u2014 continue to filters."
-        )
-        step = int(app.session_state.get("wiz_step", 2) or 2)
-        if step < 2:
-            step = 2
-            app.session_state["wiz_step"] = 2
-        if step == 2:
-            _render_wizard_step_filters()
-        else:
-            _render_wizard_step_crosscut()
-        _render_wizard_nav("bottom")
-        app.markdown("</div>", unsafe_allow_html=True)
-        return
     if app.session_state.get("wiz_category_assignments") is None:
         _wizard_prepare(uploaded_files)
     if app.session_state.get("wiz_category_assignments") is None:
