@@ -34,14 +34,14 @@ TOUR_STEPS: list[dict[str, str]] = [
         "title": "Step 1 — Upload your survey",
         "body": "Drop your raw data and data map (or a combined Excel, or raw data "
                 "plus a Word questionnaire). Go ahead and upload now — I'll wait.",
-        "selector": "[data-testid=\"stFileUploader\"]",
+        "selector": "#section-upload",
         "gate": "upload",
     },
     {
         "title": "Step 2 — Run the analysis",
         "body": "Once your files are in, click Run analysis. Every single cut is "
                 "computed in seconds. Click it now to continue.",
-        "selector": "",
+        "selector": "#section-upload",
         "gate": "run",
     },
     {
@@ -125,15 +125,7 @@ def _tour_html(steps: list[dict[str, str]], force: bool = False) -> str:
   var doc = window.parent.document;
   var i = 0;
   function clear(){ ["sae-tour-overlay","sae-tour-card","sae-tour-spotbox"].forEach(function(id){
-    var e=doc.getElementById(id); if(e) e.remove(); });
-    // restore any element we lifted above the dim
-    try {
-      var lifted = doc.querySelectorAll('[data-sae-tour-lifted="1"]');
-      Array.prototype.forEach.call(lifted, function(el){
-        el.style.zIndex = ""; el.removeAttribute("data-sae-tour-lifted");
-      });
-    } catch(e){}
-  }
+    var e=doc.getElementById(id); if(e) e.remove(); }); }
   function done(){ clear();
     try { window.parent.sessionStorage.setItem("sae_tour_seen","1"); } catch(e){}
   }
@@ -144,21 +136,12 @@ def _tour_html(steps: list[dict[str, str]], force: bool = False) -> str:
     var spot=null, tgt = step.selector ? doc.querySelector(step.selector) : null;
     if(tgt){
       var r = tgt.getBoundingClientRect();
-      // Raise the highlighted element ABOVE the dim so it stays clickable.
-      try {
-        tgt.dataset.saeTourLifted = "1";
-        tgt.style.position = tgt.style.position || "relative";
-        tgt.style.zIndex = "2000050";
-      } catch(e){}
       spot = doc.createElement("div"); spot.id="sae-tour-spotbox"; spot.className="sae-tour-spot";
       spot.style.top=(r.top-6)+"px"; spot.style.left=(r.left-6)+"px";
       spot.style.width=(r.width+12)+"px"; spot.style.height=(r.height+12)+"px";
       doc.body.appendChild(spot);
-      // Place the card BELOW the target, or above it if no room.
-      var below = r.bottom + 14;
-      var cardTop = (below + 230 > window.parent.innerHeight) ? Math.max(12, r.top - 240) : below;
-      card.style.top = cardTop + "px";
-      card.style.left = Math.min(Math.max(12, r.left), window.parent.innerWidth-360)+"px";
+      card.style.top = Math.min(r.bottom+14, window.parent.innerHeight-220)+"px";
+      card.style.left = Math.min(r.left, window.parent.innerWidth-360)+"px";
     } else {
       var ov = doc.createElement("div"); ov.id="sae-tour-overlay"; doc.body.appendChild(ov);
       card.style.top="50%"; card.style.left="50%"; card.style.transform="translate(-50%,-50%)";
