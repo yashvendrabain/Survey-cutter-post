@@ -459,8 +459,8 @@ _UI_V2_CSS = """
 .journey-line.done { background:linear-gradient(90deg,#CC0000,#E00000) !important; }
 /* Bigger, more visible variant for the 4-step guide */
 .journey-big { padding:18px 22px !important; }
-.journey-big .journey-dot { width:46px !important; height:46px !important; font-size:20px !important; }
-.journey-big .journey-title { font-size:15px !important; }
+.journey-big .journey-dot { width:56px !important; height:56px !important; font-size:26px !important; }
+.journey-big .journey-title { font-size:22px !important; }
 .journey-big .journey-sub { font-size:12px !important; }
 .journey-big .journey-step.active .journey-title { color:#CC0000 !important; }
 .journey-next { margin:-12px 0 20px !important; padding:10px 18px !important; background:#FFF6F6 !important; border:1px solid #F6D5D5 !important; border-left:4px solid #CC0000 !important; border-radius:8px !important; font-family:Arial,sans-serif !important; font-size:13px !important; font-weight:600 !important; color:#9A1B1B !important; }
@@ -8129,7 +8129,14 @@ def _render_journey_rail() -> None:
     knows where they are and what's next.
     """
     app = _require_streamlit()
-    has_data = app.session_state.get("schema") is not None
+    # "Detected" = files uploaded and parsed (wiz_schema set during _wizard_prepare),
+    # OR a full run completed. Either advances the rail to the Configure step.
+    detected = (
+        app.session_state.get("wiz_schema") is not None
+        or app.session_state.get("schema") is not None
+        or bool(app.session_state.get("wiz_output_structure"))
+    )
+    has_data = detected
     done = bool(app.session_state.get("run_complete"))
     view = _current_nav_view()
 
@@ -8182,20 +8189,6 @@ def _render_journey_rail() -> None:
     else:
         parts_banner = ""
     app.markdown("".join(parts) + parts_banner, unsafe_allow_html=True)
-
-    # Clickable navigation under the rail (native buttons -> reliable, no JS).
-    nav_targets = [
-        ("Upload", "upload"),
-        ("Configure", "upload"),
-        ("Run & review", "single"),
-        ("Download", "download"),
-    ]
-    jcols = app.columns(4)
-    for ci, (jlabel, jview) in enumerate(nav_targets):
-        with jcols[ci]:
-            if app.button(jlabel, key=f"journey_jump_{ci}", use_container_width=True):
-                _set_current_nav_view(jview)
-                app.rerun()
 
 
 def main() -> None:
@@ -8474,25 +8467,36 @@ def _render_wizard_stepper() -> None:
     app = _require_streamlit()
     labels = ["Categories", "Filters", "Cross-cuts"]
     current = int(app.session_state.get("wiz_step", 1))
+    # Scoped CSS to render these specific buttons as round step circles.
+    app.markdown(
+        "<style>"
+        ".wizstep-row div[data-testid='column'] .stButton button{"
+        "width:46px;height:46px;border-radius:50%;font-size:18px;font-weight:700;"
+        "padding:0;margin:0 auto;display:flex;align-items:center;justify-content:center;}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+    app.markdown("<div class='wizstep-row'>", unsafe_allow_html=True)
     cols = app.columns(3)
     for index, label in enumerate(labels, start=1):
-        if index < current:
-            css_class = "wiz-step-complete"
-        elif index == current:
-            css_class = "wiz-step-active"
-        else:
-            css_class = "wiz-step-upcoming"
-        weight = "700" if index == current else "400"
         with cols[index - 1]:
-            app.markdown(
-                f"<div class='wiz-step-circle {css_class}'>{index}</div>"
-                f"<div class='wiz-step-label' style='font-weight:{weight}'>{html.escape(label)}</div>",
-                unsafe_allow_html=True,
-            )
-            # Clickable: jump straight to this wizard step.
-            if app.button(f"Go to {label}", key=f"wizstep_jump_{index}", use_container_width=True):
+            is_current = index == index and index == current
+            # The circle IS the button (clickable). Primary = current step.
+            if app.button(
+                str(index),
+                key=f"wizstep_circle_{index}",
+                type=("primary" if index == current else "secondary"),
+            ):
                 app.session_state["wiz_step"] = index
                 _wizard_rerun(app)
+            weight = "700" if index == current else "400"
+            color = "#CC0000" if index == current else "#888"
+            app.markdown(
+                f"<div style='text-align:center;font-size:13px;font-weight:{weight};"
+                f"color:{color};font-family:Arial,sans-serif;margin-top:2px;'>{html.escape(label)}</div>",
+                unsafe_allow_html=True,
+            )
+    app.markdown("</div>", unsafe_allow_html=True)
 
 
 def _render_wizard_top_nav() -> None:
@@ -8723,7 +8727,7 @@ def _render_wizard_step_filters() -> None:
     with _lf_left:
         app.markdown("### Local Filters")
         app.markdown(
-            "<div style='font-size:13px;color:#444;line-height:1.6;'>"
+            "<div style='font-size:13px;color:#444;line-height:1.7;min-height:120px;display:flex;flex-direction:column;justify-content:flex-start;padding-top:4px;'>"
             "Local Filters appear as drop-downs at the top of each question's sheet "
             "in the Excel output, so a reader can slice that sheet on the fly. "
             "Pick the questions you want available as slicers below.</div>",
@@ -8790,7 +8794,7 @@ def _render_wizard_step_filters() -> None:
     with _cf_left:
         app.markdown("### Custom workbook filters")
         app.markdown(
-            "<div style='font-size:13px;color:#444;line-height:1.6;'>"
+            "<div style='font-size:13px;color:#444;line-height:1.7;min-height:120px;display:flex;flex-direction:column;justify-content:flex-start;padding-top:4px;'>"
             "Beyond the standard demographics, add <b>custom</b> filter slots where the "
             "reader picks <i>any</i> question of their choice and a value to filter by \u2014 "
             "applied across the whole workbook.</div>",
@@ -8850,7 +8854,7 @@ def _render_wizard_step_filters() -> None:
     with _pq_left:
         app.markdown("### Per-question filter rows")
         app.markdown(
-            "<div style='font-size:13px;color:#444;line-height:1.6;'>"
+            "<div style='font-size:13px;color:#444;line-height:1.7;min-height:120px;display:flex;flex-direction:column;justify-content:flex-start;padding-top:4px;'>"
             "These are filter rows shown <i>inside each individual question card</i> "
             "on the dashboard. Unlike Local Filters (which sit on every sheet), a "
             "per-question filter lets you slice just one question \u2014 handy when you "

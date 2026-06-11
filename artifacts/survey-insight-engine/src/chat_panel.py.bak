@@ -47,142 +47,97 @@ def _load_faq_ground_truth(faq_path: str = _FAQ_PATH_DEFAULT) -> str:
         return ""
 
 
-def _launcher_html(is_open: bool) -> str:
-    # Professional inline-SVG icons (no emoji). Chat bubble when closed, X when open.
-    chat_svg = (
-        "<svg width='24' height='24' viewBox='0 0 24 24' fill='none' "
-        "xmlns='http://www.w3.org/2000/svg'><path d='M21 11.5a8.38 8.38 0 0 1-8.5 8.5 "
-        "8.5 8.5 0 0 1-3.6-.8L3 21l1.9-5.4A8.38 8.38 0 0 1 4 11.5 8.5 8.5 0 0 1 12.5 3 "
-        "8.38 8.38 0 0 1 21 11.5z' stroke='white' stroke-width='2' stroke-linecap='round' "
-        "stroke-linejoin='round'/></svg>"
-    )
-    close_svg = (
-        "<svg width='22' height='22' viewBox='0 0 24 24' fill='none' "
-        "xmlns='http://www.w3.org/2000/svg'><path d='M18 6 6 18M6 6l12 12' stroke='white' "
-        "stroke-width='2.2' stroke-linecap='round'/></svg>"
-    )
-    icon = close_svg if is_open else chat_svg
-    show_prompt = "false" if is_open else "true"
-    return """
-<script>
-(function(){
-  var doc = window.parent.document;
-  function ensure(){
-    if(!doc.body){ return; }
-    var STYLE_ID = "sae-chat-style";
-    if(!doc.getElementById(STYLE_ID)){
-      var s = doc.createElement("style"); s.id = STYLE_ID;
-      s.textContent =
-        "#sae-chat-launch{position:fixed;right:22px;bottom:22px;width:58px;height:58px;"+
-        "border-radius:50%;background:#CC0000;border:none;"+
-        "cursor:pointer;box-shadow:0 8px 22px rgba(204,0,0,0.4);z-index:1500000;"+
-        "display:flex;align-items:center;justify-content:center;transition:background .15s;}"+
-        "#sae-chat-launch:hover{background:#B30000;}"+
-        "#sae-chat-prompt{position:fixed;right:92px;bottom:34px;z-index:1500000;"+
-        "background:#0A0A0A;color:#fff;font-family:Arial,sans-serif;font-size:12.5px;"+
-        "font-weight:600;padding:9px 13px;border-radius:10px;box-shadow:0 6px 18px rgba(0,0,0,0.25);"+
-        "max-width:190px;line-height:1.4;}"+
-        "#sae-chat-prompt:after{content:'';position:absolute;right:-6px;bottom:14px;"+
-        "border:6px solid transparent;border-left-color:#0A0A0A;}";
-      doc.head.appendChild(s);
-    }
-    var btn = doc.getElementById("sae-chat-launch");
-    if(!btn){
-      btn = doc.createElement("button");
-      btn.id = "sae-chat-launch";
-      btn.title = "Assistant";
-      doc.body.appendChild(btn);
-    }
-    btn.innerHTML = "__ICON__";
-    // Prompt bubble ("Have a question? Ask it") — only when closed.
-    var prompt = doc.getElementById("sae-chat-prompt");
-    if (__SHOW_PROMPT__){
-      if(!prompt){
-        prompt = doc.createElement("div"); prompt.id="sae-chat-prompt";
-        prompt.textContent = "Have a question? Ask away.";
-        doc.body.appendChild(prompt);
-      }
-    } else if (prompt){ prompt.remove(); }
-    if(!btn.dataset.wired){
-      btn.dataset.wired = "1";
-      btn.addEventListener("click", function(){
-        var all = doc.querySelectorAll('button');
-        for(var i=0;i<all.length;i++){
-          if((all[i].textContent||'').trim().indexOf('chat_toggle_signal')===0){ all[i].click(); return; }
-        }
-      });
-    }
-  }
-  ensure();
-  setTimeout(ensure, 200);
-  setTimeout(ensure, 800);
-  setInterval(ensure, 1500);
-})();
-</script>
-""".replace("__ICON__", icon).replace("__SHOW_PROMPT__", show_prompt)
-
-
 def render_chat_panel(faq_path: str = _FAQ_PATH_DEFAULT) -> None:
-    """Render the sticky launcher + (when open) the chat conversation panel."""
+    """Native Streamlit assistant panel — NO injected JavaScript.
+
+    A toggle opens an in-page panel with three tabs (Tool questions, Survey,
+    Hypothesis validator) and the chat input lives inside the panel itself.
+    """
     try:
         import streamlit as st
-        from streamlit.components.v1 import html as components_html
     except Exception:
         return
 
     st.session_state.setdefault(_HISTORY_KEY, [])
     st.session_state.setdefault(_OPEN_KEY, False)
+    st.session_state.setdefault("chat_mode", "tool")
 
-    # Hidden toggle the launcher's JS clicks. Off-screen (not display:none) so it
-    # stays clickable. The nav-bar JS sweep also hides any button labelled
-    # 'chat_toggle_signal'; this is a belt-and-suspenders inline hide.
-    if st.button("chat_toggle_signal", key="chat_toggle_signal"):
+    # Native open/close toggle (red, no injected launcher).
+    st.markdown(
+        "<style>#sae-chat-toggle-anchor + div .stButton button{"
+        "background:#CC0000;color:#fff;border:none;font-weight:700;border-radius:10px;}"
+        "#sae-chat-toggle-anchor + div .stButton button:hover{background:#B30000;}</style>"
+        "<div id='sae-chat-toggle-anchor'></div>",
+        unsafe_allow_html=True,
+    )
+    label = "\u2715  Close assistant" if st.session_state[_OPEN_KEY] else "\U0001F4AC  Have a question? Ask away"
+    if st.button(label, key="chat_open_toggle"):
         st.session_state[_OPEN_KEY] = not st.session_state[_OPEN_KEY]
         st.rerun()
-
-    # height>=1 so the injected <script> reliably executes in the component iframe.
-    components_html(_launcher_html(st.session_state[_OPEN_KEY]), height=1)
 
     if not st.session_state[_OPEN_KEY]:
         return
 
-    with st.container():
+    with st.container(border=True):
         st.markdown(
-            "<div style='border:1px solid #E0E0E0;border-top:4px solid #CC0000;"
-            "border-radius:12px;padding:14px 16px;margin:8px 0;background:#fff;'>"
-            "<b style='font-family:Arial;'>Assistant</b>"
-            "<span style='font-size:11px;color:#888;font-family:Arial;'> · how-to · "
-            "your survey · hypothesis testing</span></div>",
+            "<div style='display:flex;align-items:center;gap:10px;padding-bottom:6px;'>"
+            "<div style='width:34px;height:34px;border-radius:50%;background:#CC0000;color:#fff;"
+            "display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px;'>a</div>"
+            "<div><div style='font-size:16px;font-weight:700;color:#0A0A0A;'>Survey Assistant</div>"
+            "<div style='font-size:12px;color:#888;'>How can we help you today?</div></div></div>",
             unsafe_allow_html=True,
         )
 
-        # Replay history.
-        for turn in st.session_state[_HISTORY_KEY]:
-            with st.chat_message(turn["role"]):
-                st.write(turn["text"])
-                if turn.get("caveats"):
-                    for c in turn["caveats"]:
-                        st.warning(c)
-                if turn.get("table"):
-                    if turn.get("caption"):
-                        st.caption(turn["caption"])
-                    st.dataframe(turn["table"], use_container_width=True, hide_index=True)
-                if turn["role"] == "assistant" and not turn.get("grounded", True):
-                    st.caption("\u26a0\ufe0f AI-phrased; not fully grounded — read the table/guide to confirm.")
+        tab_tool, tab_survey, tab_hyp = st.tabs(
+            ["Tool questions", "Survey questions", "Hypothesis validator"]
+        )
+        mode_prompts = {
+            "tool": "Ask how to use the tool…",
+            "survey": "Ask what's in your survey…",
+            "hyp": "State a hypothesis to test against the data…",
+        }
+        mode_intros = {
+            "tool": "Ask about features, exports, filters, or how any part of the tool works.",
+            "survey": "Ask what questions or segments exist in your loaded survey.",
+            "hyp": "Propose a relationship (e.g. 'larger firms grow faster') and it'll be tested against your data, with the table shown.",
+        }
 
-        prompt = st.chat_input("Ask about the tool, your survey, or test a hypothesis…")
-        if prompt:
-            st.session_state[_HISTORY_KEY].append({"role": "user", "text": prompt})
-            reply = _dispatch(prompt, faq_path)
-            st.session_state[_HISTORY_KEY].append({
-                "role": "assistant",
-                "text": reply.text,
-                "table": reply.table,
-                "caption": reply.table_caption,
-                "caveats": reply.caveats,
-                "grounded": reply.was_grounded,
-            })
-            st.rerun()
+        def _render_mode(mode_key: str, intro: str):
+            st.caption(intro)
+            # history for this mode
+            for turn in st.session_state[_HISTORY_KEY]:
+                if turn.get("mode") != mode_key:
+                    continue
+                with st.chat_message(turn["role"]):
+                    st.write(turn["text"])
+                    if turn.get("caveats"):
+                        for c in turn["caveats"]:
+                            st.warning(c)
+                    if turn.get("table") is not None:
+                        if turn.get("caption"):
+                            st.caption(turn["caption"])
+                        st.dataframe(turn["table"], use_container_width=True, hide_index=True)
+                    if turn["role"] == "assistant" and not turn.get("grounded", True):
+                        st.caption("\u26a0\ufe0f AI-phrased; confirm against the table/guide.")
+            prompt = st.chat_input(mode_prompts[mode_key], key=f"chat_input_{mode_key}")
+            if prompt:
+                st.session_state[_HISTORY_KEY].append(
+                    {"role": "user", "text": prompt, "mode": mode_key}
+                )
+                reply = _dispatch(prompt, faq_path)
+                st.session_state[_HISTORY_KEY].append({
+                    "role": "assistant", "text": reply.text, "table": reply.table,
+                    "caption": reply.table_caption, "caveats": reply.caveats,
+                    "grounded": reply.was_grounded, "mode": mode_key,
+                })
+                st.rerun()
+
+        with tab_tool:
+            _render_mode("tool", mode_intros["tool"])
+        with tab_survey:
+            _render_mode("survey", mode_intros["survey"])
+        with tab_hyp:
+            _render_mode("hyp", mode_intros["hyp"])
 
 
 def _dispatch(prompt: str, faq_path: str):
