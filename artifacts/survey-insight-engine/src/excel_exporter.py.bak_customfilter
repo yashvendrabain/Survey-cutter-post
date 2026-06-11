@@ -2696,34 +2696,6 @@ def _all_questions_dropdown_entries(
                 _question_dropdown_label(question, context),
                 used_labels,
             )
-            # Build value_lookup so this question's values resolve in the custom
-            # filter (previously empty -> MATCH failed -> filter did nothing).
-            sgl_value_lookup: list[dict[str, str]] = []
-            for value_option in filter_option.values:
-                value_label = str(value_option.label)
-                if not value_label:
-                    continue
-                sgl_value_lookup.append(
-                    {
-                        "value_label": value_label,
-                        "data_name": column.data_name,
-                        "criteria": str(_filter_value_criteria(question, value_option)),
-                    }
-                )
-            # Defensive fallback: if no filter values were provided, derive them
-            # from the question's option_map so single-selects always resolve.
-            if not sgl_value_lookup:
-                for opt_label in (getattr(question, "option_map", {}) or {}).values():
-                    opt_label = str(opt_label)
-                    if not opt_label:
-                        continue
-                    sgl_value_lookup.append(
-                        {
-                            "value_label": opt_label,
-                            "data_name": column.data_name,
-                            "criteria": opt_label,
-                        }
-                    )
             entries.append(
                 {
                     "label": label,
@@ -2731,7 +2703,7 @@ def _all_questions_dropdown_entries(
                     "options_name": f"{column.header}_options",
                     "local_options_name": f"{column.header}_local_options",
                     "option_values": (),
-                    "value_lookup": tuple(sgl_value_lookup),
+                    "value_lookup": (),
                 }
             )
             continue
