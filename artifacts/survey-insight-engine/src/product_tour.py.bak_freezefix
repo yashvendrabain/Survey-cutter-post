@@ -38,7 +38,7 @@ TOUR_STEPS: list[dict[str, str]] = [
         "gate": "upload",
     },
     {
-        "title": "Step 2 — Decide the structure of your Excel output",
+        "title": "Step 2 — Choose your Excel layout",
         "body": "Just below the upload, you decide how the workbook is organised: "
                 "questions grouped into themed sheets (Pricing, Brand, …) or all on "
                 "one sheet. Scroll down to see the two options — pick whichever fits.",
@@ -46,10 +46,11 @@ TOUR_STEPS: list[dict[str, str]] = [
         "scroll_text": "how should your Excel output",
     },
     {
-        "title": "Step 3 — Categories, filter count & cross-cuts",
+        "title": "Step 3 — Set up the wizard",
         "body": "A short 3-step setup follows: Categories (group/rename questions), "
-                "then the number of Local Filters to show atop each sheet, then how "
-                "cross-cut sheets are laid out. Walk through it, then scroll back up to Run.",
+                "Local Filters (slicers shown atop each sheet), and Cross-cuts "
+                "(how cross-cut sheets are laid out). Walk through it, then scroll "
+                "back up to Run.",
         "selector": "",
         "scroll_text": "Categories",
     },
@@ -109,7 +110,7 @@ def _tour_html(steps: list[dict[str, str]], force: bool = False) -> str:
   if (pdoc && pdoc.head && !pdoc.getElementById("sae-tour-style")) {
     var sty = pdoc.createElement("style"); sty.id = "sae-tour-style";
     sty.textContent =
-      "#sae-tour-overlay{position:fixed;inset:0;z-index:2000000;background:rgba(10,10,10,0.45);pointer-events:none;}"+
+      "#sae-tour-overlay{position:fixed;inset:0;z-index:2000000;background:rgba(10,10,10,0.55);}"+
       "#sae-tour-card{position:fixed;max-width:340px;background:#fff;border-radius:12px;"+
       "box-shadow:0 18px 50px rgba(0,0,0,0.3);padding:18px 20px;font-family:Arial,sans-serif;"+
       "border-top:4px solid #CC0000;z-index:2000001;}"+
