@@ -106,13 +106,10 @@ def _tour_html(steps: list[dict[str, str]], force: bool = False) -> str:
   if (pdoc && pdoc.head && !pdoc.getElementById("sae-tour-style")) {
     var sty = pdoc.createElement("style"); sty.id = "sae-tour-style";
     sty.textContent =
-      "#sae-tour-card{position:fixed;width:460px;max-width:92vw;background:#fff;border-radius:14px;"+
-      "box-shadow:0 18px 50px rgba(0,0,0,0.28);font-family:Arial,sans-serif;"+
-      "border-top:4px solid #CC0000;z-index:2000001;overflow:hidden;}"+
-      "#sae-tour-handle{display:flex;align-items:center;gap:8px;padding:9px 16px 5px;"+
-      "cursor:move;user-select:none;color:#BBB;font-size:11px;}"+
-      "#sae-tour-handle .grip{letter-spacing:2px;font-size:13px;color:#CC0000;}"+
-      "#sae-tour-body{padding:4px 22px 18px;}"+
+      "#sae-tour-card{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);"+
+      "width:460px;max-width:92vw;background:#fff;border-radius:14px;"+
+      "box-shadow:0 18px 50px rgba(0,0,0,0.28);padding:18px 22px;font-family:Arial,sans-serif;"+
+      "border-top:4px solid #CC0000;z-index:2000001;}"+
       "#sae-tour-card h4{margin:0 0 8px;font-size:16px;color:#0A0A0A;}"+
       "#sae-tour-card p{margin:0 0 14px;font-size:13px;line-height:1.55;color:#333;}"+
       "#sae-tour-bar{display:flex;align-items:center;justify-content:space-between;}"+
@@ -209,67 +206,14 @@ def _tour_html(steps: list[dict[str, str]], force: bool = False) -> str:
       : '';
     var card = doc.createElement("div"); card.id="sae-tour-card";
     card.innerHTML =
-      '<div id="sae-tour-handle"><span class="grip">\u2630</span>'+
-      '<span>Guided tour \u2014 drag to move</span></div>'+
-      '<div id="sae-tour-body">'+
       '<h4>'+step.title+'</h4><p>'+step.body+'</p>'+ hint +
       '<div id="sae-tour-bar"><span id="sae-tour-dots">'+(i+1)+' / '+steps.length+'</span>'+
       '<span><button class="sae-tour-btn sae-tour-ghost" id="sae-tour-back">Back</button>'+
       '<button class="sae-tour-btn sae-tour-primary" id="sae-tour-next">'+nextLabel+'</button></span></div>'+
-      '<div style="margin-top:10px;"><button class="sae-tour-skip" id="sae-tour-skip">Skip tour</button></div>'+
-      '</div>';
+      '<div style="margin-top:10px;"><button class="sae-tour-skip" id="sae-tour-skip">Skip tour</button></div>';
     doc.body.appendChild(card);
-
-    // --- positioning ---
-    // First appearance: center of screen. After the first Next (or once docked),
-    // sit bottom-center. If the user has dragged it, keep their position.
-    function placeCard(){
-      var w = card.offsetWidth || 460, h = card.offsetHeight || 200;
-      var vw = window.parent.innerWidth, vh = window.parent.innerHeight;
-      if (window.__saeTourPos){
-        card.style.left = window.__saeTourPos.x + "px";
-        card.style.top  = window.__saeTourPos.y + "px";
-      } else if (!window.__saeTourStarted){
-        // before the first Next -> dead center
-        card.style.left = Math.max(8,(vw - w)/2) + "px";
-        card.style.top  = Math.max(8,(vh - h)/2) + "px";
-      } else {
-        // docked bottom-center
-        card.style.left = Math.max(8,(vw - w)/2) + "px";
-        card.style.top  = Math.max(8, vh - h - 28) + "px";
-      }
-    }
-    placeCard();
-    setTimeout(placeCard, 30);  // re-place once real height is known
-
-    // --- drag ---
-    (function(){
-      var handle = doc.getElementById("sae-tour-handle");
-      var dragging=false, ox=0, oy=0;
-      handle.addEventListener("mousedown", function(e){
-        dragging=true;
-        var rect=card.getBoundingClientRect();
-        ox = e.clientX - rect.left; oy = e.clientY - rect.top;
-        e.preventDefault();
-      });
-      doc.addEventListener("mousemove", function(e){
-        if(!dragging) return;
-        var x = e.clientX - ox, y = e.clientY - oy;
-        x = Math.max(4, Math.min(x, window.parent.innerWidth - card.offsetWidth - 4));
-        y = Math.max(4, Math.min(y, window.parent.innerHeight - card.offsetHeight - 4));
-        card.style.left = x+"px"; card.style.top = y+"px";
-        window.__saeTourPos = {x:x,y:y}; window.__saeTourMoved = true;
-      });
-      doc.addEventListener("mouseup", function(){ dragging=false; });
-    })();
-
     doc.getElementById("sae-tour-back").onclick=function(){ if(i>0){i--;render();} };
-    doc.getElementById("sae-tour-next").onclick=function(){
-      // Always advance — never gets stuck regardless of targets/polls.
-      if (window.__saeTourPoll){ clearInterval(window.__saeTourPoll); window.__saeTourPoll=null; }
-      window.__saeTourStarted = true;  // dock to bottom-center from now on
-      if(i<steps.length-1){ i++; render(); } else { done(); }
-    };
+    doc.getElementById("sae-tour-next").onclick=function(){ if(i<steps.length-1){i++;render();} else {done();} };
     doc.getElementById("sae-tour-skip").onclick=function(){ done(); };
 
     if (gate && !gateOk){

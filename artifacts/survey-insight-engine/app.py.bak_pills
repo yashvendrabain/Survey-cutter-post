@@ -8615,35 +8615,35 @@ def _render_wizard_step_filters() -> None:
         "(e.g. show only respondents where Region = APAC). Pick the questions "
         "you want available as slicers below."
     )
-    # Sneak peek: how Local Filters appear to a reader — clean pill cards.
+    # Sneak peek: how the Local Filters block looks at the top of each sheet.
     app.markdown(
-        "<div style='margin:8px 0 16px;font-family:Arial,sans-serif;'>"
-        "<div style='font-size:11px;font-weight:700;letter-spacing:0.08em;"
-        "text-transform:uppercase;color:#CC0000;margin-bottom:8px;'>"
-        "Preview \u00b7 how a reader slices a sheet</div>"
-        "<div style='display:flex;gap:12px;flex-wrap:wrap;'>"
-        # card 1
-        "<div style='flex:1;min-width:180px;background:linear-gradient(180deg,#fff,#FCFCFC);"
-        "border:1px solid #EAEAEA;border-radius:12px;padding:14px 16px;"
-        "box-shadow:0 2px 8px rgba(0,0,0,0.05);'>"
-        "<div style='font-size:11px;color:#999;margin-bottom:6px;'>Region</div>"
-        "<div style='display:flex;align-items:center;justify-content:space-between;"
-        "background:#fff;border:1.5px solid #CC0000;border-radius:8px;padding:8px 12px;'>"
-        "<span style='font-size:13px;font-weight:600;color:#0A0A0A;'>APAC</span>"
-        "<span style='color:#CC0000;font-size:11px;'>\u25be</span></div></div>"
-        # card 2
-        "<div style='flex:1;min-width:180px;background:linear-gradient(180deg,#fff,#FCFCFC);"
-        "border:1px solid #EAEAEA;border-radius:12px;padding:14px 16px;"
-        "box-shadow:0 2px 8px rgba(0,0,0,0.05);'>"
-        "<div style='font-size:11px;color:#999;margin-bottom:6px;'>Company size</div>"
-        "<div style='display:flex;align-items:center;justify-content:space-between;"
-        "background:#fff;border:1.5px solid #E0E0E0;border-radius:8px;padding:8px 12px;'>"
-        "<span style='font-size:13px;font-weight:600;color:#0A0A0A;'>Enterprise</span>"
-        "<span style='color:#999;font-size:11px;'>\u25be</span></div></div>"
-        "</div>"
-        "<div style='font-size:11px;color:#aaa;margin-top:8px;'>"
-        "Each slicer sits atop its sheet \u2014 change the value to re-slice instantly.</div>"
-        "</div>",
+        "<div style='border:1px solid #E0E0E0;border-radius:8px;overflow:hidden;"
+        "margin:6px 0 14px;font-family:Arial,sans-serif;box-shadow:0 1px 3px rgba(0,0,0,0.06);'>"
+        "<div style='background:#F2F2F2;padding:8px 12px;font-size:11px;font-weight:700;"
+        "color:#333;border-bottom:1px solid #E0E0E0;'>"
+        "&#128269; LOCAL FILTERS (override workbook defaults)</div>"
+        "<table style='width:100%;border-collapse:collapse;font-size:11px;'>"
+        "<thead><tr style='background:#FAFAFA;color:#888;text-align:left;'>"
+        "<th style='padding:6px 12px;border-bottom:1px solid #EEE;'>Filter</th>"
+        "<th style='padding:6px 12px;border-bottom:1px solid #EEE;'>Value</th>"
+        "<th style='padding:6px 12px;border-bottom:1px solid #EEE;'>Resolved</th>"
+        "<th style='padding:6px 12px;border-bottom:1px solid #EEE;'>Available values</th></tr></thead>"
+        "<tbody>"
+        "<tr><td style='padding:6px 12px;border-bottom:1px solid #F2F2F2;'>Region</td>"
+        "<td style='padding:6px 12px;border-bottom:1px solid #F2F2F2;'>"
+        "<span style='background:#FFF;border:1px solid #CC0000;border-radius:4px;"
+        "padding:1px 8px;color:#CC0000;'>(Inherit) &#9662;</span></td>"
+        "<td style='padding:6px 12px;border-bottom:1px solid #F2F2F2;color:#666;'>(All)</td>"
+        "<td style='padding:6px 12px;border-bottom:1px solid #F2F2F2;color:#666;'>APAC, EMEA, Americas</td></tr>"
+        "<tr><td style='padding:6px 12px;'>Company size</td>"
+        "<td style='padding:6px 12px;'><span style='background:#FFF;border:1px solid #CC0000;"
+        "border-radius:4px;padding:1px 8px;color:#CC0000;'>Enterprise &#9662;</span></td>"
+        "<td style='padding:6px 12px;color:#666;'>Enterprise</td>"
+        "<td style='padding:6px 12px;color:#666;'>SMB, Mid-market, Enterprise</td></tr>"
+        "</tbody></table>"
+        "<div style='padding:6px 12px;font-size:10px;color:#999;background:#FAFAFA;'>"
+        "&#8593; This block sits at the top of every question sheet. Readers change the "
+        "drop-down to re-slice that sheet \u2014 no re-running needed.</div></div>",
         unsafe_allow_html=True,
     )
     selected = set(app.session_state.get("wiz_selected_demographics") or [])
