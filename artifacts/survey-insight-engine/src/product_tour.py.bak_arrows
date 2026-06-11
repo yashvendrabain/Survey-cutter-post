@@ -32,8 +32,8 @@ TOUR_STEPS: list[dict[str, str]] = [
     },
     {
         "title": "Step 1 — Upload your survey",
-        "body": "Upload your survey file to begin. Go ahead and add it now — "
-                "I\u2019ll move on automatically once it\u2019s in.",
+        "body": "Drop your raw data and data map (or a combined Excel, or raw data "
+                "plus a Word questionnaire). Go ahead and upload now — I'll wait.",
         "selector": "[data-testid=\"stFileUploader\"]",
         "gate": "upload",
     },
@@ -120,7 +120,7 @@ def _tour_html(steps: list[dict[str, str]], force: bool = False) -> str:
       ".sae-tour-ghost{background:#F0F0F0;color:#333;margin-right:8px;}"+
       ".sae-tour-skip{background:none;color:#888;text-decoration:underline;font-size:11px;"+
       "border:none;cursor:pointer;}"+
-      "#sae-tour-arrow{position:fixed;z-index:2000000;pointer-events:none;font-size:52px;line-height:1;"+
+      "#sae-tour-arrow{position:fixed;z-index:2000000;pointer-events:none;font-size:34px;"+
       "color:#CC0000;filter:drop-shadow(0 2px 4px rgba(0,0,0,0.3));"+
       "animation:saeArrowBounce 1s ease-in-out infinite;}"+
       "@keyframes saeArrowBounce{0%,100%{opacity:0.5;}50%{opacity:1;}}";
@@ -160,30 +160,21 @@ def _tour_html(steps: list[dict[str, str]], force: bool = False) -> str:
   }
   function drawArrow(tgt){
     var old = doc.getElementById("sae-tour-arrow"); if(old) old.remove();
+    if(!tgt) return;
+    var r = tgt.getBoundingClientRect();
+    if (r.width===0 && r.height===0) return;
     var arrow = doc.createElement("div"); arrow.id="sae-tour-arrow";
-    var vw = window.parent.innerWidth, vh = window.parent.innerHeight;
-    var hasTarget = tgt && (function(){ var rr=tgt.getBoundingClientRect();
-      return !(rr.width===0 && rr.height===0); })();
-    if (hasTarget){
-      var r = tgt.getBoundingClientRect();
-      var cx = r.left + r.width/2;
-      var cy = r.top + r.height/2;
-      if (cy < vh*0.6){
-        arrow.textContent = "\u2B07";  // big down-arrow above the target
-        arrow.style.left = Math.min(Math.max(8, cx-26), vw-60)+"px";
-        arrow.style.top  = Math.max(8, r.top-58)+"px";
-      } else {
-        arrow.textContent = "\u2B06";  // big up-arrow below the target
-        arrow.style.left = Math.min(Math.max(8, cx-26), vw-60)+"px";
-        arrow.style.top  = Math.min(vh-66, r.bottom+10)+"px";
-      }
-    } else {
-      // Fallback: no locatable target (e.g. an info step) -> point down at the
-      // page content from just above the bottom-center card, so EVERY step
-      // always shows an arrow.
+    var cx = r.left + r.width/2;
+    var cy = r.top + r.height/2;
+    var vh = window.parent.innerHeight;
+    if (cy < vh*0.6){
       arrow.textContent = "\u2B07";
-      arrow.style.left = (vw/2 - 26)+"px";
-      arrow.style.top  = Math.max(8, vh - 150)+"px";
+      arrow.style.left = Math.min(Math.max(8, cx-17), window.parent.innerWidth-40)+"px";
+      arrow.style.top  = Math.max(8, r.top-44)+"px";
+    } else {
+      arrow.textContent = "\u2B06";
+      arrow.style.left = Math.min(Math.max(8, cx-17), window.parent.innerWidth-40)+"px";
+      arrow.style.top  = Math.min(vh-50, r.bottom+8)+"px";
     }
     doc.body.appendChild(arrow);
   }
@@ -218,11 +209,8 @@ def _tour_html(steps: list[dict[str, str]], force: bool = False) -> str:
 
     if (gate && !gateOk){
       if (window.__saeTourPoll){ clearInterval(window.__saeTourPoll); }
-      var advanced = false;
       window.__saeTourPoll = setInterval(function(){
-        if (advanced) return;
         if (gateMet(gate)){
-          advanced = true;
           clearInterval(window.__saeTourPoll); window.__saeTourPoll=null;
           if(i<steps.length-1){i++;render();} else {done();}
         }
