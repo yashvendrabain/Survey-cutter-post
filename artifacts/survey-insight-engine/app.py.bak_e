@@ -100,9 +100,9 @@ SESSION_DEFAULTS = {
     "wiz_category_assignments": None,
     "wiz_selected_demographics": None,
     "wiz_num_custom_filters": 2,
-    "wiz_num_per_question_filters": 0,
+    "wiz_num_per_question_filters": 1,
     "wizard_workbook_custom_filter_count": 2,
-    "wizard_per_question_filter_count": 0,
+    "wizard_per_question_filter_count": 1,
     "wizard_embed_input_files": False,
     "skip_ai_enhancements": False,
     "input_file_embed_sources": None,
@@ -4045,30 +4045,11 @@ def _render_single_cut_card(
             spec.canonical_id
         )
         if filtered is not None:
-            _fcol1, _fcol2 = app.columns([5, 1])
-            with _fcol1:
-                app.info(
-                    "Filtered: "
-                    + ", ".join(_format_filter(f) for f in filtered.filters_applied)
-                    + f"  \u00b7  N = {filtered.filtered_n:,}"
-                )
-            with _fcol2:
-                if app.button("Remove filter", key=f"{filter_key}_remove"):
-                    # Drop the stored filtered result + reset the filter rows so the
-                    # card reverts to unfiltered values.
-                    app.session_state.get("filtered_results", {}).pop(
-                        spec.canonical_id, None
-                    )
-                    app.session_state[filter_key] = []
-                    app.session_state.get("per_question_filter_errors", {}).pop(
-                        spec.canonical_id, None
-                    )
-                    for k in (
-                        f"insight_sc_{spec.canonical_id}",
-                        f"insight_breakdown_{spec.canonical_id}",
-                    ):
-                        app.session_state.pop(k, None)
-                    app.rerun()
+            app.info(
+                "Filtered: "
+                + ", ".join(_format_filter(f) for f in filtered.filters_applied)
+                + f"  \u00b7  N = {filtered.filtered_n:,}"
+            )
             for warning in filtered.warnings:
                 app.warning(warning)
             active_filter_strs = [
@@ -5356,6 +5337,7 @@ def _section_upload() -> None:
             ("users",     int(getattr(schema, "total_respondents", 0) or 0), "Respondents"),
             ("clipboard", len(schema.questions), "Total questions"),
             ("chart",     len(results), "Single cuts"),
+            ("list",      len(log), "Audit records"),
         ])
 
 
@@ -6849,7 +6831,8 @@ def _section_cross_cuts() -> None:
             )
             app.caption(
                 f"Type: {result.analysis_type.value}  \u00b7  "
-                f"Display: {result.display_mode}"
+                f"Display: {result.display_mode}  \u00b7  "
+                f"{len(result.audit_records)} audit records"
             )
             _render_cross_cut_preview(result)
             cc_pending_insight = {
@@ -7757,6 +7740,7 @@ def _render_sidebar() -> None:
                   <b>Skipped</b>&nbsp;{len(skips)}<br>
                   <b>Errors</b>&nbsp;
                   <span style="color:{err_color};">{len(errors)}</span><br>
+                  <b>Audit records</b>&nbsp;{log_len}<br>
                   <b>Cross cuts</b>&nbsp;{len(cc_results)}
                 </div>
                 """,
@@ -8362,11 +8346,11 @@ def _render_wizard_css() -> None:
 <style>
 .wiz-shell { background: #FFFFFF; padding: 24px 0; font-family: Arial, sans-serif; }
 .wiz-stepper { display: flex; justify-content: space-between; margin: 24px 0; }
-.wiz-step-circle { width: 48px; height: 48px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 20px; margin: 0 auto 10px; }
-.wiz-step-active { border: 3px solid #CC0000; color: #CC0000; }
+.wiz-step-circle { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 500; font-size: 14px; margin: 0 auto 8px; }
+.wiz-step-active { border: 2px solid #CC0000; color: #CC0000; }
 .wiz-step-complete { background: #CC0000; color: white; }
 .wiz-step-upcoming { border: 2px solid #999; color: #999; }
-.wiz-step-label { text-align: center; font-size: 14px; font-weight: 600; font-family: Arial, sans-serif; }
+.wiz-step-label { text-align: center; font-size: 12px; font-family: Arial, sans-serif; }
 .wiz-category-cell { background: #CC0000; color: white; padding: 12px 16px; font-weight: 700; font-size: 14px; font-family: Arial, sans-serif; border-radius: 4px; }
 .wiz-card { border: 1px solid #E5E5E5; border-radius: 6px; padding: 12px; margin: 4px 0; min-height: 92px; }
 .wiz-card-id { color: #666; font-size: 11px; font-family: Arial, sans-serif; }

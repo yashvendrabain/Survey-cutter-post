@@ -128,23 +128,22 @@ def _tour_html(steps: list[dict[str, str]], force: bool = False) -> str:
 </script>
 <script>
 (function(){
+  var steps = __STEPS__;
   var doc = window.parent.document;
-  var win = window.parent;
-  // Steps + state live on the PARENT window so every rerun-injected copy shares them.
-  win.__saeSteps = __STEPS__;
-  if (typeof win.__saeStep !== "number") win.__saeStep = 0;
-  if (__FORCE__){ win.__saeDone=false; win.__saeStep=0; win.__saeStarted=false; win.__saePos=null; }
+  // Persist across Streamlit reruns (which re-inject this script).
+  if (typeof window.__saeStep !== "number") window.__saeStep = 0;
+  if (__FORCE__){ window.__saeDone=false; window.__saeStep=0; window.__saeStarted=false; window.__saePos=null; }
 
-  function remove(){ var c=doc.getElementById("sae-tour-card"); if(c && c.parentNode) c.parentNode.removeChild(c); }
+  function remove(){ var c=doc.getElementById("sae-tour-card"); if(c) c.remove(); }
 
-  function build(){
-    var steps = win.__saeSteps;
-    if (win.__saeDone){ remove(); return; }
-    var i = win.__saeStep; if(i<0) i=0;
-    if (i >= steps.length){ win.__saeDone=true; remove(); return; }
+  function show(){
+    if (window.__saeDone) { remove(); return; }
+    var i = window.__saeStep;
+    if (i < 0) i = 0;
+    if (i >= steps.length){ window.__saeDone=true; remove(); return; }
     var step = steps[i];
     remove();
-    if (!doc.body) return;
+
     var last = (i === steps.length-1);
     var card = doc.createElement("div"); card.id="sae-tour-card";
     card.innerHTML =
@@ -152,62 +151,44 @@ def _tour_html(steps: list[dict[str, str]], force: bool = False) -> str:
       '<div id="sae-tour-body">'+
       '<h4>'+step.title+'</h4><p>'+step.body+'</p>'+
       '<div id="sae-tour-bar"><span id="sae-tour-dots">'+(i+1)+' / '+steps.length+'</span>'+
-      '<span><button class="sae-tour-btn sae-tour-ghost" data-sae="back">Back</button>'+
-      '<button class="sae-tour-btn sae-tour-primary" data-sae="next">'+(last?"Done":"Next")+'</button></span></div>'+
-      '<div style="margin-top:10px;"><button class="sae-tour-skip" data-sae="skip">Skip tour</button></div>'+
+      '<span><button class="sae-tour-btn sae-tour-ghost" id="sae-b">Back</button>'+
+      '<button class="sae-tour-btn sae-tour-primary" id="sae-n">'+(last?"Done":"Next")+'</button></span></div>'+
+      '<div style="margin-top:10px;"><button class="sae-tour-skip" id="sae-s">Skip tour</button></div>'+
       '</div>';
     doc.body.appendChild(card);
-    var w=card.offsetWidth||440, h=card.offsetHeight||200;
-    var vw=win.innerWidth, vh=win.innerHeight;
-    if (win.__saePos){ card.style.left=win.__saePos.x+"px"; card.style.top=win.__saePos.y+"px"; }
-    else if (!win.__saeStarted){ card.style.left=Math.max(8,(vw-w)/2)+"px"; card.style.top=Math.max(8,(vh-h)/2)+"px"; }
+
+    // position: centre until first Next, then bottom-centre; honour dragged pos.
+    var w = card.offsetWidth||440, h = card.offsetHeight||200;
+    var vw = window.parent.innerWidth, vh = window.parent.innerHeight;
+    if (window.__saePos){ card.style.left=window.__saePos.x+"px"; card.style.top=window.__saePos.y+"px"; }
+    else if (!window.__saeStarted){ card.style.left=Math.max(8,(vw-w)/2)+"px"; card.style.top=Math.max(8,(vh-h)/2)+"px"; }
     else { card.style.left=Math.max(8,(vw-w)/2)+"px"; card.style.top=Math.max(8,vh-h-28)+"px"; }
-  }
-  win.__saeBuild = build;
 
-  // ONE persistent delegated handler on the parent document. Survives DOM swaps
-  // and duplicate script injection (we de-dupe with a flag). This is why clicks
-  // no longer "do nothing" after a rerun.
-  if (!win.__saeWired){
-    win.__saeWired = true;
-    doc.addEventListener("click", function(e){
-      var t = e.target;
-      while (t && t !== doc.body && !(t.getAttribute && t.getAttribute("data-sae"))) t = t.parentNode;
-      if (!t || !t.getAttribute) return;
-      var act = t.getAttribute("data-sae");
-      if (!act) return;
-      var steps = win.__saeSteps || [];
-      if (act === "back"){ if(win.__saeStep>0){ win.__saeStep--; build(); } }
-      else if (act === "next"){
-        win.__saeStarted = true;
-        if (win.__saeStep < steps.length-1){ win.__saeStep++; build(); }
-        else { win.__saeDone=true; remove(); try{win.sessionStorage.setItem("sae_tour_seen","1");}catch(err){} }
-      } else if (act === "skip"){
-        win.__saeDone=true; remove(); try{win.sessionStorage.setItem("sae_tour_seen","1");}catch(err){}
-      }
-    }, true);
-    // drag (also delegated / persistent)
-    var drag=false, ox=0, oy=0;
-    doc.addEventListener("mousedown", function(e){
-      var t=e.target; while(t && t!==doc.body && t.id!=="sae-tour-handle") t=t.parentNode;
-      if(!t || t.id!=="sae-tour-handle") return;
-      var card=doc.getElementById("sae-tour-card"); if(!card) return;
-      drag=true; var r=card.getBoundingClientRect(); ox=e.clientX-r.left; oy=e.clientY-r.top; e.preventDefault();
-    }, true);
-    doc.addEventListener("mousemove", function(e){
-      if(!drag) return; var card=doc.getElementById("sae-tour-card"); if(!card) return;
-      var x=Math.max(4,Math.min(e.clientX-ox, win.innerWidth-card.offsetWidth-4));
-      var y=Math.max(4,Math.min(e.clientY-oy, win.innerHeight-card.offsetHeight-4));
-      card.style.left=x+"px"; card.style.top=y+"px"; win.__saePos={x:x,y:y};
-    }, true);
-    doc.addEventListener("mouseup", function(){ drag=false; }, true);
+    // drag
+    var hd=doc.getElementById("sae-tour-handle"), drag=false, ox=0, oy=0;
+    hd.addEventListener("mousedown", function(e){ drag=true; var r=card.getBoundingClientRect(); ox=e.clientX-r.left; oy=e.clientY-r.top; e.preventDefault(); });
+    doc.addEventListener("mousemove", function(e){ if(!drag) return;
+      var x=Math.max(4,Math.min(e.clientX-ox, window.parent.innerWidth-card.offsetWidth-4));
+      var y=Math.max(4,Math.min(e.clientY-oy, window.parent.innerHeight-card.offsetHeight-4));
+      card.style.left=x+"px"; card.style.top=y+"px"; window.__saePos={x:x,y:y}; });
+    doc.addEventListener("mouseup", function(){ drag=false; });
+
+    doc.getElementById("sae-b").onclick=function(){ if(window.__saeStep>0){ window.__saeStep--; show(); } };
+    doc.getElementById("sae-n").onclick=function(){
+      window.__saeStarted=true;
+      if(window.__saeStep < steps.length-1){ window.__saeStep++; show(); }
+      else { window.__saeDone=true; remove(); try{window.parent.sessionStorage.setItem("sae_tour_seen","1");}catch(e){} }
+    };
+    doc.getElementById("sae-s").onclick=function(){
+      window.__saeDone=true; remove(); try{window.parent.sessionStorage.setItem("sae_tour_seen","1");}catch(e){}
+    };
   }
 
-  if (__FORCE__){ setTimeout(build,120); setTimeout(build,450); return; }
-  if (win.__saeDone) return;
+  if (__FORCE__){ setTimeout(show,120); setTimeout(show,450); return; }
+  if (window.__saeDone) return;
   if (doc.getElementById("sae-tour-card")) return;
-  var seen=null; try{ seen=win.sessionStorage.getItem("sae_tour_seen"); }catch(e){}
-  if(!seen || win.__saeStep>0){ setTimeout(build,300); }
+  var seen=null; try{ seen=window.parent.sessionStorage.getItem("sae_tour_seen"); }catch(e){}
+  if(!seen || window.__saeStep>0){ setTimeout(show,300); }
 })();
 </script>
 """.replace("__STEPS__", steps_json).replace("__FORCE__", "true" if force else "false")
