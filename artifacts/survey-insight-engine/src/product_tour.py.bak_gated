@@ -33,19 +33,11 @@ TOUR_STEPS: list[dict[str, str]] = [
     {
         "title": "Step 1 — Upload your survey",
         "body": "Drop your raw data and data map (or a combined Excel, or raw data "
-                "plus a Word questionnaire). Go ahead and upload now — I'll wait.",
+                "plus a Word questionnaire). The tool figures out the format for you.",
         "selector": "#section-upload",
-        "gate": "upload",
     },
     {
-        "title": "Step 2 — Run the analysis",
-        "body": "Once your files are in, click Run analysis. Every single cut is "
-                "computed in seconds. Click it now to continue.",
-        "selector": "#section-upload",
-        "gate": "run",
-    },
-    {
-        "title": "Step 3 — Decide your output structure",
+        "title": "Step 2 — Decide your output structure",
         "body": "Choose whether questions are grouped into themed sheets or kept on "
                 "one, and set up Local Filters — slicers that let a reader filter a "
                 "sheet (e.g. show only APAC) right inside Excel.",
@@ -146,59 +138,17 @@ def _tour_html(steps: list[dict[str, str]], force: bool = False) -> str:
       var ov = doc.createElement("div"); ov.id="sae-tour-overlay"; doc.body.appendChild(ov);
       card.style.top="50%"; card.style.left="50%"; card.style.transform="translate(-50%,-50%)";
     }
-    var gate = step.gate || "";
-    var gateOk = gateMet(gate);
-    var nextLabel = (i===steps.length-1 ? "Done" : "Next");
-    var hint = (gate && !gateOk)
-      ? '<div id="sae-tour-wait" style="margin-top:8px;font-size:11px;color:#CC0000;">'
-        + (gate==="upload" ? "\u2191 Upload a file above to continue\u2026"
-                           : "\u2191 Click Run analysis to continue\u2026")
-        + '</div>'
-      : '';
     card.innerHTML =
-      '<h4>'+step.title+'</h4><p>'+step.body+'</p>'+ hint +
+      '<h4>'+step.title+'</h4><p>'+step.body+'</p>'+
       '<div id="sae-tour-bar"><span id="sae-tour-dots">'+(i+1)+' / '+steps.length+'</span>'+
       '<span><button class="sae-tour-btn sae-tour-ghost" id="sae-tour-back">Back</button>'+
-      '<button class="sae-tour-btn sae-tour-primary" id="sae-tour-next"'+
-      ((gate && !gateOk) ? ' disabled style="opacity:0.45;cursor:not-allowed;"' : '')+'>'+
-      nextLabel+'</button></span></div>'+
+      '<button class="sae-tour-btn sae-tour-primary" id="sae-tour-next">'+
+      (i===steps.length-1?"Done":"Next")+'</button></span></div>'+
       '<div style="margin-top:10px;"><button class="sae-tour-skip" id="sae-tour-skip">Skip tour</button></div>';
     doc.body.appendChild(card);
     doc.getElementById("sae-tour-back").onclick=function(){ if(i>0){i--;render();} };
-    var nextBtn = doc.getElementById("sae-tour-next");
-    nextBtn.onclick=function(){
-      if (gate && !gateMet(gate)) { return; }   // gated: ignore until done
-      if(i<steps.length-1){i++;render();} else {done();}
-    };
+    doc.getElementById("sae-tour-next").onclick=function(){ if(i<steps.length-1){i++;render();} else {done();} };
     doc.getElementById("sae-tour-skip").onclick=function(){ done(); };
-    // If this step is gated and not yet satisfied, poll the DOM and auto-advance
-    // the moment the user completes the action (uploads / runs).
-    if (gate && !gateOk) {
-      if (window.__saeTourPoll) { clearInterval(window.__saeTourPoll); }
-      window.__saeTourPoll = setInterval(function(){
-        if (gateMet(gate)) {
-          clearInterval(window.__saeTourPoll); window.__saeTourPoll = null;
-          if(i<steps.length-1){i++;render();} else {done();}
-        }
-      }, 600);
-    }
-  }
-  // Gate detection via DOM signals (the tour can't see Python state directly).
-  //   upload: Streamlit's uploaded-file chip OR the "Uploaded:" caption appears.
-  //   run:    the result stat tiles (.stat-num) render (only after run_complete).
-  function gateMet(gate){
-    try {
-      if (!gate) return true;
-      if (gate === "upload") {
-        if (doc.querySelector('[data-testid="stFileUploaderFile"], [data-testid="stFileUploaderFileName"]')) return true;
-        var txt = (doc.body.innerText || "");
-        return txt.indexOf("Uploaded:") !== -1;
-      }
-      if (gate === "run") {
-        return !!doc.querySelector('.stat-num');
-      }
-      return true;
-    } catch(e){ return true; }   // never trap the user if detection errors
   }
   // FORCE path: button-triggered tours render immediately, ignoring the
   // "seen" flag (and clearing it so future auto-opens behave normally).
