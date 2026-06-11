@@ -61,14 +61,14 @@ def _metric_slot(label_name: str, cols, work_df, default_col, key_prefix: str):
     )
     if chosen == "(not used)":
         return None
-    direction = st.radio(
-        "Direction", ["Higher is better", "Lower is better"],
-        key=f"{key_prefix}_dir", horizontal=True,
-    )
-    # Weight only matters in blend mode; tuck it away so intersection demo stays clean.
-    with st.expander("Advanced: weight (blend mode only)", expanded=False):
-        weight = st.slider("Weight", 0.0, 3.0, 1.0, 0.5, key=f"{key_prefix}_w",
-                           help="Ignored in 'All measures at once' (intersection) mode.")
+    c1, c2 = st.columns(2)
+    with c1:
+        direction = st.radio(
+            "Direction", ["Higher is better", "Lower is better"],
+            key=f"{key_prefix}_dir", horizontal=True,
+        )
+    with c2:
+        weight = st.slider("Weight (blend mode)", 0.0, 3.0, 1.0, 0.5, key=f"{key_prefix}_w")
 
     band_pairs = None
     if _is_band_column(work_df[chosen]):
@@ -97,11 +97,10 @@ def _metric_slot(label_name: str, cols, work_df, default_col, key_prefix: str):
     )
 
 
-def _option_choice_chart(work_df, mask_win, mask_lag, mask_oth, question_col, title, key):
-    """Grouped bar: % of Winners / Laggards / Others choosing each option.
+def _option_choice_chart(work_df, mask_top, mask_rest, question_col, title):
+    """Grouped bar: % of Top group vs Rest choosing each option of question_col.
 
-    Winners red, Laggards black, Others grey. Percentage is within each group
-    (denominator = that group's count of people who answered this question).
+    Top group bars red, Rest grey. Percentages within each cohort.
     """
     try:
         import plotly.graph_objects as go
@@ -109,32 +108,26 @@ def _option_choice_chart(work_df, mask_win, mask_lag, mask_oth, question_col, ti
     except Exception:
         return
     col = work_df[question_col]
-    answered = col.notna()
     options = [str(v) for v in col.dropna().unique()]
     if not options or len(options) > 25:
-        st.caption(f"({question_col}: too many distinct values to chart.)")
         return
-    win_n = max(1, int((mask_win & answered).sum()))
-    lag_n = max(1, int((mask_lag & answered).sum()))
-    oth_n = max(1, int((mask_oth & answered).sum()))
-    win_pct, lag_pct, oth_pct = [], [], []
+    top_n = max(1, int(mask_top.sum()))
+    rest_n = max(1, int(mask_rest.sum()))
+    top_pct, rest_pct = [], []
     for opt in options:
         is_opt = col.astype(str) == opt
-        win_pct.append(round(float((is_opt & mask_win).sum()) / win_n * 100, 1))
-        lag_pct.append(round(float((is_opt & mask_lag).sum()) / lag_n * 100, 1))
-        oth_pct.append(round(float((is_opt & mask_oth).sum()) / oth_n * 100, 1))
+        top_pct.append(round(float((is_opt & mask_top).sum()) / top_n * 100, 1))
+        rest_pct.append(round(float((is_opt & mask_rest).sum()) / rest_n * 100, 1))
     fig = go.Figure()
-    fig.add_bar(name="Winners", x=options, y=win_pct, marker_color="#CC0000",
-                text=[f"{v:.0f}%" for v in win_pct], textposition="outside")
-    fig.add_bar(name="Laggards", x=options, y=lag_pct, marker_color="#1A1A1A",
-                text=[f"{v:.0f}%" for v in lag_pct], textposition="outside")
-    fig.add_bar(name="Others", x=options, y=oth_pct, marker_color="#BBBBBB",
-                text=[f"{v:.0f}%" for v in oth_pct], textposition="outside")
-    fig.update_layout(barmode="group", height=340, title=title,
-                      font_family="Arial", margin=dict(t=50, b=30),
+    fig.add_bar(name=_TOP, x=options, y=top_pct, marker_color="#CC0000",
+                text=[f"{v:.0f}%" for v in top_pct], textposition="outside")
+    fig.add_bar(name=_REST, x=options, y=rest_pct, marker_color="#BBBBBB",
+                text=[f"{v:.0f}%" for v in rest_pct], textposition="outside")
+    fig.update_layout(barmode="group", height=320, title=title,
+                      font_family="Arial", margin=dict(t=46, b=30),
                       yaxis_title="% within group",
-                      legend=dict(orientation="h", y=1.14))
-    st.plotly_chart(fig, use_container_width=True, key=key)
+                      legend=dict(orientation="h", y=1.12))
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def render_advanced_outcome_segmentation() -> None:
@@ -202,13 +195,14 @@ def render_advanced_outcome_segmentation() -> None:
     st.divider()
 
     # ---- Combination mode (intersection default) ----
-    combo_label = st.selectbox(
+    combo_label = st.radio(
         "How should the measures combine?",
-        ["Intersection — top X% on EVERY measure (recommended)",
-         "Weighted blend — top X% of a weighted average"],
+        ["All measures at once (strict)", "Weighted blend"],
         index=0, key="adv_seg_combo",
+        help="Strict = a respondent must be in the top X% on EVERY measure. "
+             "Blend = top X% of a weighted average across measures.",
     )
-    combination_mode = "intersection" if combo_label.startswith("Intersection") else "blend"
+    combination_mode = "intersection" if combo_label.startswith("All") else "blend"
 
     cutoff = st.slider("Top group = top X%   ·   Rest comparison = bottom X%",
                        5, 50, 25, 5, key="adv_seg_cutoff")
@@ -248,36 +242,11 @@ def render_advanced_outcome_segmentation() -> None:
     if result.balance_warning:
         st.warning(result.balance_warning)
 
-    mask_win = winner_mask(work_df, result)
-    mask_lag = laggard_mask(work_df, result)
-    # Others = everyone in the pool who is NOT a winner and NOT a laggard.
-    mask_oth = ~mask_win & ~mask_lag
+    mask_top = winner_mask(work_df, result)
+    mask_rest = laggard_mask(work_df, result)
 
-    # ---- Winner / Laggard UID lists (counts + downloads) ----
-    st.markdown("#### Winner & Laggard respondents")
-    ccol1, ccol2, ccol3 = st.columns(3)
-    ccol1.metric("Winners", int(mask_win.sum()))
-    ccol2.metric("Laggards", int(mask_lag.sum()))
-    ccol3.metric("Others", int(mask_oth.sum()))
-    win_ids = [str(i) for i in work_df.index[mask_win]]
-    lag_ids = [str(i) for i in work_df.index[mask_lag]]
-    dl1, dl2 = st.columns(2)
-    dl1.download_button("Download winner IDs", "\n".join(win_ids),
-                        file_name="winner_ids.csv", key="adv_dl_win",
-                        use_container_width=True, disabled=not win_ids)
-    dl2.download_button("Download laggard IDs", "\n".join(lag_ids),
-                        file_name="laggard_ids.csv", key="adv_dl_lag",
-                        use_container_width=True, disabled=not lag_ids)
-    with st.expander("Show winner / laggard ID lists", expanded=False):
-        import pandas as pd
-        maxlen = max(len(win_ids), len(lag_ids))
-        st.dataframe(pd.DataFrame({
-            "Winner IDs": win_ids + [""] * (maxlen - len(win_ids)),
-            "Laggard IDs": lag_ids + [""] * (maxlen - len(lag_ids)),
-        }), use_container_width=True, hide_index=True)
-
-    # ---- Per-measure charts: Winners / Laggards / Others ----
-    st.markdown("#### What each group chose, per measure")
+    # ---- Per-measure option charts (Top group red vs Rest) ----
+    st.markdown("#### What the Top group chose vs the Rest")
     breakdown_dim = None
     if balance_dims:
         breakdown_dim = st.selectbox(
@@ -290,17 +259,16 @@ def render_advanced_outcome_segmentation() -> None:
     for spec in specs:
         st.markdown(f"**{spec.column}**")
         if breakdown_dim is None:
-            _option_choice_chart(work_df, mask_win, mask_lag, mask_oth, spec.column,
-                                 f"{spec.column} — Winners vs Laggards vs Others",
-                                 key=f"adv_chart_{spec.column}")
+            _option_choice_chart(work_df, mask_top, mask_rest, spec.column,
+                                 f"{spec.column} — {_TOP} vs {_REST}")
         else:
             cats = sorted(str(v) for v in work_df[breakdown_dim].dropna().unique())
             for cat in cats:
                 cat_mask = work_df[breakdown_dim].astype(str) == cat
                 _option_choice_chart(
-                    work_df, mask_win & cat_mask, mask_lag & cat_mask, mask_oth & cat_mask,
-                    spec.column, f"{spec.column} · {breakdown_dim}={cat}",
-                    key=f"adv_chart_{spec.column}_{cat}")
+                    work_df, mask_top & cat_mask, mask_rest & cat_mask, spec.column,
+                    f"{spec.column} · {breakdown_dim}={cat}",
+                )
 
     # ---- Composition vs population (kept, relabelled) ----
     if result.composition:

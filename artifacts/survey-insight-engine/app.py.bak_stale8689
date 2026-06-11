@@ -50,7 +50,7 @@ from src.ai_insights import (
     generate_outlier_insight,
     generate_table_insight,
 )
-from src.product_tour import maybe_render_tour, restart_tour
+from src.product_tour import maybe_render_tour
 from src.chat_panel import render_chat_panel
 from src.cross_cut_suggestions import score_suggestions_for_outcome
 from src.filter_options import (
@@ -8097,12 +8097,6 @@ def main() -> None:
 
     _render_journey_rail()
 
-    _tour_col1, _tour_col2 = app.columns([6, 1])
-    with _tour_col2:
-        if app.button("\U0001F9ED Take the tour", key="take_tour_btn", use_container_width=True):
-            restart_tour()
-            app.rerun()
-
     gf_error = app.session_state.get("global_filter_error")
     if gf_error:
         app.error(f"Global filter failed: {gf_error}")
@@ -8122,33 +8116,6 @@ def main() -> None:
         _section_downloads()
     else:
         _section_upload()
-
-    # Persistent download bar — available at the bottom of EVERY tab (except the
-    # dedicated Download tab, which already shows the full panel) once analysis ran.
-    if view != "download" and app.session_state.get("run_complete"):
-        app.divider()
-        with app.container():
-            app.markdown(
-                "<div style='font-size:12px;font-weight:700;color:#CC0000;"
-                "letter-spacing:0.06em;text-transform:uppercase;'>Download</div>",
-                unsafe_allow_html=True,
-            )
-            _output_path = app.session_state.get("output_path")
-            import os as _os
-            if _output_path and _os.path.exists(_output_path):
-                with open(_output_path, "rb") as _wb:
-                    app.download_button(
-                        "Download single-cut workbook",
-                        data=_wb.read(),
-                        file_name="survey_analysis.xlsx",
-                        mime=("application/vnd.openxmlformats-officedocument."
-                              "spreadsheetml.sheet"),
-                        key="persistent_dl_singlecut",
-                        use_container_width=True,
-                    )
-                app.caption("More export options (cross-cut, filtered, outcome) on the Download tab.")
-            else:
-                app.caption("Run an analysis to enable downloads.")
 
     render_chat_panel()
 
