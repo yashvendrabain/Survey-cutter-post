@@ -50,7 +50,6 @@ from src.ai_insights import (
     generate_outlier_insight,
     generate_table_insight,
 )
-from src.product_tour import maybe_render_tour, restart_tour
 from src.chat_panel import render_chat_panel
 from src.cross_cut_suggestions import score_suggestions_for_outcome
 from src.filter_options import (
@@ -8208,7 +8207,6 @@ def main() -> None:
     )
     _initialise_session_state()
     _inject_global_css()
-    maybe_render_tour()
     _drain_pending_actions()
     _render_sidebar()
 
@@ -8503,71 +8501,72 @@ def _render_wizard_stepper() -> None:
 
 
 def _render_wizard_top_nav() -> None:
-    """Compact chevron nav with the 3 step circles (Categories / Filter counts /
-    Cross-cut) centered neatly between the ‹ › arrows."""
+    """Clean centered 3-step stepper (Categories / Filter counts / Cross-cut).
+
+    The visual (circles + connectors + labels) is rendered as ONE HTML flexbox
+    block so it always aligns; small buttons beneath it handle clicks.
+    """
     app = _require_streamlit()
     step = int(app.session_state.get("wiz_step", 1))
-    back_col, mid_col, next_col = app.columns([1, 12, 1])
-    if back_col.button(
-        "\u2039", disabled=(step <= 1), key="wiz_back_top", help="Back",
-    ):
+    labels = ["Categories", "Filter counts", "Cross-cut"]
+
+    # ---- Visual stepper (single HTML block, perfectly aligned) ----
+    def _circle(n: int) -> str:
+        if n < step:
+            bg = "linear-gradient(180deg,#E00000,#CC0000)"; col = "#fff"; bd = "none"; mark = "\u2713"
+        elif n == step:
+            bg = "linear-gradient(180deg,#E00000,#CC0000)"; col = "#fff"; bd = "none"; mark = str(n)
+        else:
+            bg = "#F2F3F5"; col = "#A8ADB3"; bd = "1.5px solid #E2E4E8"; mark = str(n)
+        lab_color = "#CC0000" if n == step else "#999"
+        lab_weight = "700" if n == step else "500"
+        return (
+            "<div style='display:flex;flex-direction:column;align-items:center;flex:0 0 auto;'>"
+            f"<div style='width:36px;height:36px;border-radius:50%;background:{bg};color:{col};"
+            f"border:{bd};display:flex;align-items:center;justify-content:center;font-weight:700;"
+            f"font-size:15px;box-shadow:0 2px 6px rgba(204,0,0,0.18);'>{mark}</div>"
+            f"<div style='margin-top:6px;font-size:11px;font-weight:{lab_weight};color:{lab_color};"
+            f"font-family:Arial,sans-serif;white-space:nowrap;'>{label_html}</div>"
+        ).replace("{label_html}", html.escape(labels[n - 1]))
+
+    def _conn(after_step: int) -> str:
+        done = after_step < step
+        return (
+            "<div style='flex:1 1 60px;height:2px;margin:0 8px;align-self:flex-start;"
+            "margin-top:17px;background:"
+            f"{'#CC0000' if done else '#E2E4E8'};'></div>"
+        )
+
+    app.markdown(
+        "<div style='display:flex;align-items:flex-start;justify-content:center;"
+        "max-width:560px;margin:4px auto 6px;'>"
+        + _circle(1) + _conn(1) + _circle(2) + _conn(2) + _circle(3)
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ---- Clickable controls beneath: Back · 1 2 3 · Next (tight, centered) ----
+    app.markdown(
+        "<style>.wizstep-ctrls + div [data-testid='stHorizontalBlock']{"
+        "max-width:360px;margin:0 auto;gap:4px !important;}"
+        ".wizstep-ctrls + div .stButton button{padding:2px 0 !important;font-size:11px !important;"
+        "border-radius:6px !important;}</style><div class='wizstep-ctrls'></div>",
+        unsafe_allow_html=True,
+    )
+    bcol, s1, s2, s3, ncol = app.columns([1.4, 1, 1, 1, 1.4])
+    if bcol.button("\u2039 Back", disabled=(step <= 1), key="wiz_back_top", use_container_width=True):
         app.session_state["wiz_step"] = max(1, step - 1)
         _wizard_rerun(app)
-    with mid_col:
-        labels = ["Categories", "Filter counts", "Cross-cut"]
-        # Circle styling — tight, centered, connected by a hairline; each circle
-        # sits directly above its label so it reads as a clean stepper.
-        app.markdown(
-            "<style>"
-            ".wiztop-row + div [data-testid='stHorizontalBlock']{"
-            "max-width:520px;margin:0 auto;gap:0 !important;align-items:start;}"
-            ".wiztop-row + div div[data-testid='column'] .stButton button{"
-            "width:34px !important;height:34px !important;min-height:34px !important;"
-            "border-radius:50% !important;font-size:13px !important;font-weight:700 !important;"
-            "padding:0 !important;margin:0 auto !important;display:flex !important;"
-            "align-items:center !important;justify-content:center !important;}"
-            ".wiztop-row + div div[data-testid='column'] .stButton button[kind='primary']{"
-            "background:linear-gradient(180deg,#E00000,#CC0000) !important;color:#fff !important;"
-            "border:none !important;box-shadow:0 2px 6px rgba(204,0,0,0.3) !important;}"
-            ".wiztop-row + div div[data-testid='column'] .stButton button[kind='secondary']{"
-            "background:#F2F3F5 !important;color:#A8ADB3 !important;border:1.5px solid #E2E4E8 !important;"
-            "box-shadow:none !important;}"
-            "</style><div class='wiztop-row'></div>",
-            unsafe_allow_html=True,
-        )
-        # circle | connector | circle | connector | circle
-        cc = app.columns([2, 1, 2, 1, 2])
-        circle_cols = [cc[0], cc[2], cc[4]]
-        line_cols = [cc[1], cc[3]]
-        for li, lc in enumerate(line_cols):
-            done = (li + 1) < step
-            lc.markdown(
-                f"<div style='height:34px;display:flex;align-items:center;'>"
-                f"<div style='height:2px;width:100%;background:"
-                f"{'#CC0000' if done else '#E2E4E8'};'></div></div>",
-                unsafe_allow_html=True,
-            )
-        for idx, (col, label) in enumerate(zip(circle_cols, labels), start=1):
-            with col:
-                if app.button(
-                    str(idx), key=f"wiztop_circle_{idx}",
-                    type=("primary" if idx == step else "secondary"),
-                ):
-                    app.session_state["wiz_step"] = idx
-                    _wizard_rerun(app)
-                weight = "700" if idx == step else "500"
-                color = "#CC0000" if idx == step else "#999"
-                app.markdown(
-                    f"<div style='text-align:center;font-size:11px;font-weight:{weight};"
-                    f"color:{color};font-family:Arial,sans-serif;margin-top:4px;white-space:nowrap;'>{label}</div>",
-                    unsafe_allow_html=True,
-                )
-    if step < 3:
-        if next_col.button(
-            "\u203A", type="primary", key="wiz_next_top", help="Next",
-        ):
-            app.session_state["wiz_step"] = min(3, step + 1)
+    for idx, scol in enumerate([s1, s2, s3], start=1):
+        if scol.button(str(idx), key=f"wiztop_circle_{idx}",
+                       type=("primary" if idx == step else "secondary"),
+                       use_container_width=True):
+            app.session_state["wiz_step"] = idx
             _wizard_rerun(app)
+    if ncol.button("Next \u203a", disabled=(step >= 3), key="wiz_next_top",
+                   type="primary", use_container_width=True):
+        app.session_state["wiz_step"] = min(3, step + 1)
+        _wizard_rerun(app)
 
 
 def _render_wizard_nav(location: str) -> None:
