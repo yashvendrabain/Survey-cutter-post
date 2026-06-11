@@ -48,38 +48,6 @@ def _is_band_column(series) -> bool:
     return series.nunique(dropna=True) <= 20
 
 
-def _is_binary_flag(series) -> bool:
-    """True if the column is a 0/1 (or yes/no) flag — i.e. an exploded
-    multi-select option column, which is NOT a useful single metric."""
-    import pandas as pd
-    vals = set(str(v).strip().lower() for v in series.dropna().unique())
-    return vals.issubset({"0", "1", "0.0", "1.0", "yes", "no", "true", "false",
-                          "selected", "not selected", ""}) and len(vals) <= 3
-
-
-def _metric_eligible_cols(df, cols):
-    """Columns that make sense as a ranking metric: numeric or banded scalars.
-
-    Excludes exploded multi-select OPTION columns (0/1 flags) — those were
-    showing up as repeated 'Q10: CRM data / Q10: Web analytics / ...' entries
-    and aren't meaningful single metrics. Dedupes while preserving order.
-    """
-    import pandas as pd
-    out = []
-    seen = set()
-    for c in cols:
-        if c in seen:
-            continue
-        series = df[c]
-        if _is_binary_flag(series):
-            continue  # skip multi-select option flags
-        numeric_share = pd.to_numeric(series, errors="coerce").notna().mean()
-        if numeric_share > 0.5 or _is_band_column(series):
-            out.append(c)
-            seen.add(c)
-    return out
-
-
 def _metric_slot(label_name: str, cols, work_df, default_col, key_prefix: str):
     """Render one named metric slot. Returns a WinnerMetricSpec or None if 'None'."""
     import pandas as pd
@@ -130,10 +98,10 @@ def _metric_slot(label_name: str, cols, work_df, default_col, key_prefix: str):
 
 
 def _option_choice_chart(work_df, mask_win, mask_lag, mask_oth, question_col, title, key):
-    """Grouped bar: % of Top group / Comparison group / Others choosing each option.
+    """Grouped bar: % of Winners / Laggards / Others choosing each option.
 
-    Top group red, Comparison group black, Others grey. Percentage is within each
-    group (denominator = that group's count of people who answered this question).
+    Winners red, Laggards black, Others grey. Percentage is within each group
+    (denominator = that group's count of people who answered this question).
     """
     try:
         import plotly.graph_objects as go
@@ -156,24 +124,16 @@ def _option_choice_chart(work_df, mask_win, mask_lag, mask_oth, question_col, ti
         lag_pct.append(round(float((is_opt & mask_lag).sum()) / lag_n * 100, 1))
         oth_pct.append(round(float((is_opt & mask_oth).sum()) / oth_n * 100, 1))
     fig = go.Figure()
-    fig.add_bar(name="Top group", x=options, y=win_pct, marker_color="#CC0000",
+    fig.add_bar(name="Winners", x=options, y=win_pct, marker_color="#CC0000",
                 text=[f"{v:.0f}%" for v in win_pct], textposition="outside")
-    fig.add_bar(name="Comparison group", x=options, y=lag_pct, marker_color="#1A1A1A",
+    fig.add_bar(name="Laggards", x=options, y=lag_pct, marker_color="#1A1A1A",
                 text=[f"{v:.0f}%" for v in lag_pct], textposition="outside")
     fig.add_bar(name="Others", x=options, y=oth_pct, marker_color="#BBBBBB",
                 text=[f"{v:.0f}%" for v in oth_pct], textposition="outside")
-    # Title on top, legend BELOW the title (not overlapping). Extra top margin
-    # gives both room; yaxis headroom so the outside % labels don't clip.
-    fig.update_layout(
-        barmode="group", height=380, font_family="Arial",
-        title=dict(text=title, x=0, y=0.97, yanchor="top",
-                   font=dict(size=14, color="#1A1A1A")),
-        margin=dict(t=90, b=40, l=10, r=10),
-        yaxis_title="% within group",
-        yaxis=dict(range=[0, max(105, max(win_pct + lag_pct + oth_pct + [0]) * 1.18)]),
-        legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0,
-                    bgcolor="rgba(0,0,0,0)"),
-    )
+    fig.update_layout(barmode="group", height=340, title=title,
+                      font_family="Arial", margin=dict(t=50, b=30),
+                      yaxis_title="% within group",
+                      legend=dict(orientation="h", y=1.14))
     st.plotly_chart(fig, use_container_width=True, key=key)
 
 
@@ -194,24 +154,28 @@ def render_advanced_outcome_segmentation() -> None:
         "customers, whatever your measures define."
     )
 
+    mode = st.radio("Mode", ["Manual", "AI (Round 3)"], horizontal=True, key="adv_seg_mode")
+    if mode.startswith("AI"):
+        st.info("AI mode (Round 3): GPT recommends the measure set, weights, cutoff "
+                "and balance, with written reasoning; Python computes the actual "
+                "group. Requires the Portkey key in Replit Secrets.")
+        return
+
     # ---- Four vertical config boxes: Revenue | Gross Margin | Sector | Custom ----
     st.markdown("**Define your Top group** \u2014 set up to three measures, plus the sector/region split")
-    # Clean, deduped, metric-eligible columns for the measure dropdowns (excludes
-    # exploded multi-select option flags that were showing as repeated entries).
-    metric_cols = _metric_eligible_cols(df, cols)
-    rev_default = (_guess([c for c in metric_cols], _REVENUE_HINTS, n=1) or ["(not used)"])[0]
-    mar_default = (_guess([c for c in metric_cols], _MARGIN_HINTS, n=1) or ["(not used)"])[0]
+    rev_default = (_guess([c for c in cols], _REVENUE_HINTS, n=1) or ["(not used)"])[0]
+    mar_default = (_guess([c for c in cols], _MARGIN_HINTS, n=1) or ["(not used)"])[0]
     default_dims = _guess(cols, _DIM_HINTS, n=2)
 
     box_rev, box_mar, box_sec, box_cus = st.columns(4)
     specs = []
     with box_rev:
         with st.container(border=True):
-            s = _metric_slot("Revenue", metric_cols, work_df, rev_default, "adv_rev")
+            s = _metric_slot("Revenue", cols, work_df, rev_default, "adv_rev")
             if s: specs.append(s)
     with box_mar:
         with st.container(border=True):
-            s = _metric_slot("Gross Margin", metric_cols, work_df, mar_default, "adv_mar")
+            s = _metric_slot("Gross Margin", cols, work_df, mar_default, "adv_mar")
             if s: specs.append(s)
     with box_sec:
         with st.container(border=True):
@@ -223,7 +187,7 @@ def render_advanced_outcome_segmentation() -> None:
             )
     with box_cus:
         with st.container(border=True):
-            s = _metric_slot("Custom", metric_cols, work_df, "(not used)", "adv_cus")
+            s = _metric_slot("Custom", cols, work_df, "(not used)", "adv_cus")
             if s: specs.append(s)
 
     # Optional pool filter (kept compact, below the boxes)
@@ -295,30 +259,30 @@ def render_advanced_outcome_segmentation() -> None:
     # Others = everyone in the pool who is NOT a winner and NOT a laggard.
     mask_oth = ~mask_win & ~mask_lag
 
-    # ---- Top group / Comparison group ID lists (counts + downloads) ----
-    st.markdown("#### Top group & comparison group respondents")
+    # ---- Winner / Laggard UID lists (counts + downloads) ----
+    st.markdown("#### Winner & Laggard respondents")
     ccol1, ccol2, ccol3 = st.columns(3)
-    ccol1.metric("Top group", int(mask_win.sum()))
-    ccol2.metric("Comparison group", int(mask_lag.sum()))
+    ccol1.metric("Winners", int(mask_win.sum()))
+    ccol2.metric("Laggards", int(mask_lag.sum()))
     ccol3.metric("Others", int(mask_oth.sum()))
     win_ids = [str(i) for i in work_df.index[mask_win]]
     lag_ids = [str(i) for i in work_df.index[mask_lag]]
     dl1, dl2 = st.columns(2)
-    dl1.download_button("Download top group IDs", "\n".join(win_ids),
-                        file_name="top_group_ids.csv", key="adv_dl_win",
+    dl1.download_button("Download winner IDs", "\n".join(win_ids),
+                        file_name="winner_ids.csv", key="adv_dl_win",
                         use_container_width=True, disabled=not win_ids)
-    dl2.download_button("Download comparison group IDs", "\n".join(lag_ids),
-                        file_name="comparison_group_ids.csv", key="adv_dl_lag",
+    dl2.download_button("Download laggard IDs", "\n".join(lag_ids),
+                        file_name="laggard_ids.csv", key="adv_dl_lag",
                         use_container_width=True, disabled=not lag_ids)
-    with st.expander("Show group ID lists", expanded=False):
+    with st.expander("Show winner / laggard ID lists", expanded=False):
         import pandas as pd
         maxlen = max(len(win_ids), len(lag_ids))
         st.dataframe(pd.DataFrame({
-            "Top group IDs": win_ids + [""] * (maxlen - len(win_ids)),
-            "Comparison group IDs": lag_ids + [""] * (maxlen - len(lag_ids)),
+            "Winner IDs": win_ids + [""] * (maxlen - len(win_ids)),
+            "Laggard IDs": lag_ids + [""] * (maxlen - len(lag_ids)),
         }), use_container_width=True, hide_index=True)
 
-    # ---- Per-measure charts: Top group / Comparison group / Others ----
+    # ---- Per-measure charts: Winners / Laggards / Others ----
     st.markdown("#### What each group chose, per measure")
     breakdown_dim = None
     if balance_dims:
@@ -333,7 +297,7 @@ def render_advanced_outcome_segmentation() -> None:
         st.markdown(f"**{spec.column}**")
         if breakdown_dim is None:
             _option_choice_chart(work_df, mask_win, mask_lag, mask_oth, spec.column,
-                                 f"{spec.column} \u2014 Top group vs Comparison group vs Others",
+                                 f"{spec.column} — Winners vs Laggards vs Others",
                                  key=f"adv_chart_{spec.column}")
         else:
             cats = sorted(str(v) for v in work_df[breakdown_dim].dropna().unique())
