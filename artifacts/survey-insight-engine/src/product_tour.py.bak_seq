@@ -38,32 +38,21 @@ TOUR_STEPS: list[dict[str, str]] = [
         "gate": "upload",
     },
     {
-        "title": "Step 2 — Choose your Excel layout",
-        "body": "Just below the upload, you decide how the workbook is organised: "
-                "questions grouped into themed sheets (Pricing, Brand, …) or all on "
-                "one sheet. Scroll down to see the two options — pick whichever fits.",
-        "selector": "",
-        "scroll_text": "how should your Excel output",
-    },
-    {
-        "title": "Step 3 — Set up the wizard",
-        "body": "A short 3-step setup follows: Categories (group/rename questions), "
-                "Local Filters (slicers shown atop each sheet), and Cross-cuts "
-                "(how cross-cut sheets are laid out). Walk through it, then scroll "
-                "back up to Run.",
-        "selector": "",
-        "scroll_text": "Categories",
-    },
-    {
-        "title": "Step 4 — Run the analysis",
-        "body": "When you're set, click Run analysis (near the top of the upload "
-                "section). Every single cut is computed in seconds. Click it to continue.",
+        "title": "Step 2 — Run the analysis",
+        "body": "Once your files are in, click Run analysis. Every single cut is "
+                "computed in seconds. Click it now to continue.",
         "selector": "",
         "gate": "run",
-        "find_text": "Run analysis",
     },
     {
-        "title": "Step 5 — Single cuts",
+        "title": "Step 3 — Decide your output structure",
+        "body": "Choose whether questions are grouped into themed sheets or kept on "
+                "one, and set up Local Filters — slicers that let a reader filter a "
+                "sheet (e.g. show only APAC) right inside Excel.",
+        "selector": "#section-filter",
+    },
+    {
+        "title": "Step 3 — Single cuts",
         "body": "Every question gets a 'single cut' — the breakdown of how people "
                 "answered, with the standout values highlighted. Pick a question in "
                 "the sidebar to explore it.",
@@ -83,7 +72,7 @@ TOUR_STEPS: list[dict[str, str]] = [
         "selector": "#section-outcome",
     },
     {
-        "title": "Step 6 — Download",
+        "title": "Step 4 — Download",
         "body": "Get your workbook anytime after running the analysis. Open it in "
                 "Excel desktop so the live filters work.",
         "selector": "#section-downloads",
@@ -153,25 +142,6 @@ def _tour_html(steps: list[dict[str, str]], force: bool = False) -> str:
     var step = steps[i];
     var card = doc.createElement("div"); card.id="sae-tour-card";
     var spot=null, tgt = step.selector ? doc.querySelector(step.selector) : null;
-    // find_text: locate a button whose text contains the phrase (e.g. "Run analysis").
-    if (!tgt && step.find_text) {
-      var bb = doc.querySelectorAll('button');
-      for (var bi=0; bi<bb.length; bi++) {
-        if ((bb[bi].textContent||'').trim().toLowerCase().indexOf(step.find_text.toLowerCase()) !== -1) {
-          tgt = bb[bi]; break;
-        }
-      }
-    }
-    // scroll_text: scroll the matching heading into view (no spotlight needed).
-    if (!tgt && step.scroll_text) {
-      var all = doc.querySelectorAll('h1,h2,h3,p,div,span,label');
-      for (var si=0; si<all.length; si++) {
-        if ((all[si].textContent||'').toLowerCase().indexOf(step.scroll_text.toLowerCase()) !== -1) {
-          try { all[si].scrollIntoView({behavior:'smooth', block:'center'}); } catch(e){}
-          break;
-        }
-      }
-    }
     if(tgt){
       var r = tgt.getBoundingClientRect();
       // Raise the highlighted element ABOVE the dim so it stays clickable.
