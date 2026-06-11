@@ -102,28 +102,29 @@ def _tour_html(steps: list[dict[str, str]], force: bool = False) -> str:
     return """
 <script>
 (function(){
+  // Inject tour CSS into the PARENT document (the iframe-local <style> never
+  // reaches the parent where the cards are created, so they'd be unstyled and
+  // effectively invisible). Mirrors the working chat-launcher approach.
   var pdoc = window.parent.document;
   if (pdoc && pdoc.head && !pdoc.getElementById("sae-tour-style")) {
     var sty = pdoc.createElement("style"); sty.id = "sae-tour-style";
     sty.textContent =
-      "#sae-tour-card{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);"+
-      "width:460px;max-width:92vw;background:#fff;border-radius:14px;"+
-      "box-shadow:0 18px 50px rgba(0,0,0,0.28);padding:18px 22px;font-family:Arial,sans-serif;"+
+      "#sae-tour-overlay{position:fixed;inset:0;z-index:2000000;background:rgba(10,10,10,0.45);pointer-events:none;}"+
+      "#sae-tour-card{position:fixed;max-width:340px;background:#fff;border-radius:12px;"+
+      "box-shadow:0 18px 50px rgba(0,0,0,0.3);padding:18px 20px;font-family:Arial,sans-serif;"+
       "border-top:4px solid #CC0000;z-index:2000001;}"+
-      "#sae-tour-card h4{margin:0 0 8px;font-size:16px;color:#0A0A0A;}"+
+      "#sae-tour-card h4{margin:0 0 8px;font-size:15px;color:#0A0A0A;}"+
       "#sae-tour-card p{margin:0 0 14px;font-size:13px;line-height:1.55;color:#333;}"+
       "#sae-tour-bar{display:flex;align-items:center;justify-content:space-between;}"+
       "#sae-tour-dots{font-size:11px;color:#888;}"+
       ".sae-tour-btn{border:none;border-radius:7px;font-size:12px;font-weight:700;"+
-      "padding:8px 16px;cursor:pointer;font-family:Arial,sans-serif;}"+
+      "padding:8px 14px;cursor:pointer;font-family:Arial,sans-serif;}"+
       ".sae-tour-primary{background:#CC0000;color:#fff;}"+
       ".sae-tour-ghost{background:#F0F0F0;color:#333;margin-right:8px;}"+
       ".sae-tour-skip{background:none;color:#888;text-decoration:underline;font-size:11px;"+
       "border:none;cursor:pointer;}"+
-      "#sae-tour-arrow{position:fixed;z-index:2000000;pointer-events:none;font-size:34px;"+
-      "color:#CC0000;filter:drop-shadow(0 2px 4px rgba(0,0,0,0.3));"+
-      "animation:saeArrowBounce 1s ease-in-out infinite;}"+
-      "@keyframes saeArrowBounce{0%,100%{opacity:0.5;}50%{opacity:1;}}";
+      ".sae-tour-spot{position:fixed;z-index:2000000;border:3px solid #CC0000;border-radius:8px;"+
+      "box-shadow:0 0 0 9999px rgba(10,10,10,0.55);pointer-events:none;transition:all 0.2s ease;}";
     pdoc.head.appendChild(sty);
   }
 })();
@@ -133,112 +134,133 @@ def _tour_html(steps: list[dict[str, str]], force: bool = False) -> str:
   var steps = __STEPS__;
   var doc = window.parent.document;
   var i = 0;
-  function clear(){
-    ["sae-tour-card","sae-tour-arrow"].forEach(function(id){
-      var e=doc.getElementById(id); if(e) e.remove();
-    });
-    if (window.__saeTourPoll){ clearInterval(window.__saeTourPoll); window.__saeTourPoll=null; }
+  function clear(){ ["sae-tour-overlay","sae-tour-card","sae-tour-spotbox"].forEach(function(id){
+    var e=doc.getElementById(id); if(e) e.remove(); });
+    // restore any element we lifted above the dim
+    try {
+      var lifted = doc.querySelectorAll('[data-sae-tour-lifted="1"]');
+      Array.prototype.forEach.call(lifted, function(el){
+        el.style.zIndex = ""; el.removeAttribute("data-sae-tour-lifted");
+      });
+    } catch(e){}
   }
   function done(){ clear();
     try { window.parent.sessionStorage.setItem("sae_tour_seen","1"); } catch(e){}
   }
-  function findTarget(step){
-    var tgt = step.selector ? doc.querySelector(step.selector) : null;
-    if (!tgt && step.find_text){
-      var bb = doc.querySelectorAll("button");
-      for (var bi=0; bi<bb.length; bi++){
-        if ((bb[bi].textContent||"").trim().toLowerCase().indexOf(step.find_text.toLowerCase())!==-1){ tgt=bb[bi]; break; }
-      }
-    }
-    if (!tgt && step.scroll_text){
-      var all = doc.querySelectorAll("h1,h2,h3,p,div,span,label");
-      for (var si=0; si<all.length; si++){
-        if ((all[si].textContent||"").toLowerCase().indexOf(step.scroll_text.toLowerCase())!==-1){ tgt=all[si]; break; }
-      }
-    }
-    return tgt;
-  }
-  function drawArrow(tgt){
-    var old = doc.getElementById("sae-tour-arrow"); if(old) old.remove();
-    if(!tgt) return;
-    var r = tgt.getBoundingClientRect();
-    if (r.width===0 && r.height===0) return;
-    var arrow = doc.createElement("div"); arrow.id="sae-tour-arrow";
-    var cx = r.left + r.width/2;
-    var cy = r.top + r.height/2;
-    var vh = window.parent.innerHeight;
-    if (cy < vh*0.6){
-      arrow.textContent = "\u2B07";
-      arrow.style.left = Math.min(Math.max(8, cx-17), window.parent.innerWidth-40)+"px";
-      arrow.style.top  = Math.max(8, r.top-44)+"px";
-    } else {
-      arrow.textContent = "\u2B06";
-      arrow.style.left = Math.min(Math.max(8, cx-17), window.parent.innerWidth-40)+"px";
-      arrow.style.top  = Math.min(vh-50, r.bottom+8)+"px";
-    }
-    doc.body.appendChild(arrow);
-  }
   function render(){
     clear();
     var step = steps[i];
-    var tgt = findTarget(step);
-    if (tgt){ try { tgt.scrollIntoView({behavior:"smooth", block:"center"}); } catch(e){} }
-    setTimeout(function(){ drawArrow(findTarget(step)); }, 380);
-    setTimeout(function(){ drawArrow(findTarget(step)); }, 900);
-
+    var card = doc.createElement("div"); card.id="sae-tour-card";
+    var spot=null, tgt = step.selector ? doc.querySelector(step.selector) : null;
+    // find_text: locate a button whose text contains the phrase (e.g. "Run analysis").
+    if (!tgt && step.find_text) {
+      var bb = doc.querySelectorAll('button');
+      for (var bi=0; bi<bb.length; bi++) {
+        if ((bb[bi].textContent||'').trim().toLowerCase().indexOf(step.find_text.toLowerCase()) !== -1) {
+          tgt = bb[bi]; break;
+        }
+      }
+    }
+    // scroll_text: scroll the matching heading into view (no spotlight needed).
+    if (!tgt && step.scroll_text) {
+      var all = doc.querySelectorAll('h1,h2,h3,p,div,span,label');
+      for (var si=0; si<all.length; si++) {
+        if ((all[si].textContent||'').toLowerCase().indexOf(step.scroll_text.toLowerCase()) !== -1) {
+          try { all[si].scrollIntoView({behavior:'smooth', block:'center'}); } catch(e){}
+          break;
+        }
+      }
+    }
+    if(tgt){
+      var r = tgt.getBoundingClientRect();
+      // Raise the highlighted element ABOVE the dim so it stays clickable.
+      try {
+        tgt.dataset.saeTourLifted = "1";
+        tgt.style.position = tgt.style.position || "relative";
+        tgt.style.zIndex = "2000050";
+      } catch(e){}
+      spot = doc.createElement("div"); spot.id="sae-tour-spotbox"; spot.className="sae-tour-spot";
+      spot.style.top=(r.top-6)+"px"; spot.style.left=(r.left-6)+"px";
+      spot.style.width=(r.width+12)+"px"; spot.style.height=(r.height+12)+"px";
+      doc.body.appendChild(spot);
+      // Place the card BELOW the target, or above it if no room.
+      var below = r.bottom + 14;
+      var cardTop = (below + 230 > window.parent.innerHeight) ? Math.max(12, r.top - 240) : below;
+      card.style.top = cardTop + "px";
+      card.style.left = Math.min(Math.max(12, r.left), window.parent.innerWidth-360)+"px";
+    } else {
+      var ov = doc.createElement("div"); ov.id="sae-tour-overlay"; doc.body.appendChild(ov);
+      card.style.top="50%"; card.style.left="50%"; card.style.transform="translate(-50%,-50%)";
+    }
     var gate = step.gate || "";
     var gateOk = gateMet(gate);
     var nextLabel = (i===steps.length-1 ? "Done" : "Next");
     var hint = (gate && !gateOk)
-      ? '<div style="margin-top:8px;font-size:11px;color:#CC0000;">'
-        + (gate==="upload" ? "Upload a file to continue \u2014 I will advance automatically\u2026"
-                           : "Click Run analysis to continue \u2014 I will advance automatically\u2026")
+      ? '<div id="sae-tour-wait" style="margin-top:8px;font-size:11px;color:#CC0000;">'
+        + (gate==="upload" ? "\u2191 Upload a file above to continue\u2026"
+                           : "\u2191 Click Run analysis to continue\u2026")
         + '</div>'
       : '';
-    var card = doc.createElement("div"); card.id="sae-tour-card";
     card.innerHTML =
       '<h4>'+step.title+'</h4><p>'+step.body+'</p>'+ hint +
       '<div id="sae-tour-bar"><span id="sae-tour-dots">'+(i+1)+' / '+steps.length+'</span>'+
       '<span><button class="sae-tour-btn sae-tour-ghost" id="sae-tour-back">Back</button>'+
-      '<button class="sae-tour-btn sae-tour-primary" id="sae-tour-next">'+nextLabel+'</button></span></div>'+
+      '<button class="sae-tour-btn sae-tour-primary" id="sae-tour-next"'+
+      ((gate && !gateOk) ? ' disabled style="opacity:0.45;cursor:not-allowed;"' : '')+'>'+
+      nextLabel+'</button></span></div>'+
       '<div style="margin-top:10px;"><button class="sae-tour-skip" id="sae-tour-skip">Skip tour</button></div>';
     doc.body.appendChild(card);
     doc.getElementById("sae-tour-back").onclick=function(){ if(i>0){i--;render();} };
-    doc.getElementById("sae-tour-next").onclick=function(){ if(i<steps.length-1){i++;render();} else {done();} };
+    var nextBtn = doc.getElementById("sae-tour-next");
+    nextBtn.onclick=function(){
+      if (gate && !gateMet(gate)) { return; }   // gated: ignore until done
+      if(i<steps.length-1){i++;render();} else {done();}
+    };
     doc.getElementById("sae-tour-skip").onclick=function(){ done(); };
-
-    if (gate && !gateOk){
-      if (window.__saeTourPoll){ clearInterval(window.__saeTourPoll); }
+    // If this step is gated and not yet satisfied, poll the DOM and auto-advance
+    // the moment the user completes the action (uploads / runs).
+    if (gate && !gateOk) {
+      if (window.__saeTourPoll) { clearInterval(window.__saeTourPoll); }
       window.__saeTourPoll = setInterval(function(){
-        if (gateMet(gate)){
-          clearInterval(window.__saeTourPoll); window.__saeTourPoll=null;
+        if (gateMet(gate)) {
+          clearInterval(window.__saeTourPoll); window.__saeTourPoll = null;
           if(i<steps.length-1){i++;render();} else {done();}
         }
       }, 600);
     }
   }
+  // Gate detection via DOM signals (the tour can't see Python state directly).
+  //   upload: Streamlit's uploaded-file chip OR the "Uploaded:" caption appears.
+  //   run:    the result stat tiles (.stat-num) render (only after run_complete).
   function gateMet(gate){
     try {
       if (!gate) return true;
-      if (gate === "upload"){
+      if (gate === "upload") {
         if (doc.querySelector('[data-testid="stFileUploaderFile"], [data-testid="stFileUploaderFileName"]')) return true;
-        return (doc.body.innerText||"").indexOf("Uploaded:") !== -1;
+        var txt = (doc.body.innerText || "");
+        return txt.indexOf("Uploaded:") !== -1;
       }
-      if (gate === "run"){ return !!doc.querySelector(".stat-num"); }
+      if (gate === "run") {
+        return !!doc.querySelector('.stat-num');
+      }
       return true;
-    } catch(e){ return true; }
+    } catch(e){ return true; }   // never trap the user if detection errors
   }
-  if (__FORCE__){
+  // FORCE path: button-triggered tours render immediately, ignoring the
+  // "seen" flag (and clearing it so future auto-opens behave normally).
+  if (__FORCE__) {
     try { window.parent.sessionStorage.removeItem("sae_tour_seen"); } catch(e){}
     setTimeout(render, 150);
-    setTimeout(render, 500);
+    setTimeout(render, 500);   // retry in case the DOM/iframe wasn't ready
     return;
   }
+  // Auto path: only start if not seen this session.
   var seen=null; try { seen=window.parent.sessionStorage.getItem("sae_tour_seen"); } catch(e){}
   if(!seen){ setTimeout(render, 400); }
 })();
 </script>
 """.replace("__STEPS__", steps_json).replace("__FORCE__", "true" if force else "false")
+
 
 def maybe_render_tour(force: bool = False) -> None:
     """Render the tour unless the user has already seen/skipped it this session.
