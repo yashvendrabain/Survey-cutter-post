@@ -121,7 +121,7 @@ def _tour_html(steps: list[dict[str, str]], force: bool = False) -> str:
       "cursor:pointer;font-family:Arial,sans-serif;}"+
       ".sae-tour-primary{background:#CC0000;color:#fff;}"+
       ".sae-tour-ghost{background:#F0F0F0;color:#333;margin-right:8px;}"+
-      ".sae-tour-skip{background:none;color:#888;text-decoration:underline;font-size:11px;border:none;cursor:pointer;}"+"#sae-tour-arrow{position:fixed;z-index:2000000;pointer-events:none;font-size:52px;line-height:1;color:#CC0000;filter:drop-shadow(0 2px 4px rgba(0,0,0,0.3));animation:saeArrowB 1s ease-in-out infinite;}"+"@keyframes saeArrowB{0%,100%{opacity:0.5;}50%{opacity:1;}}";
+      ".sae-tour-skip{background:none;color:#888;text-decoration:underline;font-size:11px;border:none;cursor:pointer;}";
     pdoc.head.appendChild(sty);
   }
 })();
@@ -130,50 +130,20 @@ def _tour_html(steps: list[dict[str, str]], force: bool = False) -> str:
 (function(){
   var doc = window.parent.document;
   var win = window.parent;
+  // Steps + state live on the PARENT window so every rerun-injected copy shares them.
   win.__saeSteps = __STEPS__;
   if (typeof win.__saeStep !== "number") win.__saeStep = 0;
   if (__FORCE__){ win.__saeDone=false; win.__saeStep=0; win.__saeStarted=false; win.__saePos=null; }
 
-  win.__saeRemove = function(){
-    var c=doc.getElementById("sae-tour-card"); if(c && c.parentNode) c.parentNode.removeChild(c);
-    var a=doc.getElementById("sae-tour-arrow"); if(a && a.parentNode) a.parentNode.removeChild(a);
-  };
+  function remove(){ var c=doc.getElementById("sae-tour-card"); if(c && c.parentNode) c.parentNode.removeChild(c); }
 
-  function findTarget(step){
-    if(!step) return null;
-    var t = step.selector ? doc.querySelector(step.selector) : null;
-    if(!t && step.find_text){
-      var bb=doc.querySelectorAll("button");
-      for(var i=0;i<bb.length;i++){ if((bb[i].textContent||"").trim().toLowerCase().indexOf(step.find_text.toLowerCase())!==-1){ t=bb[i]; break; } }
-    }
-    if(!t && step.scroll_text){
-      var all=doc.querySelectorAll("h1,h2,h3,h4,p,div,span,label");
-      for(var j=0;j<all.length;j++){ if((all[j].textContent||"").toLowerCase().indexOf(step.scroll_text.toLowerCase())!==-1){ t=all[j]; break; } }
-    }
-    return t;
-  }
-  function drawArrow(step){
-    var a=doc.getElementById("sae-tour-arrow"); if(a&&a.parentNode) a.parentNode.removeChild(a);
-    var tgt=findTarget(step); if(!tgt) return;
-    var r=tgt.getBoundingClientRect(); if(r.width===0&&r.height===0) return;
-    try{ tgt.scrollIntoView({behavior:"smooth",block:"center"}); }catch(e){}
-    setTimeout(function(){
-      var rr=tgt.getBoundingClientRect();
-      var ar=doc.createElement("div"); ar.id="sae-tour-arrow";
-      var cx=rr.left+rr.width/2, vh=win.innerHeight, vw=win.innerWidth;
-      if(rr.top < vh*0.55){ ar.textContent="\u2B07"; ar.style.left=Math.min(Math.max(8,cx-26),vw-60)+"px"; ar.style.top=Math.max(8,rr.top-58)+"px"; }
-      else { ar.textContent="\u2B06"; ar.style.left=Math.min(Math.max(8,cx-26),vw-60)+"px"; ar.style.top=Math.min(vh-66,rr.bottom+10)+"px"; }
-      doc.body.appendChild(ar);
-    }, 360);
-  }
-
-  win.__saeBuild = function(){
+  function build(){
     var steps = win.__saeSteps;
-    if (win.__saeDone){ win.__saeRemove(); return; }
+    if (win.__saeDone){ remove(); return; }
     var i = win.__saeStep; if(i<0) i=0;
-    if (i >= steps.length){ win.__saeDone=true; win.__saeRemove(); return; }
+    if (i >= steps.length){ win.__saeDone=true; remove(); return; }
     var step = steps[i];
-    win.__saeRemove();
+    remove();
     if (!doc.body) return;
     var last = (i === steps.length-1);
     var card = doc.createElement("div"); card.id="sae-tour-card";
@@ -192,28 +162,31 @@ def _tour_html(steps: list[dict[str, str]], force: bool = False) -> str:
     if (win.__saePos){ card.style.left=win.__saePos.x+"px"; card.style.top=win.__saePos.y+"px"; }
     else if (!win.__saeStarted){ card.style.left=Math.max(8,(vw-w)/2)+"px"; card.style.top=Math.max(8,(vh-h)/2)+"px"; }
     else { card.style.left=Math.max(8,(vw-w)/2)+"px"; card.style.top=Math.max(8,vh-h-28)+"px"; }
-    drawArrow(step);
-  };
+  }
+  win.__saeBuild = build;
 
-  // ONE persistent delegated handler. It ALWAYS calls win.__saeBuild (the latest
-  // instance), never a stale local closure -> fixes "dead after reopen".
+  // ONE persistent delegated handler on the parent document. Survives DOM swaps
+  // and duplicate script injection (we de-dupe with a flag). This is why clicks
+  // no longer "do nothing" after a rerun.
   if (!win.__saeWired){
     win.__saeWired = true;
     doc.addEventListener("click", function(e){
-      var t=e.target;
-      while (t && t!==doc.body && !(t.getAttribute && t.getAttribute("data-sae"))) t=t.parentNode;
+      var t = e.target;
+      while (t && t !== doc.body && !(t.getAttribute && t.getAttribute("data-sae"))) t = t.parentNode;
       if (!t || !t.getAttribute) return;
-      var act=t.getAttribute("data-sae"); if(!act) return;
+      var act = t.getAttribute("data-sae");
+      if (!act) return;
       var steps = win.__saeSteps || [];
-      if (act==="back"){ if(win.__saeStep>0){ win.__saeStep--; win.__saeBuild(); } }
-      else if (act==="next"){
-        win.__saeStarted=true;
-        if (win.__saeStep < steps.length-1){ win.__saeStep++; win.__saeBuild(); }
-        else { win.__saeDone=true; win.__saeRemove(); try{win.sessionStorage.setItem("sae_tour_seen","1");}catch(err){} }
-      } else if (act==="skip"){
-        win.__saeDone=true; win.__saeRemove(); try{win.sessionStorage.setItem("sae_tour_seen","1");}catch(err){}
+      if (act === "back"){ if(win.__saeStep>0){ win.__saeStep--; build(); } }
+      else if (act === "next"){
+        win.__saeStarted = true;
+        if (win.__saeStep < steps.length-1){ win.__saeStep++; build(); }
+        else { win.__saeDone=true; remove(); try{win.sessionStorage.setItem("sae_tour_seen","1");}catch(err){} }
+      } else if (act === "skip"){
+        win.__saeDone=true; remove(); try{win.sessionStorage.setItem("sae_tour_seen","1");}catch(err){}
       }
     }, true);
+    // drag (also delegated / persistent)
     var drag=false, ox=0, oy=0;
     doc.addEventListener("mousedown", function(e){
       var t=e.target; while(t && t!==doc.body && t.id!=="sae-tour-handle") t=t.parentNode;
@@ -230,12 +203,13 @@ def _tour_html(steps: list[dict[str, str]], force: bool = False) -> str:
     doc.addEventListener("mouseup", function(){ drag=false; }, true);
   }
 
-  if (__FORCE__){ setTimeout(win.__saeBuild,120); setTimeout(win.__saeBuild,450); return; }
+  if (__FORCE__){ setTimeout(build,120); setTimeout(build,450); return; }
   if (win.__saeDone) return;
   if (doc.getElementById("sae-tour-card")) return;
   var seen=null; try{ seen=win.sessionStorage.getItem("sae_tour_seen"); }catch(e){}
-  if(!seen || win.__saeStep>0){ setTimeout(win.__saeBuild,300); }
+  if(!seen || win.__saeStep>0){ setTimeout(build,300); }
 })();
+</script>
 """.replace("__STEPS__", steps_json).replace("__FORCE__", "true" if force else "false")
 
 def maybe_render_tour(force: bool = False) -> None:

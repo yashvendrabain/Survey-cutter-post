@@ -457,13 +457,6 @@ _UI_V2_CSS = """
 .journey-step.todo .journey-title { color:#A8ADB3 !important; }
 .journey-line { flex:1 1 auto !important; height:3px !important; margin:0 14px !important; border-radius:3px !important; background:#E8EAED !important; min-width:24px !important; }
 .journey-line.done { background:linear-gradient(90deg,#CC0000,#E00000) !important; }
-/* Bigger, more visible variant for the 4-step guide */
-.journey-big { padding:18px 22px !important; }
-.journey-big .journey-dot { width:46px !important; height:46px !important; font-size:20px !important; }
-.journey-big .journey-title { font-size:15px !important; }
-.journey-big .journey-sub { font-size:12px !important; }
-.journey-big .journey-step.active .journey-title { color:#CC0000 !important; }
-.journey-next { margin:-12px 0 20px !important; padding:10px 18px !important; background:#FFF6F6 !important; border:1px solid #F6D5D5 !important; border-left:4px solid #CC0000 !important; border-radius:8px !important; font-family:Arial,sans-serif !important; font-size:13px !important; font-weight:600 !important; color:#9A1B1B !important; }
 
 /* ---- Count-up stat tiles ---- */
 .stat-row { display:flex !important; gap:14px !important; flex-wrap:wrap !important; margin:4px 0 8px !important; }
@@ -5206,16 +5199,8 @@ def _section_upload() -> None:
     app.markdown('<div id="section-upload"></div>', unsafe_allow_html=True)
     _section_header("1", SECTION_UPLOAD, anchor="section-1", meta="CSV \u00b7 XLSX \u00b7 DOCX")
     app.markdown(
-        "<div style='padding:14px 18px;background:#FFF6F6;border:1px solid #F6D5D5;"
-        "border-left:4px solid #CC0000;border-radius:10px;margin-bottom:14px;"
-        "font-family:Arial,sans-serif;'>"
-        "<div style='font-weight:700;font-size:14px;color:#1A1A1A;margin-bottom:4px;'>"
-        "Step 1 \u2014 Upload your survey</div>"
-        "<div style='font-size:13px;color:#444;line-height:1.55;'>"
-        "Upload two things: your <b>raw data</b> (the responses, .csv or .xlsx) and your "
-        "<b>data map</b> (the question/answer codebook, .xlsx). You can also drop a single "
-        "combined Excel, and the tool will detect the format automatically.</div></div>",
-        unsafe_allow_html=True,
+        "Drop **any combination** of files \u2014 the tool detects what "
+        "you've uploaded automatically."
     )
 
     uploaded_files = app.file_uploader(
@@ -5372,19 +5357,6 @@ def _section_upload() -> None:
             ("clipboard", len(schema.questions), "Total questions"),
             ("chart",     len(results), "Single cuts"),
         ])
-        # Stepwise guidance: tell the user exactly what to do next.
-        app.markdown(
-            "<div style='margin:10px 0 4px;padding:12px 16px;background:#F7F8FA;"
-            "border:1px solid #E8EAED;border-radius:10px;font-family:Arial,sans-serif;'>"
-            "<span style='font-weight:700;color:#CC0000;font-size:13px;'>Next step \u2192</span> "
-            "<span style='font-size:13px;color:#333;'>Click any question in the "
-            "<b>left sidebar</b> to see its cut. Want to narrow the whole sample first "
-            "(e.g. one region)? Use <b>Apply global filter</b> in the top nav.</span></div>",
-            unsafe_allow_html=True,
-        )
-        if app.button("Apply global filter", key="goto_global_filter_from_counts"):
-            _set_current_nav_view("filters")
-            app.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -7960,7 +7932,12 @@ def _render_nav_bar() -> None:
         )
         + _tab("outcome", "Outcome Segmentation", str(n_diffs) if n_diffs else None, None)
         + _tab("download", "Download workbook", None, None)
-        + _tab("filters", "Apply global filter", str(n_filters) if n_filters else None, None)
+        + (
+            '<div class="nav-more">'
+            '<span class="nav-tab nav-more-toggle">More \u25BE</span>'
+            f'<div class="nav-more-menu">{more_items}</div>'
+            '</div>'
+        )
     )
 
     try:
@@ -8092,65 +8069,35 @@ def _render_stat_tiles(stats: list[tuple[str, int, str]]) -> None:
 
 
 def _render_journey_rail() -> None:
-    """A big, highlighted 4-step guide: Upload -> Configure -> Run & review -> Download.
-
-    Highlights whichever step matches the current view so a first-time user always
-    knows where they are and what's next.
-    """
+    """A 3-phase progress rail under the header: Upload -> Analyze -> Download."""
     app = _require_streamlit()
-    has_data = app.session_state.get("schema") is not None
     done = bool(app.session_state.get("run_complete"))
-    view = _current_nav_view()
-
-    # Map the 4 guide steps to views; figure out which is "active".
-    steps = [
-        ("upload",   "1", "Upload survey",        "Add your raw data + data map"),
-        ("upload",   "2", "Configure output",     "Categories, filters, cross-cuts"),
-        ("single",   "3", "Run &amp; review",     "Single cuts, cross cuts, segmentation"),
-        ("download", "4", "Download",             "Consultant-ready workbook"),
-    ]
-    # Determine active index from the current view + progress.
-    if view == "download":
-        active = 3
-    elif view in ("single", "cross", "outcome", "filters") or done:
-        active = 2
-    elif has_data:
-        active = 1
+    # states per phase: "done" | "active" | "todo"
+    if done:
+        states = ["done", "done", "active"]
+        lines = ["done", "done"]
     else:
-        active = 0
-
-    parts = ['<div class="journey journey-big">']
-    for i, (_v, num, title, sub) in enumerate(steps):
-        if i < active:
-            stt = "done"; dot = "\u2713"
-        elif i == active:
-            stt = "active"; dot = num
-        else:
-            stt = "todo"; dot = num
+        states = ["active", "todo", "todo"]
+        lines = ["todo", "todo"]
+    steps = [
+        ("upload",   "Upload survey",       "raw data + data map"),
+        ("chart",    "Analyze &amp; review", "single &amp; cross cuts"),
+        ("download", "Download",            "consultant-ready workbook"),
+    ]
+    parts = ['<div class="journey">']
+    for i, (icon_name, title, sub) in enumerate(steps):
+        st = states[i]
+        dot_inner = "\u2713" if st == "done" else _svg_icon(icon_name, size=16)
         parts.append(
-            f'<div class="journey-step {stt}">'
-            f'<div class="journey-dot {stt}">{dot}</div>'
+            f'<div class="journey-step {st}">'
+            f'<div class="journey-dot {st}">{dot_inner}</div>'
             f'<div class="journey-text"><span class="journey-title">{title}</span>'
             f'<span class="journey-sub">{sub}</span></div></div>'
         )
-        if i < len(steps) - 1:
-            line_state = "done" if i < active else "todo"
-            parts.append(f'<div class="journey-line {line_state}"></div>')
+        if i < len(lines):
+            parts.append(f'<div class="journey-line {lines[i]}"></div>')
     parts.append("</div>")
-    # "What's next" banner under the rail.
-    next_hint = {
-        0: "\u2192 Next: upload your raw data file and data map below.",
-        1: "\u2192 Next: choose how your Excel output is organised, then set filters &amp; cross-cuts.",
-        2: "\u2192 Next: click a question in the sidebar to see its cut, or open Outcome Segmentation.",
-        3: "\u2192 You're set \u2014 generate and download your workbook below.",
-    }.get(active, "")
-    if next_hint:
-        parts_banner = (
-            f'<div class="journey-next">{next_hint}</div>'
-        )
-    else:
-        parts_banner = ""
-    app.markdown("".join(parts) + parts_banner, unsafe_allow_html=True)
+    app.markdown("".join(parts), unsafe_allow_html=True)
 
 
 def main() -> None:
@@ -8197,13 +8144,32 @@ def main() -> None:
     else:
         _section_upload()
 
-    # Persistent FULL download panel — pinned at the bottom of EVERY page (except
-    # the dedicated Download view, which already shows it inline). Same 4-workbook
-    # panel, in an expander so it's always reachable without scrolling the page away.
-    if view != "download":
+    # Persistent download bar — available at the bottom of EVERY tab (except the
+    # dedicated Download tab, which already shows the full panel) once analysis ran.
+    if view != "download" and app.session_state.get("run_complete"):
         app.divider()
-        with app.expander("\u2b07  Download workbooks (available on every page)", expanded=False):
-            _section_downloads()
+        with app.container():
+            app.markdown(
+                "<div style='font-size:12px;font-weight:700;color:#CC0000;"
+                "letter-spacing:0.06em;text-transform:uppercase;'>Download</div>",
+                unsafe_allow_html=True,
+            )
+            _output_path = app.session_state.get("output_path")
+            import os as _os
+            if _output_path and _os.path.exists(_output_path):
+                with open(_output_path, "rb") as _wb:
+                    app.download_button(
+                        "Download single-cut workbook",
+                        data=_wb.read(),
+                        file_name="survey_analysis.xlsx",
+                        mime=("application/vnd.openxmlformats-officedocument."
+                              "spreadsheetml.sheet"),
+                        key="persistent_dl_singlecut",
+                        use_container_width=True,
+                    )
+                app.caption("More export options (cross-cut, filtered, outcome) on the Download tab.")
+            else:
+                app.caption("Run an analysis to enable downloads.")
 
     render_chat_panel()
 
@@ -8666,46 +8632,14 @@ def _render_wizard_step_filters() -> None:
     app.markdown("### Local Filters")
     app.caption(
         "Local Filters appear as drop-downs at the top of each question's sheet "
-        "in the Excel output, so a reader can slice that sheet on the fly. Pick the "
-        "questions you want available as slicers below."
+        "in the Excel output, so a reader can slice that sheet on the fly "
+        "(e.g. show only respondents where Region = APAC). Pick the questions "
+        "you want available as slicers below."
     )
-    # Pretty Excel-style sneak peek: a mini spreadsheet showing where filters sit.
-    app.markdown(
-        "<div style='margin:8px 0 18px;font-family:Calibri,Arial,sans-serif;"
-        "border:1px solid #D4D4D4;border-radius:8px;overflow:hidden;max-width:420px;"
-        "box-shadow:0 4px 14px rgba(0,0,0,0.08);'>"
-        # excel title bar
-        "<div style='background:#217346;color:#fff;font-size:11px;font-weight:600;"
-        "padding:6px 12px;display:flex;align-items:center;gap:6px;'>"
-        "<span style='font-size:13px;'>\u25A6</span> Q5 \u2014 Brand awareness.xlsx</div>"
-        # column header row (Excel grey)
-        "<div style='display:flex;background:#F3F3F3;border-bottom:1px solid #D4D4D4;"
-        "font-size:11px;color:#666;font-weight:600;'>"
-        "<div style='width:140px;padding:5px 10px;border-right:1px solid #E4E4E4;'>Filter</div>"
-        "<div style='flex:1;padding:5px 10px;'>Value</div></div>"
-        # filter rows
-        "<div style='display:flex;border-bottom:1px solid #EEE;font-size:12px;'>"
-        "<div style='width:140px;padding:7px 10px;border-right:1px solid #EEE;color:#333;'>Region</div>"
-        "<div style='flex:1;padding:7px 10px;'>"
-        "<span style='display:inline-flex;align-items:center;gap:8px;background:#fff;"
-        "border:1px solid #217346;border-radius:4px;padding:2px 8px;color:#217346;font-weight:600;'>"
-        "APAC <span style='color:#217346;'>\u25BE</span></span></div></div>"
-        "<div style='display:flex;border-bottom:1px solid #EEE;font-size:12px;'>"
-        "<div style='width:140px;padding:7px 10px;border-right:1px solid #EEE;color:#333;'>Company size</div>"
-        "<div style='flex:1;padding:7px 10px;'>"
-        "<span style='display:inline-flex;align-items:center;gap:8px;background:#fff;"
-        "border:1px solid #BBB;border-radius:4px;padding:2px 8px;color:#333;'>"
-        "Enterprise <span style='color:#999;'>\u25BE</span></span></div></div>"
-        # custom filter row (highlighted)
-        "<div style='display:flex;font-size:12px;background:#FFFCF2;'>"
-        "<div style='width:140px;padding:7px 10px;border-right:1px solid #EEE;color:#9A7B00;font-weight:600;'>"
-        "Custom \u00b7 Tenure</div>"
-        "<div style='flex:1;padding:7px 10px;'>"
-        "<span style='display:inline-flex;align-items:center;gap:8px;background:#fff;"
-        "border:1px solid #E0B400;border-radius:4px;padding:2px 8px;color:#9A7B00;font-weight:600;'>"
-        "5+ years <span style='color:#E0B400;'>\u25BE</span></span></div></div>"
-        "</div>",
-        unsafe_allow_html=True,
+    app.caption(
+        "Example: with Region and Company size as filters, a reader opens a sheet "
+        "and sets Region = APAC to instantly see only APAC respondents \u2014 no "
+        "re-running needed."
     )
     selected = set(app.session_state.get("wiz_selected_demographics") or [])
     candidate_ids = [q.canonical_id for q in schema.questions if q.is_demographic or q.canonical_id in selected]
