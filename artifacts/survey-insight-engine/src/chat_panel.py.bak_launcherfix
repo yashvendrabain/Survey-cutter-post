@@ -49,48 +49,33 @@ def _load_faq_ground_truth(faq_path: str = _FAQ_PATH_DEFAULT) -> str:
 
 def _launcher_html(is_open: bool) -> str:
     label = "\u2715" if is_open else "\U0001F4AC"
-    # Build the floating button INSIDE THE PARENT document (not this 0-height
-    # iframe), otherwise position:fixed is relative to an invisible iframe and
-    # the button never appears. Mirrors how the nav bar injects into parent.
     return """
+<style>
+#sae-chat-launch { position:fixed; right:22px; bottom:22px; width:56px; height:56px;
+  border-radius:50%; background:#CC0000; color:#fff; font-size:24px; border:none;
+  cursor:pointer; box-shadow:0 8px 22px rgba(204,0,0,0.4); z-index:1500000;
+  display:flex; align-items:center; justify-content:center; }
+#sae-chat-launch:hover { background:#B30000; }
+#sae-chat-hint { position:fixed; right:86px; bottom:34px; background:#0A0A0A; color:#fff;
+  font-family:Arial,sans-serif; font-size:12px; padding:6px 10px; border-radius:6px;
+  z-index:1500000; opacity:0.92; }
+</style>
+<button id="sae-chat-launch" title="Assistant">__LABEL__</button>
+<div id="sae-chat-hint">Ask the assistant</div>
 <script>
 (function(){
   var doc = window.parent.document;
-  function ensure(){
-    if(!doc.body){ return; }
-    var STYLE_ID = "sae-chat-style";
-    if(!doc.getElementById(STYLE_ID)){
-      var s = doc.createElement("style"); s.id = STYLE_ID;
-      s.textContent =
-        "#sae-chat-launch{position:fixed;right:22px;bottom:22px;width:56px;height:56px;"+
-        "border-radius:50%;background:#CC0000;color:#fff;font-size:24px;border:none;"+
-        "cursor:pointer;box-shadow:0 8px 22px rgba(204,0,0,0.4);z-index:1500000;"+
-        "display:flex;align-items:center;justify-content:center;}"+
-        "#sae-chat-launch:hover{background:#B30000;}";
-      doc.head.appendChild(s);
+  var btn = doc.getElementById("sae-chat-launch");
+  if(!btn) return;
+  if(btn.dataset.wired) return;
+  btn.dataset.wired = "1";
+  btn.addEventListener("click", function(){
+    // Click the hidden Streamlit toggle button named chat_toggle_signal.
+    var all = doc.querySelectorAll('button');
+    for(var i=0;i<all.length;i++){
+      if((all[i].textContent||'').trim().indexOf('chat_toggle_signal')===0){ all[i].click(); return; }
     }
-    var btn = doc.getElementById("sae-chat-launch");
-    if(!btn){
-      btn = doc.createElement("button");
-      btn.id = "sae-chat-launch";
-      btn.title = "Assistant";
-      doc.body.appendChild(btn);
-    }
-    btn.textContent = "__LABEL__";
-    if(!btn.dataset.wired){
-      btn.dataset.wired = "1";
-      btn.addEventListener("click", function(){
-        var all = doc.querySelectorAll('button');
-        for(var i=0;i<all.length;i++){
-          if((all[i].textContent||'').trim().indexOf('chat_toggle_signal')===0){ all[i].click(); return; }
-        }
-      });
-    }
-  }
-  ensure();
-  setTimeout(ensure, 200);
-  setTimeout(ensure, 800);
-  setInterval(ensure, 1500);
+  });
 })();
 </script>
 """.replace("__LABEL__", label)
@@ -107,15 +92,12 @@ def render_chat_panel(faq_path: str = _FAQ_PATH_DEFAULT) -> None:
     st.session_state.setdefault(_HISTORY_KEY, [])
     st.session_state.setdefault(_OPEN_KEY, False)
 
-    # Hidden toggle the launcher's JS clicks. Off-screen (not display:none) so it
-    # stays clickable. The nav-bar JS sweep also hides any button labelled
-    # 'chat_toggle_signal'; this is a belt-and-suspenders inline hide.
+    # Hidden toggle the launcher's JS clicks. Kept off-screen via CSS in app.
     if st.button("chat_toggle_signal", key="chat_toggle_signal"):
         st.session_state[_OPEN_KEY] = not st.session_state[_OPEN_KEY]
         st.rerun()
 
-    # height>=1 so the injected <script> reliably executes in the component iframe.
-    components_html(_launcher_html(st.session_state[_OPEN_KEY]), height=1)
+    components_html(_launcher_html(st.session_state[_OPEN_KEY]), height=0)
 
     if not st.session_state[_OPEN_KEY]:
         return
