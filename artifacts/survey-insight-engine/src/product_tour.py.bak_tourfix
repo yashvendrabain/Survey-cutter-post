@@ -79,7 +79,7 @@ TOUR_STEPS: list[dict[str, str]] = [
 ]
 
 
-def _tour_html(steps: list[dict[str, str]], force: bool = False) -> str:
+def _tour_html(steps: list[dict[str, str]]) -> str:
     steps_json = json.dumps(steps)
     return """
 <div id="sae-tour-root"></div>
@@ -140,20 +140,12 @@ def _tour_html(steps: list[dict[str, str]], force: bool = False) -> str:
     doc.getElementById("sae-tour-next").onclick=function(){ if(i<steps.length-1){i++;render();} else {done();} };
     doc.getElementById("sae-tour-skip").onclick=function(){ done(); };
   }
-  // FORCE path: button-triggered tours render immediately, ignoring the
-  // "seen" flag (and clearing it so future auto-opens behave normally).
-  if (__FORCE__) {
-    try { window.parent.sessionStorage.removeItem("sae_tour_seen"); } catch(e){}
-    setTimeout(render, 150);
-    setTimeout(render, 500);   // retry in case the DOM/iframe wasn't ready
-    return;
-  }
-  // Auto path: only start if not seen this session.
+  // Only auto-start if not seen this session.
   var seen=null; try { seen=window.parent.sessionStorage.getItem("sae_tour_seen"); } catch(e){}
   if(!seen){ setTimeout(render, 400); }
 })();
 </script>
-""".replace("__STEPS__", steps_json).replace("__FORCE__", "true" if force else "false")
+""".replace("__STEPS__", steps_json)
 
 
 def maybe_render_tour(force: bool = False) -> None:
@@ -167,16 +159,23 @@ def maybe_render_tour(force: bool = False) -> None:
     except Exception:
         return
 
-    forced = bool(force) or bool(st.session_state.get(_TOUR_FORCE_KEY))
-    if st.session_state.get(_TOUR_SEEN_KEY) and not forced:
+    if st.session_state.get(_TOUR_SEEN_KEY) and not force and not st.session_state.get(_TOUR_FORCE_KEY):
         return
     st.session_state[_TOUR_SEEN_KEY] = True
     st.session_state[_TOUR_FORCE_KEY] = False
-    # Forced tours need more height so the injected iframe definitely executes JS.
-    components_html(_tour_html(TOUR_STEPS, force=forced), height=(1 if forced else 0))
+    components_html(_tour_html(TOUR_STEPS), height=0)
 
 
 def restart_tour() -> None:
-    """Mark the tour to force-open on the next render (handled by maybe_render_tour)."""
+    """Call from a Help-menu button to replay the tour."""
     import streamlit as st
     st.session_state[_TOUR_FORCE_KEY] = True
+    # Clear the client-side seen flag so the script auto-starts again.
+    try:
+        from streamlit.components.v1 import html as components_html
+        components_html(
+            "<script>try{window.parent.sessionStorage.removeItem('sae_tour_seen');}catch(e){}</script>",
+            height=0,
+        )
+    except Exception:
+        pass
