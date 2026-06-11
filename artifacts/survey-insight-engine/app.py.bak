@@ -8520,14 +8520,16 @@ def _render_wizard_top_nav() -> None:
             bg = "#F2F3F5"; col = "#A8ADB3"; bd = "1.5px solid #E2E4E8"; mark = str(n)
         lab_color = "#CC0000" if n == step else "#999"
         lab_weight = "700" if n == step else "500"
+        lab = html.escape(labels[n - 1])
         return (
             "<div style='display:flex;flex-direction:column;align-items:center;flex:0 0 auto;'>"
             f"<div style='width:36px;height:36px;border-radius:50%;background:{bg};color:{col};"
             f"border:{bd};display:flex;align-items:center;justify-content:center;font-weight:700;"
             f"font-size:15px;box-shadow:0 2px 6px rgba(204,0,0,0.18);'>{mark}</div>"
             f"<div style='margin-top:6px;font-size:11px;font-weight:{lab_weight};color:{lab_color};"
-            f"font-family:Arial,sans-serif;white-space:nowrap;'>{label_html}</div>"
-        ).replace("{label_html}", html.escape(labels[n - 1]))
+            f"font-family:Arial,sans-serif;white-space:nowrap;'>{lab}</div>"
+            "</div>"
+        )
 
     def _conn(after_step: int) -> str:
         done = after_step < step
