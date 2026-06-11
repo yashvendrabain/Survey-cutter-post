@@ -711,6 +711,22 @@ def _section_header(
     )
 
 
+def _section_header_no_num(title: str, meta: str = "") -> None:
+    """Header in the same style as _section_header but with no number box.
+
+    Used for sub-steps like the output-structure config so it reads as the same
+    visual tier as '1. UPLOAD YOUR SURVEY' without repeating a step number.
+    """
+    app = _require_streamlit()
+    meta_html = f"<div class='section-meta'>{meta}</div>" if meta else ""
+    app.markdown(
+        f"<div class='section-header-box'>"
+        f"<div class='section-name'>{title}</div>"
+        f"{meta_html}</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def _compute_outlier_flags(values: list) -> list:
     """Return 'high' / 'low' / '' per value using a guarded z-score rule.
 
@@ -8167,6 +8183,20 @@ def _render_journey_rail() -> None:
         parts_banner = ""
     app.markdown("".join(parts) + parts_banner, unsafe_allow_html=True)
 
+    # Clickable navigation under the rail (native buttons -> reliable, no JS).
+    nav_targets = [
+        ("Upload", "upload"),
+        ("Configure", "upload"),
+        ("Run & review", "single"),
+        ("Download", "download"),
+    ]
+    jcols = app.columns(4)
+    for ci, (jlabel, jview) in enumerate(nav_targets):
+        with jcols[ci]:
+            if app.button(jlabel, key=f"journey_jump_{ci}", use_container_width=True):
+                _set_current_nav_view(jview)
+                app.rerun()
+
 
 def main() -> None:
     app = _require_streamlit()
@@ -8241,7 +8271,7 @@ def _render_output_structure_gate() -> bool:
         # sees where they are, even after picking.
         choice = app.session_state.get("wiz_output_structure")
         choice_label = "Grouped into categories" if choice == "grouped" else "One sheet (no categories)"
-        app.markdown("### Configure your Excel Output Structure")
+        _section_header_no_num("CONFIGURE YOUR EXCEL OUTPUT STRUCTURE")
         app.caption(f"Current choice: **{choice_label}**. You can revisit this anytime.")
         if app.button("Change output structure", key="wiz_change_structure"):
             app.session_state["wiz_output_structure"] = None
@@ -8249,7 +8279,7 @@ def _render_output_structure_gate() -> bool:
             _wizard_rerun(app)
         return True
 
-    app.markdown("### Configure your Excel Output Structure")
+    _section_header_no_num("CONFIGURE YOUR EXCEL OUTPUT STRUCTURE")
     app.caption(
         "This decides how the question sheets are laid out in the downloaded "
         "workbook. You can change everything later \u2014 this is just the starting point."
@@ -8448,19 +8478,21 @@ def _render_wizard_stepper() -> None:
     for index, label in enumerate(labels, start=1):
         if index < current:
             css_class = "wiz-step-complete"
-            marker = str(index)
         elif index == current:
             css_class = "wiz-step-active"
-            marker = str(index)
         else:
             css_class = "wiz-step-upcoming"
-            marker = str(index)
         weight = "700" if index == current else "400"
-        cols[index - 1].markdown(
-            f"<div class='wiz-step-circle {css_class}'>{marker}</div>"
-            f"<div class='wiz-step-label' style='font-weight:{weight}'>{html.escape(label)}</div>",
-            unsafe_allow_html=True,
-        )
+        with cols[index - 1]:
+            app.markdown(
+                f"<div class='wiz-step-circle {css_class}'>{index}</div>"
+                f"<div class='wiz-step-label' style='font-weight:{weight}'>{html.escape(label)}</div>",
+                unsafe_allow_html=True,
+            )
+            # Clickable: jump straight to this wizard step.
+            if app.button(f"Go to {label}", key=f"wizstep_jump_{index}", use_container_width=True):
+                app.session_state["wiz_step"] = index
+                _wizard_rerun(app)
 
 
 def _render_wizard_top_nav() -> None:
@@ -8694,10 +8726,7 @@ def _render_wizard_step_filters() -> None:
             "<div style='font-size:13px;color:#444;line-height:1.6;'>"
             "Local Filters appear as drop-downs at the top of each question's sheet "
             "in the Excel output, so a reader can slice that sheet on the fly. "
-            "Pick the questions you want available as slicers below.<br><br>"
-            "<b>Custom filter:</b> beyond the standard demographics, you can add a "
-            "<b>custom</b> slot where the reader picks <i>any</i> question of their "
-            "choice and a value to filter by.</div>",
+            "Pick the questions you want available as slicers below.</div>",
             unsafe_allow_html=True,
         )
     with _lf_right:
@@ -8712,42 +8741,18 @@ def _render_wizard_step_filters() -> None:
             "font-size:11px;color:#666;font-weight:600;'>"
             "<div style='width:130px;padding:5px 10px;border-right:1px solid #E4E4E4;'>Filter</div>"
             "<div style='flex:1;padding:5px 10px;'>Value</div></div>"
-            # standard filters
             "<div style='display:flex;border-bottom:1px solid #EEE;font-size:12px;'>"
             "<div style='width:130px;padding:7px 10px;border-right:1px solid #EEE;color:#333;'>Region</div>"
             "<div style='flex:1;padding:7px 10px;'>"
             "<span style='display:inline-flex;align-items:center;gap:8px;background:#fff;"
             "border:1px solid #217346;border-radius:4px;padding:2px 8px;color:#217346;font-weight:600;'>"
             "APAC <span>\u25BE</span></span></div></div>"
-            "<div style='display:flex;border-bottom:1px solid #EEE;font-size:12px;'>"
+            "<div style='display:flex;font-size:12px;'>"
             "<div style='width:130px;padding:7px 10px;border-right:1px solid #EEE;color:#333;'>Company size</div>"
             "<div style='flex:1;padding:7px 10px;'>"
             "<span style='display:inline-flex;align-items:center;gap:8px;background:#fff;"
             "border:1px solid #BBB;border-radius:4px;padding:2px 8px;color:#333;'>"
             "Enterprise <span style='color:#999;'>\u25BE</span></span></div></div>"
-            # CUSTOM filter row: question picker (open dropdown) + value
-            "<div style='display:flex;font-size:12px;background:#FFFCF2;position:relative;'>"
-            "<div style='width:130px;padding:7px 10px;border-right:1px solid #EEE;color:#9A7B00;font-weight:600;'>"
-            "Custom \u2014 pick a question</div>"
-            "<div style='flex:1;padding:7px 10px;'>"
-            "<span style='display:inline-flex;align-items:center;gap:8px;background:#fff;"
-            "border:1.5px solid #E0B400;border-radius:4px;padding:2px 8px;color:#9A7B00;font-weight:600;'>"
-            "Q3 <span style='color:#E0B400;'>\u25BE</span></span>"
-            # the open dropdown list of questions, with a faux cursor on the hovered one
-            "<div style='position:absolute;left:120px;top:30px;background:#fff;border:1px solid #D4D4D4;"
-            "border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,0.15);font-size:11px;z-index:5;min-width:90px;'>"
-            "<div style='padding:5px 12px;color:#333;'>Q1</div>"
-            "<div style='padding:5px 12px;color:#333;'>Q2</div>"
-            "<div style='padding:5px 12px;background:#FFF3C4;color:#9A7B00;font-weight:700;'>Q3  \u2316</div>"
-            "<div style='padding:5px 12px;color:#333;'>Q4</div></div>"
-            "</div></div>"
-            # custom value row
-            "<div style='display:flex;font-size:12px;background:#FFFCF2;border-top:1px solid #F0E4B0;'>"
-            "<div style='width:130px;padding:7px 10px;border-right:1px solid #EEE;color:#9A7B00;'>Custom value</div>"
-            "<div style='flex:1;padding:7px 10px;'>"
-            "<span style='display:inline-flex;align-items:center;gap:8px;background:#fff;"
-            "border:1px solid #E0B400;border-radius:4px;padding:2px 8px;color:#9A7B00;font-weight:600;'>"
-            "Option B <span style='color:#E0B400;'>\u25BE</span></span></div></div>"
             "</div>",
             unsafe_allow_html=True,
         )
@@ -8781,18 +8786,62 @@ def _render_wizard_step_filters() -> None:
     app.divider()
     from src.ui.wizard import normalise_custom_filter_count
 
-    app.markdown("### Custom workbook filters")
-    app.caption("Partners can set arbitrary filters across the whole workbook in addition to demographics.")
-    value = app.number_input(
-        "Custom workbook filters",
-        min_value=0,
-        max_value=5,
-        value=normalise_custom_filter_count(app.session_state.get("wizard_workbook_custom_filter_count", app.session_state.get("wiz_num_custom_filters"))),
-        step=1,
-        key="wizard_workbook_custom_filter_count",
-    )
-    app.session_state["wiz_num_custom_filters"] = int(value)
-    app.caption("Setting saved ? exporter wiring coming in the next iteration.")
+    _cf_left, _cf_right = app.columns([1, 1])
+    with _cf_left:
+        app.markdown("### Custom workbook filters")
+        app.markdown(
+            "<div style='font-size:13px;color:#444;line-height:1.6;'>"
+            "Beyond the standard demographics, add <b>custom</b> filter slots where the "
+            "reader picks <i>any</i> question of their choice and a value to filter by \u2014 "
+            "applied across the whole workbook.</div>",
+            unsafe_allow_html=True,
+        )
+        value = app.number_input(
+            "Custom workbook filters",
+            min_value=0,
+            max_value=5,
+            value=normalise_custom_filter_count(app.session_state.get("wizard_workbook_custom_filter_count", app.session_state.get("wiz_num_custom_filters"))),
+            step=1,
+            key="wizard_workbook_custom_filter_count",
+        )
+        app.session_state["wiz_num_custom_filters"] = int(value)
+    with _cf_right:
+        app.markdown(
+            "<div style='margin:4px 0 8px;font-family:Calibri,Arial,sans-serif;"
+            "border:1px solid #D4D4D4;border-radius:8px;overflow:hidden;"
+            "box-shadow:0 4px 14px rgba(0,0,0,0.08);'>"
+            "<div style='background:#217346;color:#fff;font-size:11px;font-weight:600;"
+            "padding:6px 12px;display:flex;align-items:center;gap:6px;'>"
+            "<span style='font-size:13px;'>\u25A6</span> Custom filter</div>"
+            "<div style='display:flex;background:#F3F3F3;border-bottom:1px solid #D4D4D4;"
+            "font-size:11px;color:#666;font-weight:600;'>"
+            "<div style='width:130px;padding:5px 10px;border-right:1px solid #E4E4E4;'>Filter</div>"
+            "<div style='flex:1;padding:5px 10px;'>Value</div></div>"
+            # pick-a-question row with open dropdown + cursor
+            "<div style='display:flex;font-size:12px;background:#FFFCF2;position:relative;'>"
+            "<div style='width:130px;padding:7px 10px;border-right:1px solid #EEE;color:#9A7B00;font-weight:600;'>"
+            "Pick a question</div>"
+            "<div style='flex:1;padding:7px 10px;'>"
+            "<span style='display:inline-flex;align-items:center;gap:8px;background:#fff;"
+            "border:1.5px solid #E0B400;border-radius:4px;padding:2px 8px;color:#9A7B00;font-weight:600;'>"
+            "Q3 <span style='color:#E0B400;'>\u25BE</span></span>"
+            "<div style='position:absolute;left:120px;top:30px;background:#fff;border:1px solid #D4D4D4;"
+            "border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,0.15);font-size:11px;z-index:5;min-width:90px;'>"
+            "<div style='padding:5px 12px;color:#333;'>Q1</div>"
+            "<div style='padding:5px 12px;color:#333;'>Q2</div>"
+            "<div style='padding:5px 12px;background:#FFF3C4;color:#9A7B00;font-weight:700;'>Q3  \u2316</div>"
+            "<div style='padding:5px 12px;color:#333;'>Q4</div></div>"
+            "</div></div>"
+            # value row
+            "<div style='display:flex;font-size:12px;background:#FFFCF2;border-top:1px solid #F0E4B0;'>"
+            "<div style='width:130px;padding:7px 10px;border-right:1px solid #EEE;color:#9A7B00;'>Value</div>"
+            "<div style='flex:1;padding:7px 10px;'>"
+            "<span style='display:inline-flex;align-items:center;gap:8px;background:#fff;"
+            "border:1px solid #E0B400;border-radius:4px;padding:2px 8px;color:#9A7B00;font-weight:600;'>"
+            "Option B <span style='color:#E0B400;'>\u25BE</span></span></div></div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
     app.divider()
     from src.ui.wizard import normalise_per_question_filter_count
