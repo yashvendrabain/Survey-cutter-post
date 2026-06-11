@@ -5401,19 +5401,12 @@ def _section_upload() -> None:
             ("clipboard", len(schema.questions), "Total questions"),
             ("chart",     len(results), "Single cuts"),
         ])
-        # Stepwise guidance: tell the user exactly what to do next.
-        app.markdown(
-            "<div style='margin:10px 0 4px;padding:12px 16px;background:#F7F8FA;"
-            "border:1px solid #E8EAED;border-radius:10px;font-family:Arial,sans-serif;'>"
-            "<span style='font-weight:700;color:#CC0000;font-size:13px;'>Next step \u2192</span> "
-            "<span style='font-size:13px;color:#333;'>Click any question in the "
-            "<b>left sidebar</b> to see its cut. Want to narrow the whole sample first "
-            "(e.g. one region)? Use <b>Apply global filter</b> in the top nav.</span></div>",
-            unsafe_allow_html=True,
-        )
-        if app.button("Apply global filter", key="goto_global_filter_from_counts"):
-            _set_current_nav_view("filters")
-            app.rerun()
+        # #3: directly below the counts, show the global filter as a SECTION
+        # (not a button), then the first question's single cut + cross-cut.
+        app.divider()
+        _section_global_filter()
+        app.divider()
+        _section_single_cuts()
 
 
 # ---------------------------------------------------------------------------
@@ -7779,75 +7772,6 @@ def _render_sidebar() -> None:
             gf_stats = app.session_state.get("global_filter_stats")
             results = app.session_state.get("results", [])
 
-            app.markdown("**Session**")
-
-            if lr is not None:
-                app.markdown(
-                    f"""
-                    <div style="font-size:10px;color:#666;font-family:Arial;
-                      line-height:1.9;background:#F8F8F8;padding:10px;
-                      border-left:3px solid #E0E0E0;margin-bottom:12px;">
-                      <b>File</b><br>{_html.escape(str(lr.raw_data_source))}<br>
-                      <b>Input type</b><br>
-                      {_html.escape(lr.scenario.replace('_', ' '))}<br>
-                      <b>Respondents</b><br>{lr.raw_rows:,}<br>
-                      <b>Questions</b><br>{lr.questions_parsed}
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-            gf_state = app.session_state.get("global_filter_state")
-            if (
-                gf_state is not None
-                and gf_state.is_active()
-                and gf_stats
-            ):
-                app.markdown(
-                    f"""
-                    <div style="background:#FFF5F5;border-left:3px solid #CC0000;
-                      padding:10px;font-size:10px;font-family:Arial;
-                      line-height:1.9;margin-bottom:12px;">
-                      <b style="color:#CC0000;">● Global Filter Active</b><br>
-                      {_html.escape(gf_state.description())}<br>
-                      <b>{gf_stats.get('rows_after', 0):,}</b>&nbsp;of&nbsp;
-                      {gf_stats.get('rows_before', 0):,}&nbsp;respondents
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-            else:
-                app.markdown(
-                    """
-                    <div style="font-size:10px;color:#888;font-family:Arial;
-                      padding:8px 0;margin-bottom:8px;">
-                      ○ No global filter · full dataset
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-            skips = app.session_state.get("skips", [])
-            errors = [s for s in skips if s.skip_reason == "calculation_error"]
-            log = app.session_state.get("log")
-            log_len = len(log) if log else 0
-            cc_results = app.session_state.get("cross_cut_results", [])
-            err_color = "#CC0000" if errors else "#2E7D32"
-            app.markdown(
-                f"""
-                <div style="font-size:10px;color:#666;font-family:Arial;
-                  line-height:2.0;border-top:1px solid #E0E0E0;
-                  padding-top:10px;margin-bottom:12px;">
-                  <b>Single cuts</b>&nbsp;{len(results)}<br>
-                  <b>Skipped</b>&nbsp;{len(skips)}<br>
-                  <b>Errors</b>&nbsp;
-                  <span style="color:{err_color};">{len(errors)}</span><br>
-                  <b>Cross cuts</b>&nbsp;{len(cc_results)}
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
             # ---- QUESTIONS (master-detail nav) ----------------------------
             app.markdown("**Questions**")
             selected_qid = app.session_state.get("selected_question_id")
@@ -7938,6 +7862,81 @@ def _render_sidebar() -> None:
                 unsafe_allow_html=True,
             )
 
+        # Session summary — pinned to the BOTTOM of the sidebar.
+        if app.session_state.get("run_complete"):
+            lr = app.session_state.get("load_report")
+            gf_stats = app.session_state.get("global_filter_stats")
+            results = app.session_state.get("results", [])
+            app.markdown("**Session**")
+
+            if lr is not None:
+                app.markdown(
+                    f"""
+                    <div style="font-size:10px;color:#666;font-family:Arial;
+                      line-height:1.9;background:#F8F8F8;padding:10px;
+                      border-left:3px solid #E0E0E0;margin-bottom:12px;">
+                      <b>File</b><br>{_html.escape(str(lr.raw_data_source))}<br>
+                      <b>Input type</b><br>
+                      {_html.escape(lr.scenario.replace('_', ' '))}<br>
+                      <b>Respondents</b><br>{lr.raw_rows:,}<br>
+                      <b>Questions</b><br>{lr.questions_parsed}
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+            gf_state = app.session_state.get("global_filter_state")
+            if (
+                gf_state is not None
+                and gf_state.is_active()
+                and gf_stats
+            ):
+                app.markdown(
+                    f"""
+                    <div style="background:#FFF5F5;border-left:3px solid #CC0000;
+                      padding:10px;font-size:10px;font-family:Arial;
+                      line-height:1.9;margin-bottom:12px;">
+                      <b style="color:#CC0000;">● Global Filter Active</b><br>
+                      {_html.escape(gf_state.description())}<br>
+                      <b>{gf_stats.get('rows_after', 0):,}</b>&nbsp;of&nbsp;
+                      {gf_stats.get('rows_before', 0):,}&nbsp;respondents
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            else:
+                app.markdown(
+                    """
+                    <div style="font-size:10px;color:#888;font-family:Arial;
+                      padding:8px 0;margin-bottom:8px;">
+                      ○ No global filter · full dataset
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+            skips = app.session_state.get("skips", [])
+            errors = [s for s in skips if s.skip_reason == "calculation_error"]
+            log = app.session_state.get("log")
+            log_len = len(log) if log else 0
+            cc_results = app.session_state.get("cross_cut_results", [])
+            err_color = "#CC0000" if errors else "#2E7D32"
+            app.markdown(
+                f"""
+                <div style="font-size:10px;color:#666;font-family:Arial;
+                  line-height:2.0;border-top:1px solid #E0E0E0;
+                  padding-top:10px;margin-bottom:12px;">
+                  <b>Single cuts</b>&nbsp;{len(results)}<br>
+                  <b>Skipped</b>&nbsp;{len(skips)}<br>
+                  <b>Errors</b>&nbsp;
+                  <span style="color:{err_color};">{len(errors)}</span><br>
+                  <b>Cross cuts</b>&nbsp;{len(cc_results)}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+
         app.markdown("---")
         with app.expander("Help", expanded=False):
             app.markdown(
@@ -8016,7 +8015,7 @@ def _render_nav_bar() -> None:
             '</div>'
         )
         + _tab("outcome", "Outcome Segmentation", str(n_diffs) if n_diffs else None, None)
-        + _tab("download", "Download workbook", None, None)
+        + (_tab("download", "Download workbook", None, None) if app.session_state.get("run_complete") else "")
         + _tab("filters", "Apply global filter", str(n_filters) if n_filters else None, None)
     )
 
@@ -8256,9 +8255,8 @@ def main() -> None:
         _section_upload()
 
     # Persistent FULL download panel — pinned as a footer at the bottom of EVERY
-    # page (except the dedicated Download view, which already shows it inline).
-    # Always open (not a dropdown), visually set off as a footer.
-    if view != "download":
+    # page, but ONLY after an analysis has run (no download step before that).
+    if view != "download" and app.session_state.get("run_complete"):
         app.markdown(
             "<div style='margin-top:32px;border-top:2px solid #CC0000;padding-top:6px;'>"
             "<div style='font-size:12px;font-weight:700;letter-spacing:0.08em;"
@@ -8541,11 +8539,23 @@ def _render_wizard_top_nav() -> None:
         _wizard_rerun(app)
     with mid_col:
         labels = ["Categories", "Filter counts", "Cross-cut"]
-        # Compact, clickable step circles. Scoped CSS keeps them small.
+        # Sub-step circles styled like the top journey dots, but smaller + subtler.
         app.markdown(
-            "<style>.wiztop-row div[data-testid='column'] .stButton button{"
-            "width:34px;height:34px;border-radius:50%;font-size:14px;font-weight:700;"
-            "padding:0;margin:0 auto;}</style><div class='wiztop-row'></div>",
+            "<style>"
+            ".wiztop-row + div div[data-testid='column'] .stButton button{"
+            "width:32px !important;height:32px !important;min-height:32px !important;"
+            "border-radius:50% !important;font-size:13px !important;font-weight:700 !important;"
+            "padding:0 !important;margin:0 auto !important;display:flex !important;"
+            "align-items:center !important;justify-content:center !important;}"
+            # active (primary) = filled red gradient like journey 'done/active' dot
+            ".wiztop-row + div div[data-testid='column'] .stButton button[kind='primary']{"
+            "background:linear-gradient(180deg,#E00000,#CC0000) !important;color:#fff !important;"
+            "border:none !important;box-shadow:0 2px 6px rgba(204,0,0,0.3) !important;}"
+            # inactive (secondary) = light ring, muted
+            ".wiztop-row + div div[data-testid='column'] .stButton button[kind='secondary']{"
+            "background:#F2F3F5 !important;color:#A8ADB3 !important;border:1.5px solid #E2E4E8 !important;"
+            "box-shadow:none !important;}"
+            "</style><div class='wiztop-row'></div>",
             unsafe_allow_html=True,
         )
         c1, c2, c3 = app.columns(3)
@@ -8561,7 +8571,7 @@ def _render_wizard_top_nav() -> None:
                 color = "#CC0000" if idx == step else "#999"
                 app.markdown(
                     f"<div style='text-align:center;font-size:11px;font-weight:{weight};"
-                    f"color:{color};font-family:Arial,sans-serif;margin-top:1px;'>{label}</div>",
+                    f"color:{color};font-family:Arial,sans-serif;margin-top:2px;'>{label}</div>",
                     unsafe_allow_html=True,
                 )
     if step < 3:
