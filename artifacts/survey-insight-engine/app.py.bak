@@ -5455,7 +5455,7 @@ def _clear_global_filter_action() -> None:
 def _section_global_filter() -> None:
     app = _require_streamlit()
     app.markdown('<div id="section-filter"></div>', unsafe_allow_html=True)
-    _section_header("2", "Apply filters", anchor="section-filter", meta="Across all cuts")
+    _section_header("3", "Apply filters", anchor="section-filter", meta="Across all cuts")
 
     if not app.session_state["run_complete"]:
         app.caption("Available after you run the analysis.")
@@ -6739,7 +6739,7 @@ def _section_single_cuts() -> None:
 
     app = _require_streamlit()
     app.markdown('<div id="section-singlecuts"></div>', unsafe_allow_html=True)
-    _section_header("2", "Single cut", anchor="section-singlecuts", meta="Create Cuts")
+    _section_header("3", "Single cut", anchor="section-singlecuts", meta="Create Cuts")
     _red_instruction_box(
         "Step 3 \u2014 Run &amp; review",
         "Pick a question from the sidebar to see how people answered. "
@@ -6966,11 +6966,6 @@ def _section_downloads() -> None:
     app = _require_streamlit()
     app.markdown('<div id="section-downloads"></div>', unsafe_allow_html=True)
     _section_header("4", "Download workbook", anchor="section-downloads", meta="Workbooks")
-    _red_instruction_box(
-        "Step 4 \u2014 Download",
-        "Generate and download your workbook. Open it in Excel desktop so the "
-        "live filters work.",
-    )
 
     if not app.session_state["run_complete"]:
         app.info("Run an analysis to generate downloadable workbooks.")
@@ -7718,22 +7713,7 @@ def _render_sidebar() -> None:
             unsafe_allow_html=True,
         )
 
-        # Small, unobtrusive "Take the tour" button (red, icon, no emoji).
-        app.markdown(
-            "<style>div[data-testid='stSidebar'] .stButton button[kind] "
-            "{background:#CC0000;color:#fff;border:none;font-size:12px;font-weight:600;"
-            "padding:5px 10px;border-radius:7px;}"
-            "div[data-testid='stSidebar'] .stButton button[kind]:hover{background:#B30000;}</style>",
-            unsafe_allow_html=True,
-        )
-        _tour_label = (
-            "\u25B6  Take the tour"  # triangle 'play' icon, no emoji
-        )
-        if app.button(_tour_label, key="take_tour_btn_sidebar"):
-            restart_tour()
-            app.rerun()
-
-        # Chatbot toggle + panel live in the sidebar, right below the tour button.
+        # Survey assistant lives in the sidebar, just below the tool name.
         render_chat_panel()
 
         if not app.session_state.get("run_complete"):
@@ -7820,7 +7800,9 @@ def _render_sidebar() -> None:
                     app.session_state["selected_question_id"] = (
                         result.question_id
                     )
-                    _set_current_nav_view("single")
+                    # Stay on the main post-run view so the global filter stays
+                    # visible above the question's single cut.
+                    _set_current_nav_view("upload")
                     app.rerun()
             if needle and shown == 0:
                 app.caption(f"No questions match '{needle}'.")
@@ -8257,12 +8239,6 @@ def main() -> None:
     # Persistent FULL download panel — pinned as a footer at the bottom of EVERY
     # page, but ONLY after an analysis has run (no download step before that).
     if view != "download" and app.session_state.get("run_complete"):
-        app.markdown(
-            "<div style='margin-top:32px;border-top:2px solid #CC0000;padding-top:6px;'>"
-            "<div style='font-size:12px;font-weight:700;letter-spacing:0.08em;"
-            "text-transform:uppercase;color:#CC0000;'>Download workbooks</div></div>",
-            unsafe_allow_html=True,
-        )
         _section_downloads()
 
 
@@ -8527,8 +8503,8 @@ def _render_wizard_stepper() -> None:
 
 
 def _render_wizard_top_nav() -> None:
-    """Compact chevron nav with the 3 step circles (Categories / Filters /
-    Cross-cuts) in the middle, between the ‹ › arrows."""
+    """Compact chevron nav with the 3 step circles (Categories / Filter counts /
+    Cross-cut) centered neatly between the ‹ › arrows."""
     app = _require_streamlit()
     step = int(app.session_state.get("wiz_step", 1))
     back_col, mid_col, next_col = app.columns([1, 12, 1])
@@ -8539,27 +8515,39 @@ def _render_wizard_top_nav() -> None:
         _wizard_rerun(app)
     with mid_col:
         labels = ["Categories", "Filter counts", "Cross-cut"]
-        # Sub-step circles styled like the top journey dots, but smaller + subtler.
+        # Circle styling — tight, centered, connected by a hairline; each circle
+        # sits directly above its label so it reads as a clean stepper.
         app.markdown(
             "<style>"
+            ".wiztop-row + div [data-testid='stHorizontalBlock']{"
+            "max-width:520px;margin:0 auto;gap:0 !important;align-items:start;}"
             ".wiztop-row + div div[data-testid='column'] .stButton button{"
-            "width:32px !important;height:32px !important;min-height:32px !important;"
+            "width:34px !important;height:34px !important;min-height:34px !important;"
             "border-radius:50% !important;font-size:13px !important;font-weight:700 !important;"
             "padding:0 !important;margin:0 auto !important;display:flex !important;"
             "align-items:center !important;justify-content:center !important;}"
-            # active (primary) = filled red gradient like journey 'done/active' dot
             ".wiztop-row + div div[data-testid='column'] .stButton button[kind='primary']{"
             "background:linear-gradient(180deg,#E00000,#CC0000) !important;color:#fff !important;"
             "border:none !important;box-shadow:0 2px 6px rgba(204,0,0,0.3) !important;}"
-            # inactive (secondary) = light ring, muted
             ".wiztop-row + div div[data-testid='column'] .stButton button[kind='secondary']{"
             "background:#F2F3F5 !important;color:#A8ADB3 !important;border:1.5px solid #E2E4E8 !important;"
             "box-shadow:none !important;}"
             "</style><div class='wiztop-row'></div>",
             unsafe_allow_html=True,
         )
-        c1, c2, c3 = app.columns(3)
-        for idx, (col, label) in enumerate(zip([c1, c2, c3], labels), start=1):
+        # circle | connector | circle | connector | circle
+        cc = app.columns([2, 1, 2, 1, 2])
+        circle_cols = [cc[0], cc[2], cc[4]]
+        line_cols = [cc[1], cc[3]]
+        for li, lc in enumerate(line_cols):
+            done = (li + 1) < step
+            lc.markdown(
+                f"<div style='height:34px;display:flex;align-items:center;'>"
+                f"<div style='height:2px;width:100%;background:"
+                f"{'#CC0000' if done else '#E2E4E8'};'></div></div>",
+                unsafe_allow_html=True,
+            )
+        for idx, (col, label) in enumerate(zip(circle_cols, labels), start=1):
             with col:
                 if app.button(
                     str(idx), key=f"wiztop_circle_{idx}",
@@ -8567,11 +8555,11 @@ def _render_wizard_top_nav() -> None:
                 ):
                     app.session_state["wiz_step"] = idx
                     _wizard_rerun(app)
-                weight = "700" if idx == step else "400"
+                weight = "700" if idx == step else "500"
                 color = "#CC0000" if idx == step else "#999"
                 app.markdown(
                     f"<div style='text-align:center;font-size:11px;font-weight:{weight};"
-                    f"color:{color};font-family:Arial,sans-serif;margin-top:2px;'>{label}</div>",
+                    f"color:{color};font-family:Arial,sans-serif;margin-top:4px;white-space:nowrap;'>{label}</div>",
                     unsafe_allow_html=True,
                 )
     if step < 3:
