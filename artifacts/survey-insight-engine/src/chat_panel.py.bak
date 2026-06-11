@@ -78,13 +78,52 @@ def render_chat_panel(faq_path: str = _FAQ_PATH_DEFAULT) -> None:
     if not st.session_state[_OPEN_KEY]:
         return
 
+    # Chat-card styling: make the native container read as a real chat widget —
+    # rounded, shadowed, fixed-ish width, gradient header, bubble-style messages.
+    st.markdown(
+        """
+        <style>
+        #sae-chat-card-anchor + div[data-testid="stVerticalBlockBorderWrapper"]{
+          max-width:440px; border:1px solid #E3E3E8 !important; border-radius:18px !important;
+          box-shadow:0 18px 50px rgba(0,0,0,0.18) !important; overflow:hidden !important;
+          background:#fff !important; padding:0 !important;
+        }
+        #sae-chat-card-anchor + div[data-testid="stVerticalBlockBorderWrapper"] > div{
+          padding:0 16px 12px !important;
+        }
+        .sae-chat-head{
+          margin:0 -16px 8px; padding:16px 18px 14px;
+          background:linear-gradient(135deg,#CC0000,#8E0000); color:#fff;
+          display:flex; align-items:center; gap:12px;
+        }
+        .sae-chat-head .av{
+          width:40px;height:40px;border-radius:50%;background:#fff;color:#CC0000;
+          display:flex;align-items:center;justify-content:center;font-weight:800;font-size:20px;
+        }
+        .sae-chat-head .t1{font-size:17px;font-weight:700;line-height:1.1;}
+        .sae-chat-head .t2{font-size:12px;opacity:0.9;margin-top:2px;}
+        /* tab pills */
+        #sae-chat-card-anchor + div [data-testid="stTabs"] [data-baseweb="tab-list"]{
+          gap:6px; background:#F6F6F8; padding:5px; border-radius:10px;
+        }
+        #sae-chat-card-anchor + div [data-testid="stTabs"] [data-baseweb="tab"]{
+          border-radius:8px; font-size:12px; font-weight:600; padding:6px 10px;
+        }
+        #sae-chat-card-anchor + div [data-testid="stTabs"] [aria-selected="true"]{
+          background:#CC0000; color:#fff;
+        }
+        </style>
+        <div id="sae-chat-card-anchor"></div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     with st.container(border=True):
         st.markdown(
-            "<div style='display:flex;align-items:center;gap:10px;padding-bottom:6px;'>"
-            "<div style='width:34px;height:34px;border-radius:50%;background:#CC0000;color:#fff;"
-            "display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px;'>a</div>"
-            "<div><div style='font-size:16px;font-weight:700;color:#0A0A0A;'>Survey Assistant</div>"
-            "<div style='font-size:12px;color:#888;'>How can we help you today?</div></div></div>",
+            "<div class='sae-chat-head'>"
+            "<div class='av'>a</div>"
+            "<div><div class='t1'>Survey Assistant</div>"
+            "<div class='t2'>How can we help you today?</div></div></div>",
             unsafe_allow_html=True,
         )
 

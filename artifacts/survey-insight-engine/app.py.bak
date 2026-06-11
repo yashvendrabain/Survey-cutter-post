@@ -459,8 +459,8 @@ _UI_V2_CSS = """
 .journey-line.done { background:linear-gradient(90deg,#CC0000,#E00000) !important; }
 /* Bigger, more visible variant for the 4-step guide */
 .journey-big { padding:18px 22px !important; }
-.journey-big .journey-dot { width:56px !important; height:56px !important; font-size:26px !important; }
-.journey-big .journey-title { font-size:22px !important; }
+.journey-big .journey-dot { width:46px !important; height:46px !important; font-size:20px !important; }
+.journey-big .journey-title { font-size:15px !important; }
 .journey-big .journey-sub { font-size:12px !important; }
 .journey-big .journey-step.active .journey-title { color:#CC0000 !important; }
 .journey-next { margin:-12px 0 20px !important; padding:10px 18px !important; background:#FFF6F6 !important; border:1px solid #F6D5D5 !important; border-left:4px solid #CC0000 !important; border-radius:8px !important; font-family:Arial,sans-serif !important; font-size:13px !important; font-weight:600 !important; color:#9A1B1B !important; }
@@ -5220,7 +5220,7 @@ def _wizard_identify_separate_uploads(uploaded_files: list[Any], cfg: Any) -> tu
 def _section_upload() -> None:
     app = _require_streamlit()
     app.markdown('<div id="section-upload"></div>', unsafe_allow_html=True)
-    _section_header("1", SECTION_UPLOAD, anchor="section-1", meta="CSV \u00b7 XLSX \u00b7 DOCX")
+    _section_header("1", "UPLOAD YOUR SURVEY", anchor="section-1", meta="CSV \u00b7 XLSX \u00b7 DOCX")
     app.markdown(
         "<div style='padding:14px 18px;background:#FFF6F6;border:1px solid #F6D5D5;"
         "border-left:4px solid #CC0000;border-radius:10px;margin-bottom:14px;"
@@ -8264,7 +8264,7 @@ def _render_output_structure_gate() -> bool:
         # sees where they are, even after picking.
         choice = app.session_state.get("wiz_output_structure")
         choice_label = "Grouped into categories" if choice == "grouped" else "One sheet (no categories)"
-        _section_header_no_num("CONFIGURE YOUR EXCEL OUTPUT STRUCTURE")
+        _section_header("2", "CONFIGURE YOUR EXCEL OUTPUT STRUCTURE")
         app.caption(f"Current choice: **{choice_label}**. You can revisit this anytime.")
         if app.button("Change output structure", key="wiz_change_structure"):
             app.session_state["wiz_output_structure"] = None
@@ -8272,7 +8272,7 @@ def _render_output_structure_gate() -> bool:
             _wizard_rerun(app)
         return True
 
-    _section_header_no_num("CONFIGURE YOUR EXCEL OUTPUT STRUCTURE")
+    _section_header("2", "CONFIGURE YOUR EXCEL OUTPUT STRUCTURE")
     app.caption(
         "This decides how the question sheets are laid out in the downloaded "
         "workbook. You can change everything later \u2014 this is just the starting point."
