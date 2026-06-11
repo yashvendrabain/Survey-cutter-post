@@ -211,7 +211,7 @@ header[data-testid="stHeader"] {
   font-family: Arial, Helvetica, sans-serif;
 }
 .section-name {
-  font-size: 14px; font-weight: 700; text-transform: uppercase;
+  font-size: 28px; font-weight: 700; text-transform: uppercase;
   letter-spacing: 0.08em; color: #0A0A0A;
 }
 .section-meta {
@@ -413,8 +413,8 @@ _POLISH_CSS_6D = """
 .main [data-testid="stInfo"] { background:#F7F9FB !important; border:1px solid #E3E8EE !important; border-left:4px solid #CC0000 !important; color:#2B2F33 !important; }
 
 .main .section-header-box { border-bottom:1px solid #ECECEC !important; padding:8px 0 12px !important; margin-bottom:18px !important; }
-.main .section-num { border-radius:8px !important; width:28px !important; height:28px !important; box-shadow:0 1px 2px rgba(204,0,0,0.25) !important; }
-.main .section-name { font-size:13px !important; letter-spacing:0.06em !important; }
+.main .section-num { border-radius:8px !important; width:40px !important; height:40px !important; font-size:20px !important; box-shadow:0 1px 2px rgba(204,0,0,0.25) !important; }
+.main .section-name { font-size:28px !important; letter-spacing:0.06em !important; }
 
 .main [data-testid="stFileUploader"] { border:1.5px dashed #D8B0B0 !important; border-radius:10px !important; background:#FAFAFA !important; }
 .main [data-testid="stFileUploader"]:hover { border-color:#CC0000 !important; background:#FFF8F8 !important; }
@@ -707,6 +707,19 @@ def _section_header(
         f"<div class='section-num'>{num}</div>"
         f"<div class='section-name'>{title}</div>"
         f"{meta_html}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _red_instruction_box(title: str, body: str) -> None:
+    """Short red-bordered instruction box (matches the upload step's box)."""
+    app = _require_streamlit()
+    app.markdown(
+        "<div style='padding:12px 16px;background:#FFF6F6;border:1px solid #F6D5D5;"
+        "border-left:4px solid #CC0000;border-radius:10px;margin:2px 0 16px;"
+        "font-family:Arial,sans-serif;'>"
+        f"<div style='font-weight:700;font-size:13px;color:#1A1A1A;margin-bottom:3px;'>{title}</div>"
+        f"<div style='font-size:12.5px;color:#444;line-height:1.5;'>{body}</div></div>",
         unsafe_allow_html=True,
     )
 
@@ -6734,6 +6747,11 @@ def _section_single_cuts() -> None:
     app = _require_streamlit()
     app.markdown('<div id="section-singlecuts"></div>', unsafe_allow_html=True)
     _section_header("2", "Single cut", anchor="section-singlecuts", meta="Create Cuts")
+    _red_instruction_box(
+        "Step 3 \u2014 Run &amp; review",
+        "Pick a question from the sidebar to see how people answered. "
+        "Standout values are highlighted automatically.",
+    )
 
     if not app.session_state["run_complete"]:
         app.info(EMPTY_NO_RESULTS)
@@ -6955,6 +6973,11 @@ def _section_downloads() -> None:
     app = _require_streamlit()
     app.markdown('<div id="section-downloads"></div>', unsafe_allow_html=True)
     _section_header("4", "Download workbook", anchor="section-downloads", meta="Workbooks")
+    _red_instruction_box(
+        "Step 4 \u2014 Download",
+        "Generate and download your workbook. Open it in Excel desktop so the "
+        "live filters work.",
+    )
 
     if not app.session_state["run_complete"]:
         app.info("Run an analysis to generate downloadable workbooks.")
@@ -7717,7 +7740,10 @@ def _render_sidebar() -> None:
             restart_tour()
             app.rerun()
 
+        # Chatbot toggle + panel live in the sidebar, right below the tour button.
+        render_chat_panel()
 
+        if not app.session_state.get("run_complete"):
             app.markdown(
                 f"""
                 <div class="gs-wrap">
@@ -8241,8 +8267,6 @@ def main() -> None:
         )
         _section_downloads()
 
-    render_chat_panel()
-
 
 # ---------------------------------------------------------------------------
 # Setup wizard
@@ -8265,6 +8289,11 @@ def _render_output_structure_gate() -> bool:
         choice = app.session_state.get("wiz_output_structure")
         choice_label = "Grouped into categories" if choice == "grouped" else "One sheet (no categories)"
         _section_header("2", "CONFIGURE YOUR EXCEL OUTPUT STRUCTURE")
+        _red_instruction_box(
+            "Step 2 \u2014 Configure your output",
+            "Choose how the workbook is organised, then set filters and cross-cuts. "
+            "Defaults are fine if you're unsure.",
+        )
         app.caption(f"Current choice: **{choice_label}**. You can revisit this anytime.")
         if app.button("Change output structure", key="wiz_change_structure"):
             app.session_state["wiz_output_structure"] = None
@@ -8273,9 +8302,10 @@ def _render_output_structure_gate() -> bool:
         return True
 
     _section_header("2", "CONFIGURE YOUR EXCEL OUTPUT STRUCTURE")
-    app.caption(
-        "This decides how the question sheets are laid out in the downloaded "
-        "workbook. You can change everything later \u2014 this is just the starting point."
+    _red_instruction_box(
+        "Step 2 \u2014 Configure your output",
+        "Choose how the workbook is organised, then set filters and cross-cuts. "
+        "Defaults are fine if you're unsure.",
     )
 
     col_a, col_b = app.columns(2)
@@ -8371,7 +8401,6 @@ def _render_setup_wizard(uploaded_files: list[Any]) -> None:
 
     app.markdown("<div class='wiz-shell'>", unsafe_allow_html=True)
     _render_wizard_top_nav()
-    _render_wizard_stepper()
     step = int(app.session_state.get("wiz_step", 1))
     if step == 1:
         _render_wizard_step_categories()
@@ -8500,17 +8529,41 @@ def _render_wizard_stepper() -> None:
 
 
 def _render_wizard_top_nav() -> None:
-    """Compact chevron-only top nav. Mirrors the bottom Back/Next buttons but
-    sits at the very top of the wizard so the user can advance/retreat without
-    scrolling. Uses thin single-guillemet glyphs for a minimalistic feel."""
+    """Compact chevron nav with the 3 step circles (Categories / Filters /
+    Cross-cuts) in the middle, between the ‹ › arrows."""
     app = _require_streamlit()
     step = int(app.session_state.get("wiz_step", 1))
-    back_col, _spacer, next_col = app.columns([1, 12, 1])
+    back_col, mid_col, next_col = app.columns([1, 12, 1])
     if back_col.button(
         "\u2039", disabled=(step <= 1), key="wiz_back_top", help="Back",
     ):
         app.session_state["wiz_step"] = max(1, step - 1)
         _wizard_rerun(app)
+    with mid_col:
+        labels = ["Categories", "Filter counts", "Cross-cut"]
+        # Compact, clickable step circles. Scoped CSS keeps them small.
+        app.markdown(
+            "<style>.wiztop-row div[data-testid='column'] .stButton button{"
+            "width:34px;height:34px;border-radius:50%;font-size:14px;font-weight:700;"
+            "padding:0;margin:0 auto;}</style><div class='wiztop-row'></div>",
+            unsafe_allow_html=True,
+        )
+        c1, c2, c3 = app.columns(3)
+        for idx, (col, label) in enumerate(zip([c1, c2, c3], labels), start=1):
+            with col:
+                if app.button(
+                    str(idx), key=f"wiztop_circle_{idx}",
+                    type=("primary" if idx == step else "secondary"),
+                ):
+                    app.session_state["wiz_step"] = idx
+                    _wizard_rerun(app)
+                weight = "700" if idx == step else "400"
+                color = "#CC0000" if idx == step else "#999"
+                app.markdown(
+                    f"<div style='text-align:center;font-size:11px;font-weight:{weight};"
+                    f"color:{color};font-family:Arial,sans-serif;margin-top:1px;'>{label}</div>",
+                    unsafe_allow_html=True,
+                )
     if step < 3:
         if next_col.button(
             "\u203A", type="primary", key="wiz_next_top", help="Next",

@@ -62,16 +62,28 @@ def render_chat_panel(faq_path: str = _FAQ_PATH_DEFAULT) -> None:
     st.session_state.setdefault(_OPEN_KEY, False)
     st.session_state.setdefault("chat_mode", "tool")
 
-    # Native open/close toggle (red, no injected launcher).
+    # Native open/close toggle: red, with an SVG chat icon (no emoji). Scoped so
+    # it works wherever the panel is rendered (we put it in the sidebar).
+    _chat_icon_svg = (
+        "data:image/svg+xml;utf8,"
+        "<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' "
+        "fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'>"
+        "<path d='M21 11.5a8.38 8.38 0 0 1-8.5 8.5 8.5 8.5 0 0 1-3.6-.8L3 21l1.9-5.4A8.38 8.38 0 0 1 4 "
+        "11.5 8.5 8.5 0 0 1 12.5 3 8.38 8.38 0 0 1 21 11.5z'/></svg>"
+    )
     st.markdown(
         "<style>#sae-chat-toggle-anchor + div .stButton button{"
-        "background:#CC0000;color:#fff;border:none;font-weight:700;border-radius:10px;}"
-        "#sae-chat-toggle-anchor + div .stButton button:hover{background:#B30000;}</style>"
+        "background:#CC0000 !important;color:#fff !important;border:none !important;"
+        "font-weight:700 !important;border-radius:10px !important;}"
+        "#sae-chat-toggle-anchor + div .stButton button:hover{background:#B30000 !important;}"
+        "#sae-chat-toggle-anchor + div .stButton button::before{content:'';display:inline-block;"
+        f"width:16px;height:16px;margin-right:7px;vertical-align:-2px;background:url(\"{_chat_icon_svg}\") no-repeat center/contain;}}"
+        "</style>"
         "<div id='sae-chat-toggle-anchor'></div>",
         unsafe_allow_html=True,
     )
-    label = "\u2715  Close assistant" if st.session_state[_OPEN_KEY] else "\U0001F4AC  Have a question? Ask away"
-    if st.button(label, key="chat_open_toggle"):
+    label = "Close assistant" if st.session_state[_OPEN_KEY] else "Have a question? Ask away"
+    if st.button(label, key="chat_open_toggle", use_container_width=True):
         st.session_state[_OPEN_KEY] = not st.session_state[_OPEN_KEY]
         st.rerun()
 
