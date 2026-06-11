@@ -8267,13 +8267,6 @@ def _render_output_structure_gate() -> bool:
     "Demographics" sheet is still added when demographic questions exist).
     """
     app = _require_streamlit()
-    # Default to one-sheet on first entry (user can switch via "Change output
-    # structure"). This makes "Keep All Questions on One Sheet" the default.
-    if app.session_state.get("wiz_output_structure") is None and \
-            not app.session_state.get("wiz_structure_user_touched"):
-        app.session_state["wiz_output_structure"] = "one_sheet"
-        app.session_state["wiz_category_assignments"] = None
-        app.session_state["wiz_skip_categories"] = True
     if app.session_state.get("wiz_output_structure"):
         # Keep the heading visible (with the current choice) so the user always
         # sees where they are, even after picking.
@@ -8305,8 +8298,37 @@ def _render_output_structure_gate() -> bool:
         app.markdown(
             "<div style='border:1px solid #E0E0E0;border-top:4px solid #CC0000;"
             "border-radius:10px;padding:14px 16px;min-height:230px;'>"
+            "<div style='display:flex;align-items:center;gap:8px;margin-bottom:6px;'>"
+            "<span style='font-weight:700;font-size:14px;'>Keep all questions on one sheet</span>"
+            "<span style='background:#CC0000;color:#fff;font-size:10px;font-weight:700;"
+            "padding:2px 7px;border-radius:10px;letter-spacing:0.03em;'>DEFAULT</span></div>"
+            "<div style='font-size:12px;color:#444;line-height:1.5;'>"
+            "All questions go onto a single <b>All Questions</b> sheet in the order they "
+            "appear \u2014 simplest layout. (A separate <b>Demographics</b> sheet is still "
+            "added if your survey has demographic questions.)"
+            "</div>"
+            "<div style='margin-top:12px;font-size:11px;color:#888;'>Excel tabs look like:</div>"
+            "<div style='margin-top:4px;'>"
+            "<span style='background:#CC0000;color:#fff;font-size:11px;padding:3px 9px;"
+            "border-radius:4px 4px 0 0;margin-right:2px;'>All Questions</span>"
+            "<span style='background:#F0F0F0;color:#333;font-size:11px;padding:3px 9px;"
+            "border-radius:4px 4px 0 0;'>Demographics</span>"
+            "</div></div>",
+            unsafe_allow_html=True,
+        )
+        if app.button("Keep All Questions on One Sheet", key="wiz_struct_one",
+                      type="primary", use_container_width=True):
+            app.session_state["wiz_output_structure"] = "one_sheet"
+            # One-sheet path: skip topic categorisation entirely.
+            app.session_state["wiz_category_assignments"] = None
+            app.session_state["wiz_skip_categories"] = True
+            _wizard_rerun(app)
+    with col_b:
+        app.markdown(
+            "<div style='border:1px solid #E0E0E0;border-top:4px solid #888;"
+            "border-radius:10px;padding:14px 16px;min-height:230px;'>"
             "<div style='font-weight:700;font-size:14px;margin-bottom:6px;'>"
-            "Grouped into categories</div>"
+            "Group into categories</div>"
             "<div style='font-size:12px;color:#444;line-height:1.5;'>"
             "Questions are sorted into themed sheets \u2014 e.g. <b>Pricing</b>, "
             "<b>Brand</b>, <b>Loyalty</b> \u2014 so a reader jumps straight to a topic. "
@@ -8325,32 +8347,6 @@ def _render_output_structure_gate() -> bool:
         )
         if app.button("Use categories", key="wiz_struct_grouped", use_container_width=True):
             app.session_state["wiz_output_structure"] = "grouped"
-            _wizard_rerun(app)
-    with col_b:
-        app.markdown(
-            "<div style='border:1px solid #E0E0E0;border-top:4px solid #888;"
-            "border-radius:10px;padding:14px 16px;min-height:230px;'>"
-            "<div style='font-weight:700;font-size:14px;margin-bottom:6px;'>"
-            "One sheet (no categories)</div>"
-            "<div style='font-size:12px;color:#444;line-height:1.5;'>"
-            "All questions go onto a single <b>All Questions</b> sheet in the order they "
-            "appear \u2014 simplest layout. (A separate <b>Demographics</b> sheet is still "
-            "added if your survey has demographic questions.)"
-            "</div>"
-            "<div style='margin-top:12px;font-size:11px;color:#888;'>Excel tabs look like:</div>"
-            "<div style='margin-top:4px;'>"
-            "<span style='background:#888;color:#fff;font-size:11px;padding:3px 9px;"
-            "border-radius:4px 4px 0 0;margin-right:2px;'>All Questions</span>"
-            "<span style='background:#F0F0F0;color:#333;font-size:11px;padding:3px 9px;"
-            "border-radius:4px 4px 0 0;'>Demographics</span>"
-            "</div></div>",
-            unsafe_allow_html=True,
-        )
-        if app.button("Keep All Questions on One Sheet", key="wiz_struct_one", use_container_width=True):
-            app.session_state["wiz_output_structure"] = "one_sheet"
-            # One-sheet path: skip topic categorisation entirely.
-            app.session_state["wiz_category_assignments"] = None
-            app.session_state["wiz_skip_categories"] = True
             _wizard_rerun(app)
     return False
 
