@@ -5657,7 +5657,7 @@ def _section_survey_classification(show_toggle: bool = True) -> None:
             f"{len(manual_cohort.winner_uuids)} winners, "
             f"{len(manual_cohort.laggard_uuids)} laggards from uploaded file"
         )
-        app.caption("Manual UID mode hides the outcome variable picker.")
+        app.caption("Manual UUID mode hides the outcome variable picker.")
         _render_segment_definition_ui()
         _render_segmentation_results()
         app.divider()
@@ -5775,9 +5775,15 @@ def _render_segment_definition_ui() -> None:
 
     app.markdown("---")
     app.markdown("### Step 2 \u2014 Define the top group")
-    app.caption(
-        "Decide who counts as the **top group** on that outcome. Hover the "
-        "\u24d8 on the mode selector for what each option means."
+    app.info(
+        "Now decide who counts as the **top group** on that outcome. Four ways:\n\n"
+        "\u2022 **Categorical** \u2014 pick the answer(s) that mean success "
+        "(e.g. outcome = 'grew revenue', top group = those who chose '20%+').\n"
+        "\u2022 **Numeric threshold** \u2014 top group scored at/above a value "
+        "(e.g. growth \u2265 15%).\n"
+        "\u2022 **Quartile** \u2014 top 25% vs bottom 25% on a numeric outcome.\n"
+        "\u2022 **Manual upload** \u2014 you provide the exact list of who's in each group.\n\n"
+        "Everyone not in the top group becomes the comparison group ('the rest')."
     )
     if manual_available:
         app.success(
@@ -5789,21 +5795,11 @@ def _render_segment_definition_ui() -> None:
             app.session_state["seg_mode_radio"] = "manual_uuid"
 
     _SEG_MODE_LABELS = {
-        "manual_uuid": "Manual UID upload",
-        "categorical": "Categorical",
-        "numeric_threshold": "Numeric threshold",
-        "quartile": "Quartile",
+        "manual_uuid": "Manual UUID upload",
+        "categorical": "Categorical (select winner values)",
+        "numeric_threshold": "Numeric threshold (above/below a value)",
+        "quartile": "Quartile (top 25% = Winners vs bottom 25% = Laggards)",
     }
-    _SEG_MODE_HELP = (
-        "How to define the top group (everyone else becomes 'the rest'):\n\n"
-        "\u2022 Categorical \u2014 pick the answer(s) that mean success "
-        "(e.g. top group = those who chose '20%+' revenue growth).\n\n"
-        "\u2022 Numeric threshold \u2014 top group scored at/above a value "
-        "(e.g. growth \u2265 15%).\n\n"
-        "\u2022 Quartile \u2014 top 25% vs bottom 25% on a numeric outcome.\n\n"
-        "\u2022 Manual UID upload \u2014 you provide the exact list of respondent "
-        "IDs in each group."
-    )
     seg_mode = app.radio(
         "Segmentation mode",
         options=["manual_uuid", "categorical", "numeric_threshold", "quartile"],
@@ -5811,7 +5807,6 @@ def _render_segment_definition_ui() -> None:
         format_func=lambda x: _SEG_MODE_LABELS[x],
         key="seg_mode_radio",
         horizontal=True,
-        help=_SEG_MODE_HELP,
     )
 
     app.markdown("#### Laggard cohort")

@@ -160,49 +160,43 @@ def render_advanced_outcome_segmentation() -> None:
                 "group. Requires the Portkey key in Replit Secrets.")
         return
 
-    # ---- Four vertical config boxes: Revenue | Gross Margin | Sector | Custom ----
-    st.markdown("**Define your Top group** \u2014 set up to three measures, plus the sector/region split")
+    # ---- Sector / Region: FILTER first ----
+    st.markdown("**Sector / Region**")
+    st.caption("Use these to focus on part of the sample, and to split the charts below.")
+    default_dims = _guess(cols, _DIM_HINTS, n=2)
+    balance_dims = st.multiselect(
+        "Sector / region dimensions", cols, default=default_dims, key="adv_seg_dims",
+        help="Chosen dimensions are available as a filter (below) and as a chart breakdown.",
+    )
+    work_df = df
+    with st.expander("Filter the pool (optional)", expanded=False):
+        for dim in balance_dims:
+            vals = ["(all)"] + sorted(str(v) for v in df[dim].dropna().unique())
+            pick = st.selectbox(f"{dim} =", vals, key=f"adv_filter_{dim}")
+            if pick != "(all)":
+                work_df = work_df[work_df[dim].astype(str) == pick]
+        if len(work_df) != len(df):
+            st.caption(f"Filtered pool: {len(work_df):,} of {len(df):,} respondents.")
+
+    st.divider()
+
+    # ---- Three named metric slots ----
+    st.markdown("**Performance measures** — define what 'top' means")
     rev_default = (_guess([c for c in cols], _REVENUE_HINTS, n=1) or ["(not used)"])[0]
     mar_default = (_guess([c for c in cols], _MARGIN_HINTS, n=1) or ["(not used)"])[0]
-    default_dims = _guess(cols, _DIM_HINTS, n=2)
-
-    box_rev, box_mar, box_sec, box_cus = st.columns(4)
     specs = []
-    with box_rev:
-        with st.container(border=True):
-            s = _metric_slot("Revenue", cols, work_df, rev_default, "adv_rev")
-            if s: specs.append(s)
-    with box_mar:
-        with st.container(border=True):
-            s = _metric_slot("Gross Margin", cols, work_df, mar_default, "adv_mar")
-            if s: specs.append(s)
-    with box_sec:
-        with st.container(border=True):
-            st.markdown("**Sector / Region**")
-            st.caption("Filter the pool and split the charts.")
-            balance_dims = st.multiselect(
-                "Dimensions", cols, default=default_dims, key="adv_seg_dims",
-                help="Available as a filter and as a chart breakdown.",
-            )
-    with box_cus:
-        with st.container(border=True):
-            s = _metric_slot("Custom", cols, work_df, "(not used)", "adv_cus")
-            if s: specs.append(s)
-
-    # Optional pool filter (kept compact, below the boxes)
-    work_df = df
-    if balance_dims:
-        with st.expander("Filter the pool (optional)", expanded=False):
-            for dim in balance_dims:
-                vals = ["(all)"] + sorted(str(v) for v in df[dim].dropna().unique())
-                pick = st.selectbox(f"{dim} =", vals, key=f"adv_filter_{dim}")
-                if pick != "(all)":
-                    work_df = work_df[work_df[dim].astype(str) == pick]
-            if len(work_df) != len(df):
-                st.caption(f"Filtered pool: {len(work_df):,} of {len(df):,} respondents.")
+    with st.container():
+        s = _metric_slot("Revenue", cols, work_df, rev_default, "adv_rev")
+        if s: specs.append(s)
+    with st.container():
+        s = _metric_slot("Gross Margin", cols, work_df, mar_default, "adv_mar")
+        if s: specs.append(s)
+    with st.container():
+        s = _metric_slot("Custom", cols, work_df, "(not used)", "adv_cus")
+        if s: specs.append(s)
 
     if not specs:
-        st.warning("Pick at least one measure (Revenue, Gross Margin, or Custom).")
+        st.warning("Pick at least one performance measure (Revenue, Gross Margin, or Custom).")
         return
 
     st.divider()
