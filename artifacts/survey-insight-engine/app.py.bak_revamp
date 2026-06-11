@@ -50,8 +50,6 @@ from src.ai_insights import (
     generate_outlier_insight,
     generate_table_insight,
 )
-from src.product_tour import maybe_render_tour
-from src.chat_panel import render_chat_panel
 from src.cross_cut_suggestions import score_suggestions_for_outcome
 from src.filter_options import (
     build_filter_specs_from_selection,
@@ -6698,10 +6696,10 @@ def _section_single_cuts() -> None:
     )
 
     normal_view = app.toggle(
-        "Single pane view",
+        "Normal view",
         value=bool(app.session_state.get("single_cut_normal_view", False)),
         key="single_cut_normal_view",
-        help="On: single-cut and its cross-cut builder stack in one column. Off: side-by-side split workspace.",
+        help="Switch between the split workspace and the stacked layout.",
     )
     if normal_view:
         _render_single_cut_card(result, spec, expanded=True)
@@ -7942,15 +7940,8 @@ def _render_nav_bar() -> None:
             }}, true);
         }}
         Array.prototype.forEach.call(doc.querySelectorAll('button'), function(button) {{
-            var _t = (button.textContent || '').trim().toLowerCase();
-            if (_t.indexOf('navjump_') === 0 || _t.indexOf('chat_toggle_signal') === 0) {{
-                // Hide visually but keep CLICKABLE — display:none elements cannot be
-                // clicked, which was breaking the nav bridge. Move off-screen instead.
-                var wrap = button.closest('[data-testid="stButton"]') || button;
-                wrap.style.position = 'absolute';
-                wrap.style.width = '1px'; wrap.style.height = '1px';
-                wrap.style.overflow = 'hidden'; wrap.style.opacity = '0';
-                wrap.style.left = '-9999px'; wrap.style.pointerEvents = 'auto';
+            if ((button.textContent || '').trim().toLowerCase().indexOf('navjump_') === 0) {{
+                (button.closest('[data-testid="stButton"]') || button).style.display = 'none';
             }}
         }});
         return true;
@@ -8067,7 +8058,6 @@ def main() -> None:
     )
     _initialise_session_state()
     _inject_global_css()
-    maybe_render_tour()
     _drain_pending_actions()
     _render_sidebar()
 
@@ -8094,8 +8084,6 @@ def main() -> None:
         _section_downloads()
     else:
         _section_upload()
-
-    render_chat_panel()
 
 
 # ---------------------------------------------------------------------------
@@ -8451,13 +8439,7 @@ def _render_wizard_step_filters() -> None:
     if schema is None:
         app.info("Upload files to review demographic filters.")
         return
-    app.markdown("### Local Filters")
-    app.caption(
-        "Local Filters appear as drop-downs at the top of each question's sheet "
-        "in the Excel output, so a reader can slice that sheet on the fly "
-        "(e.g. show only respondents where Region = APAC). Pick the questions "
-        "you want available as slicers below."
-    )
+    app.markdown("### Demographic filters")
     selected = set(app.session_state.get("wiz_selected_demographics") or [])
     candidate_ids = [q.canonical_id for q in schema.questions if q.is_demographic or q.canonical_id in selected]
     for question_id in candidate_ids:

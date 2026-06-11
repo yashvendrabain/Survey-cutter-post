@@ -421,3 +421,39 @@ def winner_mask(df: pd.DataFrame, result: WinnerScoringResult) -> pd.Series:
 
 def laggard_mask(df: pd.DataFrame, result: WinnerScoringResult) -> pd.Series:
     return pd.Series(df.index.isin(result.laggard_ids), index=df.index)
+
+
+# --------------------------------------------------------------------------
+# Cohort comparison (deterministic — feeds the winners-vs-laggards table/chart)
+# --------------------------------------------------------------------------
+def compute_cohort_comparison(df: pd.DataFrame, config: WinnerScoringConfig,
+                              result: WinnerScoringResult, schema=None) -> list[dict]:
+    """Per-metric mean for winners vs laggards, with gap and lift.
+
+    Raw metric values (band->midpoint applied), NOT percentiles, so the
+    numbers are interpretable for an analyst. Deterministic.
+    """
+    win = list(result.winner_ids)
+    lag = list(result.laggard_ids)
+    rows: list[dict] = []
+    for spec in config.metrics:
+        try:
+            series = resolve_metric_series(df, spec, schema=schema)
+        except Exception:  # noqa: BLE001
+            continue
+        w_vals = pd.to_numeric(series.reindex(win), errors="coerce").dropna()
+        l_vals = pd.to_numeric(series.reindex(lag), errors="coerce").dropna()
+        w_mean = float(w_vals.mean()) if len(w_vals) else float("nan")
+        l_mean = float(l_vals.mean()) if len(l_vals) else float("nan")
+        gap = (w_mean - l_mean) if (len(w_vals) and len(l_vals)) else float("nan")
+        lift = (w_mean / l_mean) if (len(l_vals) and l_mean not in (0, 0.0)) else None
+        rows.append({
+            "metric": spec.question_id,
+            "winner_mean": w_mean,
+            "laggard_mean": l_mean,
+            "gap": gap,
+            "lift": lift,
+            "winner_n": int(len(w_vals)),
+            "laggard_n": int(len(l_vals)),
+        })
+    return rows
