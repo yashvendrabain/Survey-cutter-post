@@ -2803,6 +2803,10 @@ def _refresh_full_workbook() -> None:
         ],
         cache=_INSIGHT_CACHE,
     )
+    # One-sheet mode: drop AI themes so everything lands on a single
+    # "All Questions" sheet (+ Demographics) rather than themed sheets.
+    if app.session_state.get("wiz_output_structure") == "one_sheet":
+        themes = None
     export_single_cuts(
         results=app.session_state["results"],
         skips=app.session_state["skips"],
@@ -5625,10 +5629,24 @@ def _section_survey_classification(show_toggle: bool = True) -> None:
         app.session_state[toggle_key] = True
 
     if app.toggle("Open Advanced", key="outcome_seg_advanced",
-                  help="Multi-metric winner/laggard builder with balance and composition."):
+                  help="Multi-metric group builder with balance and composition."):
         from src.advanced_segmentation_ui import render_advanced_outcome_segmentation
         render_advanced_outcome_segmentation()
         return
+
+    app.markdown(
+        "<div style='padding:14px 18px;background:#F7F8FA;border:1px solid #E8EAED;"
+        "border-radius:10px;margin:6px 0 14px;font-family:Arial,sans-serif;'>"
+        "<div style='font-weight:700;font-size:14px;color:#1A1A1A;margin-bottom:4px;'>"
+        "What this does</div>"
+        "<div style='font-size:13px;color:#444;line-height:1.6;'>"
+        "Split your respondents into <b>two groups</b> based on any outcome you pick "
+        "(for example, a high-scoring group vs. a lower-scoring group), then "
+        "automatically find the questions where the two groups answer most "
+        "differently. It's a fast way to see <i>what sets one group apart</i> \u2014 "
+        "the groups can be anything your data defines.</div></div>",
+        unsafe_allow_html=True,
+    )
 
     if app.session_state.get("survey_type_result") is None:
         with app.spinner("Detecting survey type..."):
@@ -5720,9 +5738,9 @@ def _section_survey_classification(show_toggle: bool = True) -> None:
         app.session_state["seg_mode_radio"] = "manual_uuid"
     if app.session_state.get("seg_mode_radio") == "manual_uuid" and manual_cohort is not None:
         app.success(
-            "Manual cohort detected: "
-            f"{len(manual_cohort.winner_uuids)} winners, "
-            f"{len(manual_cohort.laggard_uuids)} laggards from uploaded file"
+            "Groups detected from your uploaded file: "
+            f"{len(manual_cohort.winner_uuids)} in the top group, "
+            f"{len(manual_cohort.laggard_uuids)} in the comparison group"
         )
         app.caption("Manual UID mode hides the outcome variable picker.")
         _render_segment_definition_ui()
@@ -5848,9 +5866,9 @@ def _render_segment_definition_ui() -> None:
     )
     if manual_available:
         app.success(
-            "Manual cohort detected: "
-            f"{len(manual_cohort.winner_uuids)} winners, "
-            f"{len(manual_cohort.laggard_uuids)} laggards from uploaded file"
+            "Groups detected from your uploaded file: "
+            f"{len(manual_cohort.winner_uuids)} in the top group, "
+            f"{len(manual_cohort.laggard_uuids)} in the comparison group"
         )
         if "seg_mode_radio" not in app.session_state:
             app.session_state["seg_mode_radio"] = "manual_uuid"
@@ -5862,11 +5880,11 @@ def _render_segment_definition_ui() -> None:
         "quartile": "Quartile",
     }
     _SEG_MODE_HELP = (
-        "How to define the top group (everyone else becomes 'the rest'):\n\n"
-        "\u2022 Categorical \u2014 pick the answer(s) that mean success "
-        "(e.g. top group = those who chose '20%+' revenue growth).\n\n"
+        "How to define your two groups to compare:\n\n"
+        "\u2022 Categorical \u2014 pick the answer(s) that define your top group "
+        "(e.g. those who chose '20%+' on an outcome).\n\n"
         "\u2022 Numeric threshold \u2014 top group scored at/above a value "
-        "(e.g. growth \u2265 15%).\n\n"
+        "(e.g. score \u2265 15).\n\n"
         "\u2022 Quartile \u2014 top 25% vs bottom 25% on a numeric outcome.\n\n"
         "\u2022 Manual UID upload \u2014 you provide the exact list of respondent "
         "IDs in each group."
@@ -5881,13 +5899,13 @@ def _render_segment_definition_ui() -> None:
         help=_SEG_MODE_HELP,
     )
 
-    app.markdown("#### Laggard cohort")
+    app.markdown("#### Define the comparison group")
     laggard_outcome_question_id = None
     laggard_outcome_sub_question_id = None
     override_laggard_outcome = False
     if seg_mode != "manual_uuid":
         override_laggard_outcome = app.checkbox(
-            "Override outcome question for laggards",
+            "Use a different question for the comparison group",
             value=False,
             key="laggard_override_checkbox",
         )
@@ -5903,7 +5921,7 @@ def _render_segment_definition_ui() -> None:
         ]
         if laggard_labels:
             selected_laggard_label = app.selectbox(
-                "Laggard outcome question",
+                "Comparison group question",
                 options=laggard_labels,
                 key="laggard_outcome_variable_selector",
             )
@@ -5915,7 +5933,7 @@ def _render_segment_definition_ui() -> None:
                 sub_options = list(laggard_question.raw_columns)
                 if sub_options:
                     laggard_outcome_sub_question_id = app.selectbox(
-                        "Laggard grid sub-question",
+                        "Comparison group grid sub-question",
                         options=sub_options,
                         key="laggard_outcome_sub_question_selector",
                     )
@@ -5925,7 +5943,7 @@ def _render_segment_definition_ui() -> None:
     if seg_mode == "manual_uuid":
         if manual_cohort is None:
             uploaded_manual = app.file_uploader(
-                "Upload Winners & Laggards xlsx",
+                "Upload group definitions (.xlsx)",
                 type=["xlsx"],
                 key="manual_winners_laggards_upload",
             )
@@ -6005,15 +6023,15 @@ def _render_segment_definition_ui() -> None:
             app.markdown("#### Manual cohort definition")
             app.write(f"Source: {source_label}")
             app.write(
-                f"Winners: {len(manual_cohort.winner_uuids)} respondents "
+                f"Top group: {len(manual_cohort.winner_uuids)} respondents "
                 f"({valid_winners} valid, {len(manual_cohort.winner_uuids) - valid_winners} not found in raw data)"
             )
             app.write(
-                f"Laggards: {len(manual_cohort.laggard_uuids)} respondents "
+                f"Comparison group: {len(manual_cohort.laggard_uuids)} respondents "
                 f"({valid_laggards} valid, {len(manual_cohort.laggard_uuids) - valid_laggards} not found in raw data)"
             )
             app.write(f"Others: {others_n} respondents (all remaining in raw data)")
-            app.write(f"Overlap (in both winner and laggard lists): {len(overlap)} respondents")
+            app.write(f"Overlap (in both groups): {len(overlap)} respondents")
             if invalid_n:
                 app.warning(f"{invalid_n} uploaded uuid values were not found in raw data.")
             manual_overlap_blocked = len(overlap) > 0
@@ -6026,15 +6044,15 @@ def _render_segment_definition_ui() -> None:
             segment_definition = SegmentDefinition(
                 outcome_question_id="manual_uuid",
                 segment_mode="manual_uuid",
-                winner_label="Winners",
-                loser_label="Laggards",
-                laggard_label="Laggards",
+                winner_label="Top group",
+                loser_label="Comparison group",
+                laggard_label="Comparison group",
                 manual_winner_uuids=tuple(manual_cohort.winner_uuids),
                 manual_laggard_uuids=tuple(manual_cohort.laggard_uuids),
                 manual_cohort_id_column=manual_cohort_id_column,
             )
         else:
-            app.info("Upload a Winners & Laggards workbook to continue.")
+            app.info("Upload a workbook defining your two groups to continue.")
             app.session_state["manual_cohort_overlap_blocked"] = True
     elif seg_mode == "categorical":
         app.session_state["manual_cohort_overlap_blocked"] = False
@@ -6049,7 +6067,7 @@ def _render_segment_definition_ui() -> None:
         else:
             option_labels = [f"{code}: {label}" for code, label in options]
             selected_labels = app.multiselect(
-                "Select winner values",
+                "Select top group values",
                 options=option_labels,
                 help=(
                     "Respondents matching these codes are 'winners'. "
@@ -6063,11 +6081,11 @@ def _render_segment_definition_ui() -> None:
                 if f"{code}: {label}" in selected_labels
             )
             laggard_labels_selected = app.multiselect(
-                "Laggard option values",
+                "Comparison group option values",
                 options=option_labels,
                 help=(
-                    "Respondents matching these codes are the laggard cohort. "
-                    "Leave blank to use all non-winner valid responses."
+                    "Respondents matching these codes are the comparison group. "
+                    "Leave blank to use everyone not in the top group."
                 ),
                 key="laggard_values_multiselect",
             )
@@ -6078,24 +6096,24 @@ def _render_segment_definition_ui() -> None:
             )
             if winner_codes:
                 winner_label = app.text_input(
-                    "Winner label", value="Winner", key="winner_label_input"
+                    "Top group label", value="Top group", key="winner_label_input"
                 )
                 loser_label = app.text_input(
-                    "Laggard label", value="Laggard", key="loser_label_input"
+                    "Comparison group label", value="Comparison group", key="loser_label_input"
                 )
                 segment_definition = SegmentDefinition(
                     outcome_question_id=outcome_id,
                     segment_mode="categorical",
                     winner_values=winner_codes,
-                    winner_label=winner_label or "Winner",
-                    loser_label=loser_label or "Laggard",
+                    winner_label=winner_label or "Top group",
+                    loser_label=loser_label or "Comparison group",
                     laggard_values=laggard_codes,
-                    laggard_label=loser_label or "Laggards",
+                    laggard_label=loser_label or "Comparison group",
                     laggard_outcome_question_id=laggard_outcome_question_id,
                     laggard_outcome_sub_question_id=laggard_outcome_sub_question_id,
                 )
             else:
-                app.warning("Select at least one winner value to continue.")
+                app.warning("Select at least one value for the top group to continue.")
     elif seg_mode == "numeric_threshold":
         app.session_state["manual_cohort_overlap_blocked"] = False
         if outcome_spec is None:
@@ -6107,7 +6125,7 @@ def _render_segment_definition_ui() -> None:
             key="numeric_threshold_input",
         )
         direction = app.radio(
-            "Winners are respondents who scored",
+            "Top group = respondents who scored",
             options=["gte", "lte"],
             format_func=lambda x: (
                 f"\u2265 {threshold} (at or above threshold)"
@@ -6118,18 +6136,18 @@ def _render_segment_definition_ui() -> None:
             horizontal=True,
         )
         winner_label = app.text_input(
-            "Winner label", value="High", key="winner_label_num_input"
+            "Top group label", value="High", key="winner_label_num_input"
         )
         loser_label = app.text_input(
-            "Loser label", value="Low", key="loser_label_num_input"
+            "Comparison group label", value="Low", key="loser_label_num_input"
         )
         laggard_threshold = app.number_input(
-            "Laggard threshold",
+            "Comparison group threshold",
             value=float(threshold),
             key="laggard_threshold_input",
         )
         laggard_direction = app.selectbox(
-            "Laggard direction",
+            "Comparison group direction",
             options=["lte", "gte"],
             key="laggard_threshold_direction_radio",
         )
@@ -6142,7 +6160,7 @@ def _render_segment_definition_ui() -> None:
             loser_label=loser_label or "Low",
             laggard_threshold=float(laggard_threshold),
             laggard_threshold_direction=laggard_direction,
-            laggard_label=loser_label or "Laggards",
+            laggard_label=loser_label or "Comparison group",
             laggard_outcome_question_id=laggard_outcome_question_id,
             laggard_outcome_sub_question_id=laggard_outcome_sub_question_id,
         )
@@ -6152,7 +6170,7 @@ def _render_segment_definition_ui() -> None:
             app.error("Select an outcome variable before using quartile mode.")
             return
         quartile_winner = app.radio(
-            "Winner quartile",
+            "Top quartile",
             options=["top", "bottom"],
             format_func=lambda value: (
                 "Top quartile" if value == "top" else "Bottom quartile"
@@ -6161,16 +6179,16 @@ def _render_segment_definition_ui() -> None:
             horizontal=True,
         )
         laggard_label = app.text_input(
-            "Laggard label",
-            value="Laggards",
+            "Comparison group label",
+            value="Comparison group",
             key="laggard_label_quartile_input",
         )
         segment_definition = SegmentDefinition(
             outcome_question_id=outcome_id,
             segment_mode="quartile",
             quartile_winner=quartile_winner,
-            laggard_label=laggard_label or "Laggards",
-            loser_label=laggard_label or "Laggard",
+            laggard_label=laggard_label or "Comparison group",
+            loser_label=laggard_label or "Comparison group",
             laggard_outcome_question_id=laggard_outcome_question_id,
             laggard_outcome_sub_question_id=laggard_outcome_sub_question_id,
         )
@@ -6402,7 +6420,7 @@ def _outcome_diff_insight_cache_key(diff: Any) -> str:
 
 
 def _cohort_label_plural(label: str) -> str:
-    label = str(label or "Winner")
+    label = str(label or "Top group")
     return label if label.lower().endswith("s") else f"{label}s"
 
 
@@ -7266,7 +7284,7 @@ def _section_ai_analysis() -> None:
         "3",
         "Outcome Segmentation",
         anchor="section-outcome",
-        meta="Winners-vs-Laggards split",
+        meta="Group comparison",
     )
     _section_survey_classification(show_toggle=False)
     if not app.session_state.get("show_winners_vs_laggards", False):
@@ -7336,8 +7354,8 @@ def _render_outcome_summary_panel(seg: OutcomeSegmentationResult) -> None:
     )
 
     col1, col2, col3, col4 = app.columns(4)
-    col1.metric("Winners", f"{seg.winner_n:,}")
-    col2.metric(f"{laggard_label}s", f"{seg.loser_n:,}")
+    col1.metric("Top group", f"{seg.winner_n:,}")
+    col2.metric("Comparison group", f"{seg.loser_n:,}")
     col3.metric("Differentiators", len(seg.differentiators))
     col4.metric("Avg lift (top 5)", f"{avg_lift:.1f}x")
 
@@ -7413,14 +7431,14 @@ def _render_winner_profile_panel(seg: OutcomeSegmentationResult) -> None:
     app = _require_streamlit()
     app.markdown(
         f'<h3 style="display:flex;align-items:center;margin:1rem 0;">'
-        f'{_icon("winner", "#CC0000")}Winner Profile</h3>',
+        f'{_icon("winner", "#CC0000")}Top Group Profile</h3>',
         unsafe_allow_html=True,
     )
 
     profile = seg.winner_profile
     if not profile.defining_traits:
         app.warning(
-            "Not enough strong differentiators to build a winner profile. "
+            "Not enough strong differentiators to build a top-group profile. "
             "Try selecting a different outcome variable or segment definition."
         )
         return
@@ -8249,6 +8267,13 @@ def _render_output_structure_gate() -> bool:
     "Demographics" sheet is still added when demographic questions exist).
     """
     app = _require_streamlit()
+    # Default to one-sheet on first entry (user can switch via "Change output
+    # structure"). This makes "Keep All Questions on One Sheet" the default.
+    if app.session_state.get("wiz_output_structure") is None and \
+            not app.session_state.get("wiz_structure_user_touched"):
+        app.session_state["wiz_output_structure"] = "one_sheet"
+        app.session_state["wiz_category_assignments"] = None
+        app.session_state["wiz_skip_categories"] = True
     if app.session_state.get("wiz_output_structure"):
         # Keep the heading visible (with the current choice) so the user always
         # sees where they are, even after picking.
@@ -8263,6 +8288,7 @@ def _render_output_structure_gate() -> bool:
         app.caption(f"Current choice: **{choice_label}**. You can revisit this anytime.")
         if app.button("Change output structure", key="wiz_change_structure"):
             app.session_state["wiz_output_structure"] = None
+            app.session_state["wiz_structure_user_touched"] = True
             app.session_state.pop("wiz_skip_categories", None)
             _wizard_rerun(app)
         return True
@@ -8320,7 +8346,7 @@ def _render_output_structure_gate() -> bool:
             "</div></div>",
             unsafe_allow_html=True,
         )
-        if app.button("Keep it on one sheet", key="wiz_struct_one", use_container_width=True):
+        if app.button("Keep All Questions on One Sheet", key="wiz_struct_one", use_container_width=True):
             app.session_state["wiz_output_structure"] = "one_sheet"
             # One-sheet path: skip topic categorisation entirely.
             app.session_state["wiz_category_assignments"] = None
@@ -8529,22 +8555,34 @@ def _render_wizard_top_nav() -> None:
             f"background:{'linear-gradient(90deg,#CC0000,#E00000)' if done else '#E6E8EB'};'></div>"
         )
 
-    def _arrow(glyph: str, enabled: bool) -> str:
-        color = "#CC0000" if enabled else "#D8DADE"
-        return (
-            f"<div style='font-size:22px;font-weight:700;color:{color};flex:0 0 auto;"
-            f"margin-top:8px;font-family:Arial,sans-serif;'>{glyph}</div>"
-        )
-
+    # Clickable arrows (Streamlit buttons) flank the HTML stepper.
     app.markdown(
-        "<div style='display:flex;align-items:flex-start;justify-content:center;"
-        "gap:6px;max-width:620px;margin:6px auto 10px;'>"
-        + _arrow("\u2039", step > 1)
-        + _circle(1) + _conn(1) + _circle(2) + _conn(2) + _circle(3)
-        + _arrow("\u203a", step < 3)
-        + "</div>",
+        "<style>"
+        ".wizarrow + div [data-testid='stHorizontalBlock']{align-items:center;}"
+        ".wizarrow .stButton button{background:transparent !important;border:none !important;"
+        "color:#CC0000 !important;font-size:26px !important;font-weight:700 !important;"
+        "box-shadow:none !important;padding:0 !important;line-height:1 !important;min-height:40px !important;}"
+        ".wizarrow .stButton button:disabled{color:#D8DADE !important;}"
+        "</style><div class='wizarrow'></div>",
         unsafe_allow_html=True,
     )
+    a_back, a_mid, a_next = app.columns([1, 10, 1])
+    with a_back:
+        if app.button("\u2039", disabled=(step <= 1), key="wiz_arrow_back", help="Back"):
+            app.session_state["wiz_step"] = max(1, step - 1)
+            _wizard_rerun(app)
+    with a_mid:
+        app.markdown(
+            "<div style='display:flex;align-items:flex-start;justify-content:center;"
+            "gap:6px;max-width:620px;margin:6px auto 10px;'>"
+            + _circle(1) + _conn(1) + _circle(2) + _conn(2) + _circle(3)
+            + "</div>",
+            unsafe_allow_html=True,
+        )
+    with a_next:
+        if app.button("\u203a", disabled=(step >= 3), key="wiz_arrow_next", help="Next"):
+            app.session_state["wiz_step"] = min(3, step + 1)
+            _wizard_rerun(app)
 
 
 def _render_wizard_nav(location: str) -> None:
@@ -8968,6 +9006,11 @@ def _wizard_apply_overrides() -> None:
 
 def _wizard_pipeline_overrides(schema: Any, themes: dict) -> tuple[Any, dict]:
     app = _require_streamlit()
+    # One-sheet mode: do NOT categorise into AI themes. Returning themes=None
+    # makes the exporter fall back to a single "All Questions" sheet (+ a
+    # Demographics sheet when demographic questions exist).
+    if app.session_state.get("wiz_output_structure") == "one_sheet":
+        return schema, None
     raw_assignments = app.session_state.get("wiz_category_assignments")
     if raw_assignments is None:
         return schema, themes

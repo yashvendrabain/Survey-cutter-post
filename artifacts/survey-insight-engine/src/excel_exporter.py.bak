@@ -304,6 +304,8 @@ def export_single_cuts(
             cross_cut_results,
             cross_cut_skips,
         )
+    with export_memory.memory_step("build_skipped_questions_sheet"):
+        _live_write_skipped_questions(workbook, schema, skips, cross_cut_skips)
     with export_memory.memory_step("embed_input_files"):
         _embed_input_file_sheets_openpyxl(
             workbook,
@@ -3809,6 +3811,91 @@ def _live_write_filter_log(
         row_index += 1
     worksheet.freeze_panes = "A2"
     _live_autofit(worksheet)
+
+
+_SKIP_REASON_LABELS = {
+    "calculation_error": "Calculation error",
+    "unsupported_type": "Unsupported question type",
+    "no_data": "No usable responses",
+    "empty": "No responses",
+    "insufficient_data": "Too few responses",
+    "low_confidence": "Low classification confidence",
+}
+
+
+def _humanise_skip_reason(reason: str) -> str:
+    if not reason:
+        return "Skipped"
+    return _SKIP_REASON_LABELS.get(reason, str(reason).replace("_", " ").capitalize())
+
+
+def _live_write_skipped_questions(
+    workbook: Any,
+    schema: SurveySchema,
+    skips: list[SkipRecord],
+    cross_cut_skips: list[SkipRecord],
+) -> None:
+    """One sheet listing every skipped question (single-cut + cross-cut) with a
+    plain-language reason, so the reader can see exactly what was left out."""
+    worksheet = workbook.create_sheet("Skipped_Questions")
+    title = worksheet.cell(row=1, column=1, value="Questions skipped during analysis")
+    title.font = _live_font(bold=True, size=13)
+    total = len(skips) + len(cross_cut_skips or [])
+    worksheet.cell(
+        row=2, column=1,
+        value=(f"{total} question(s) were skipped. They are listed below with the "
+               "reason. Nothing here affects the numbers on the other sheets."),
+    )
+    header_row = 4
+    _live_header_row(
+        worksheet, header_row,
+        ["#", "Source", "Question ID", "Question", "Type", "Reason", "Details"],
+    )
+    row_index = header_row + 1
+    counter = 0
+
+    def _question_text(canonical_id: str) -> str:
+        try:
+            q = schema.get_question(canonical_id)
+        except Exception:
+            q = None
+        return getattr(q, "question_text", "") or ""
+
+    def _write_skip(skip: SkipRecord, source: str) -> None:
+        nonlocal row_index, counter
+        counter += 1
+        try:
+            qtype = skip.question_type.value
+        except Exception:
+            qtype = str(getattr(skip, "question_type", "") or "")
+        values = [
+            counter,
+            source,
+            getattr(skip, "canonical_id", "") or getattr(skip, "question_id", ""),
+            _question_text(getattr(skip, "canonical_id", "")),
+            qtype,
+            _humanise_skip_reason(getattr(skip, "skip_reason", "")),
+            getattr(skip, "details", "") or "",
+        ]
+        for col_index, value in enumerate(values, start=1):
+            worksheet.cell(row=row_index, column=col_index, value=value)
+        row_index += 1
+
+    for skip in skips:
+        _write_skip(skip, "Single cut")
+    for skip in (cross_cut_skips or []):
+        _write_skip(skip, "Cross cut")
+
+    if counter == 0:
+        worksheet.cell(
+            row=row_index, column=1,
+            value="No questions were skipped \u2014 every question was analysed.",
+        )
+
+    try:
+        worksheet.freeze_panes = f"A{header_row + 1}"
+    except Exception:
+        pass
 
 
 def _live_write_warnings(
@@ -8739,6 +8826,7 @@ def _reserved_sheet_names() -> set[str]:
         "Single_Cut_Index",
         "Filters",
         "Skip_Log",
+        "Skipped_Questions",
         "Calculation_Log",
         "Filter_Log",
         "Data_Quality",
