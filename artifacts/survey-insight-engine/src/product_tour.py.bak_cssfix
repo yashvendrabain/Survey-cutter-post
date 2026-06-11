@@ -82,35 +82,25 @@ TOUR_STEPS: list[dict[str, str]] = [
 def _tour_html(steps: list[dict[str, str]], force: bool = False) -> str:
     steps_json = json.dumps(steps)
     return """
-<script>
-(function(){
-  // Inject tour CSS into the PARENT document (the iframe-local <style> never
-  // reaches the parent where the cards are created, so they'd be unstyled and
-  // effectively invisible). Mirrors the working chat-launcher approach.
-  var pdoc = window.parent.document;
-  if (pdoc && pdoc.head && !pdoc.getElementById("sae-tour-style")) {
-    var sty = pdoc.createElement("style"); sty.id = "sae-tour-style";
-    sty.textContent =
-      "#sae-tour-overlay{position:fixed;inset:0;z-index:2000000;background:rgba(10,10,10,0.55);}"+
-      "#sae-tour-card{position:fixed;max-width:340px;background:#fff;border-radius:12px;"+
-      "box-shadow:0 18px 50px rgba(0,0,0,0.3);padding:18px 20px;font-family:Arial,sans-serif;"+
-      "border-top:4px solid #CC0000;z-index:2000001;}"+
-      "#sae-tour-card h4{margin:0 0 8px;font-size:15px;color:#0A0A0A;}"+
-      "#sae-tour-card p{margin:0 0 14px;font-size:13px;line-height:1.55;color:#333;}"+
-      "#sae-tour-bar{display:flex;align-items:center;justify-content:space-between;}"+
-      "#sae-tour-dots{font-size:11px;color:#888;}"+
-      ".sae-tour-btn{border:none;border-radius:7px;font-size:12px;font-weight:700;"+
-      "padding:8px 14px;cursor:pointer;font-family:Arial,sans-serif;}"+
-      ".sae-tour-primary{background:#CC0000;color:#fff;}"+
-      ".sae-tour-ghost{background:#F0F0F0;color:#333;margin-right:8px;}"+
-      ".sae-tour-skip{background:none;color:#888;text-decoration:underline;font-size:11px;"+
-      "border:none;cursor:pointer;}"+
-      ".sae-tour-spot{position:fixed;z-index:2000000;border:3px solid #CC0000;border-radius:8px;"+
-      "box-shadow:0 0 0 9999px rgba(10,10,10,0.55);pointer-events:none;transition:all 0.2s ease;}";
-    pdoc.head.appendChild(sty);
-  }
-})();
-</script>
+<div id="sae-tour-root"></div>
+<style>
+#sae-tour-overlay { position:fixed; inset:0; z-index:2000000; background:rgba(10,10,10,0.55); }
+#sae-tour-card { position:fixed; max-width:340px; background:#fff; border-radius:12px;
+  box-shadow:0 18px 50px rgba(0,0,0,0.3); padding:18px 20px; font-family:Arial,sans-serif;
+  border-top:4px solid #CC0000; z-index:2000001; }
+#sae-tour-card h4 { margin:0 0 8px; font-size:15px; color:#0A0A0A; }
+#sae-tour-card p { margin:0 0 14px; font-size:13px; line-height:1.55; color:#333; }
+#sae-tour-bar { display:flex; align-items:center; justify-content:space-between; }
+#sae-tour-dots { font-size:11px; color:#888; }
+.sae-tour-btn { border:none; border-radius:7px; font-size:12px; font-weight:700;
+  padding:8px 14px; cursor:pointer; font-family:Arial,sans-serif; }
+.sae-tour-primary { background:#CC0000; color:#fff; }
+.sae-tour-ghost { background:#F0F0F0; color:#333; margin-right:8px; }
+.sae-tour-skip { background:none; color:#888; text-decoration:underline; font-size:11px;
+  border:none; cursor:pointer; }
+.sae-tour-spot { position:fixed; z-index:2000000; border:3px solid #CC0000; border-radius:8px;
+  box-shadow:0 0 0 9999px rgba(10,10,10,0.55); pointer-events:none; transition:all 0.2s ease; }
+</style>
 <script>
 (function(){
   var steps = __STEPS__;
