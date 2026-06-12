@@ -41,4 +41,4 @@ packages = ["libxcrypt", "pkg-config", "xsimd"]
 [userenv]
 
 [userenv.shared]
-PORTKEY_API_KEY = "Tojet4Oi0P5CRwf6hjKJgjKasTRK"
+PORTKEY_API_KEY = "P7ZdC+QAp8D+0hIRy0r7/ByW/izD"
