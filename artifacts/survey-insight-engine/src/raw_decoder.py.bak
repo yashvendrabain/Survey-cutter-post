@@ -276,7 +276,7 @@ def _find_respondent_id_column(columns: list[str]) -> str | None:
 def _expected_columns_from_datamap(data_map: DataMap) -> set[str]:
     expected: set[str] = set()
     for question in data_map["questions"]:
-        expected.add(question["canonical_id"])
+        expected.add(_effective_raw_id(question))
         sub_columns = question["sub_columns"]
         if sub_columns:
             expected.update(sub_column_id for sub_column_id, _ in sub_columns)
@@ -309,10 +309,19 @@ def _string_preserved_columns(
     return preserved
 
 
+def _effective_raw_id(question: ParsedQuestion) -> str:
+    """Raw-data column id for a question with no sub-columns.
+
+    Defaults to canonical_id, but the wizard sets raw_id to the actual raw
+    column when codebook id and raw column id differ (e.g. "q1" vs "1q").
+    """
+    return str(question.get("raw_id") or question["canonical_id"])
+
+
 def _question_expected_columns(question: ParsedQuestion) -> tuple[str, ...]:
     if question["sub_columns"]:
         return tuple(sub_column_id for sub_column_id, _ in question["sub_columns"])
-    return (question["canonical_id"],)
+    return (_effective_raw_id(question),)
 
 
 def _numeric_label_metadata_by_column(data_map: DataMap) -> dict[str, ParsedQuestion]:
