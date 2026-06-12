@@ -877,15 +877,6 @@ def _classify_question(
                 return QuestionType.GRID_BINARY_SELECT
             return QuestionType.GRID_SINGLE_SELECT
         if has_sub_columns and has_options:
-            # A checkbox multi-select has BOTH per-option sub-columns (Q1r1, Q1r2,
-            # ...) AND a tiny 0/1 options table (Unchecked / Checked). That is a
-            # MULTI_SELECT_BINARY, not a grid: the real per-option labels live on
-            # the sub-columns, and treating it as a grid loses them (every option
-            # shows "Checked"/"1"). A genuine grid-single-select has a meaningful
-            # option scale (e.g. agree/disagree), not just checked/unchecked.
-            option_labels = [label for _code, label in question["options"]]
-            if value_range == (0, 1) and _labels_are_binary_select(option_labels):
-                return QuestionType.MULTI_SELECT_BINARY
             subtype, _confidence = classify_grid_subtype(question, set())
             if subtype == GRID_RATED and _has_explicit_rating_scale_text(
                 question["question_text"]
