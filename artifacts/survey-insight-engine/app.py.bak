@@ -4371,13 +4371,21 @@ def _render_selected_question_cross_cut_builder(target_id: str) -> None:
         QuestionType.RANK_ORDER,
     }
     categorical_types = set(dimension_types)
+    # Build the dimension list from canonical questions (one entry per question),
+    # NOT from option-expanded cross_cut_question_options — otherwise a
+    # multi-select like Q15 shows up once per option ("Q15: Marketing",
+    # "Q15: Customer experience", ...) instead of a single "Q15" dimension.
     dimension_options: list[str] = []
-    for qid in _eligible_question_options():
-        if qid == target_id:
+    seen_dimension_ids: set[str] = set()
+    for spec in schema.questions:
+        canonical = getattr(spec, "canonical_id", None)
+        if not canonical or canonical == target_id or canonical in seen_dimension_ids:
             continue
-        spec = resolve_cross_cut_question(schema, qid)
-        if spec is not None and spec.question_type in dimension_types:
-            dimension_options.append(qid)
+        if spec.question_type in dimension_types and getattr(
+            spec, "analysis_eligible", True
+        ):
+            dimension_options.append(canonical)
+            seen_dimension_ids.add(canonical)
 
     app.markdown("**Cross cut this question**")
     app.caption(f"Target: {labels.get(target_id, target_id)}")
