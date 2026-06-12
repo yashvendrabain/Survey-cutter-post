@@ -5686,8 +5686,6 @@ def _live_write_numeric_table(
     )
     for metric, static_value in (
         ("Mean", None),
-        ("Min", None),
-        ("Max", None),
         ("Std", result.std),
     ):
         worksheet.cell(row=row_index, column=1, value=metric)
@@ -6004,6 +6002,28 @@ def _live_write_cross_tab_table(
 
     total_row = data_start + len(rows)
     worksheet.cell(row=total_row, column=first_col, value="Total respondents").font = _live_font(bold=True)
+    # Column-wise totals: for EACH cross-cut group column, count respondents in
+    # that group (passing filters). Previously only the rightmost total column
+    # had a value, leaving the per-group totals blank.
+    for offset in range(max_groups):
+        group_col = first_col + 1 + offset
+        header_ref = f"{_openpyxl_column_letter(group_col)}${header_row}"
+        col_total_formula = _build_countifs_formula(
+            "respondent_id_data",
+            "<>",
+            sheet_filters,
+            fq_name,
+            fv_name,
+            extra_pairs=[(ct_range, header_ref)],
+            theme_prefix=theme_prefix,
+        ).lstrip("=")
+        _live_formula(
+            worksheet,
+            total_row,
+            group_col,
+            f'=IF(OR({ct_name}="(None)",{header_ref}=""),"",{col_total_formula})',
+            0,
+        )
     _live_formula(
         worksheet,
         total_row,
@@ -6408,10 +6428,10 @@ def _live_distribution_rows(
                     "label": str(payload["label"]),
                     "data_name": column.data_name,
                     "criteria": "Selected",
-                    "metric_kind": "selection_rate",
+                    "metric_kind": "count",
                     "question_id": result.question_id,
                     "source_column": sub_column_id,
-                    "cached_value": float(payload.get("selection_rate", 0.0) or 0.0),
+                    "cached_value": int(payload.get("count", 0) or 0),
                     "sort_count": int(payload["count"]),
                     "denominator_data_names": denominator_data_names,
                 }
@@ -6564,7 +6584,7 @@ def _live_distribution_rows(
                     "label": _grid_base_row_label(str(row_labels.get(source_column, source_column)), "All"),
                     "data_name": column.data_name,
                     "criteria": "Selected",
-                    "metric_kind": "selection_rate",
+                    "metric_kind": "count",
                     "question_id": result.question_id,
                     "source_column": source_column,
                     "cached_value": 0.0,

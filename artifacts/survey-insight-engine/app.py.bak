@@ -1091,12 +1091,18 @@ def _render_insight_section(
     """Render the AI insight section: button + cached result display."""
     app = _require_streamlit()
     app.divider()
-    cols = app.columns([3, 1])
+    cols = app.columns([3, 1.4])
     with cols[0]:
         app.markdown("**AI insight**")
     with cols[1]:
+        app.markdown(
+            "<style>.ai-insight-btn + div .stButton button p,"
+            ".ai-insight-btn + div .stButton button{white-space:nowrap !important;}</style>"
+            "<div class='ai-insight-btn'></div>",
+            unsafe_allow_html=True,
+        )
         btn_label = (
-            "Generate AI Insight"
+            "Generate insight"
             if insight_key not in app.session_state
             else "Regenerate"
         )
@@ -8197,7 +8203,7 @@ def _render_journey_rail() -> None:
     next_hint = {
         0: "\u2192 Next: upload your raw data file and data map below.",
         1: "\u2192 Next: choose how your Excel output is organised, then set filters &amp; cross-cuts.",
-        2: "\u2192 Next: click a question in the sidebar to see its cut, or open Outcome Segmentation.",
+        2: "",
         3: "\u2192 You're set \u2014 generate and download your workbook below.",
     }.get(active, "")
     if next_hint:
