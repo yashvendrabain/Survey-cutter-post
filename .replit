@@ -2,7 +2,7 @@ modules = ["nodejs-24", "python-3.11"]
 
 [deployment]
 router = "application"
-deploymentTarget = "autoscale"
+deploymentTarget = "gce"
 
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]
@@ -33,6 +33,10 @@ externalPort = 3000
 [[ports]]
 localPort = 21049
 externalPort = 80
+
+[[ports]]
+localPort = 21055
+externalPort = 3002
 
 [nix]
 channel = "stable-25_05"

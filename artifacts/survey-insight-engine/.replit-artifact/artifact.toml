@@ -15,10 +15,10 @@ paths = [ "/" ]
 localPort = 21049
 
 [services.development]
-run = "streamlit run app.py --server.port 21049 --server.address 0.0.0.0 --server.headless true --server.enableCORS=false --server.enableXsrfProtection=false --server.baseUrlPath="
+run = "streamlit run app.py --server.port 21049 --server.address 0.0.0.0 --server.headless true --server.enableCORS=false --server.enableXsrfProtection=false --server.baseUrlPath= --server.fileWatcherType none"
 
 [services.production]
-run = "streamlit run app.py --server.port 21049 --server.address 0.0.0.0 --server.headless true --server.enableCORS=false --server.enableXsrfProtection=false --server.baseUrlPath="
+run = "streamlit run app.py --server.port 21049 --server.address 0.0.0.0 --server.headless true --server.enableCORS=false --server.enableXsrfProtection=false --server.baseUrlPath= --server.fileWatcherType none"
 
 [services.env]
 PORT = "21049"

@@ -1,39 +1,50 @@
 ---
-name: Streamlit must deploy as Reserved VM, not Autoscale
-description: Why a Streamlit artifact fails the publish promote/health-check on Autoscale and must use Reserved VM (vm) deployment type.
+name: Streamlit prod port-never-binds (file watcher), VM logs not retrievable
+description: Why a Streamlit artifact fails the publish promote/health-check (port never opens) on BOTH Autoscale and Reserved VM, the real fix, and the diagnosis limits.
 ---
 
-# Streamlit deploys must use Reserved VM (vm), not Autoscale
+# Streamlit publish fails: required port never opens (both Autoscale AND Reserved VM)
 
-A Streamlit artifact in this monorepo fails to publish on **Autoscale (cloud_run)** at the
-**promote / startup-probe** phase, even after the image-size problem is solved. Symptoms in
-the build + runtime logs:
+A Streamlit artifact in this monorepo fails to publish at the **promote / startup-probe**
+phase. Symptoms (multi-artifact deploy waits for ports `[8080 21049]`):
 
-- Build phase succeeds (image pushed), reaches `Creating Autoscale service`, then fails ~5 min later.
-- Runtime: `not all artifact ports opened within timeout expected=[8080 21049] detected=1`,
-  `a port configuration was specified but the required port was never opened`, repeated
-  `healthcheck / returned status 500`. The Node `api-server` (8080) opens its port and serves
-  `/api/healthz` 200; the Streamlit service (21049) never binds within the ~60s window.
-- The Streamlit process starts (gets a pid) and is still **alive** at the timeout (receives SIGTERM,
-  did not crash), and prints **no output** (prod stdout is block-buffered, so messages are lost).
+- Node `api-server` (8080) binds fast and serves `/api/healthz` 200.
+- Streamlit (21049) **never binds** → `not all artifact ports opened within timeout
+  detected=1`, `a port configuration was specified but the required port was never opened`,
+  repeated `healthcheck / returned status 500` → SIGTERM.
+- The streamlit process starts (gets a pid) but emits **no stdout/stderr** (prod stdout is
+  block-buffered, so any banner/error is lost).
 
-**Root cause (two reinforcing reasons):**
-1. Autoscale/Cloud Run **throttles CPU during container startup** (before the port opens). Python/
-   Streamlit's heavier bootstrap doesn't finish binding the port in time under that throttle, while
-   the lighter Node server does. → startup probe never gets a 200 → promote fails.
-2. Streamlit is **fundamentally stateful**: persistent WebSocket per session, in-memory
-   `st.session_state`, and local-filesystem file uploads — all of which the deployment skill lists as
-   things that do NOT work on Autoscale.
+**CPU-throttle theory is DISPROVEN.** It fails on **both** Autoscale (~60s window) **and** a
+full-CPU **Reserved VM** (e2-small; ~8 min "waiting for ready" then fail). 8 minutes on
+always-on CPU is far more than enough for a working start (local boots <30s), so it is not
+slowness/throttling — Streamlit hangs or crashes indefinitely before binding.
 
-**Fix:** the user must switch the deployment to **Reserved VM (`vm`)** in the Publishing/Deployments
-pane. On a VM the CPU is always allocated (no startup throttle, so the port binds fast like in dev)
-and state/websockets persist. Reserved VM is a fixed monthly cost vs Autoscale's pay-per-use.
+**The exact prod run command works locally.** Running the artifact.toml production `run`
+verbatim (on a spare port) binds the port and returns `/_stcore/health` 200 with the normal
+banner. So the command + app code + `.pythonlibs` are fine; the failure is
+**production-environment-specific**.
 
-**Why this can't be auto-fixed:** deployment type is NOT changeable programmatically (not via
-`artifact.toml`); only the user can change it in the Deployments pane. Streamlit binds its HTTP port
-during *server bootstrap*, before `app.py` runs per-session — so "port never opened" means the server
-bootstrap (not the app code) didn't finish in time, which points at the platform/CPU-throttle, not a
-code bug.
+**Most likely cause + fix (applied):** Streamlit's default `fileWatcherType = "auto"` sets up
+an inotify watcher recursively over a large `src/` tree + a ~9000-line `app.py` during server
+bootstrap, *before* Tornado finishes binding. In a constrained prod container this can hang or
+hit inotify watch/instance limits. **Fix: add `--server.fileWatcherType none` to the
+production (and dev) run command** via `verifyAndReplaceArtifactToml`. Zero behavior risk — a
+deployed app needs no hot-reload. Validated locally: health still 200 with the flag.
 
-**How to apply:** for any Streamlit (or other stateful/websocket) artifact, recommend Reserved VM
-from the start; do not waste cycles trying to make it pass Autoscale's startup probe.
+**If that is insufficient, in order:**
+1. Bump the Reserved VM size (e2-small 0.5 vCPU/2GB is underpowered for a pandas/numpy/scipy
+   bootstrap). User-only change in the Deployments pane.
+2. Formalize Python deps for prod instead of relying on the shipped 723MB `.pythonlibs`
+   (root `pyproject.toml` has `dependencies=[]`, and the Node-first build runs no `pip install`,
+   so deps reach prod ONLY via the image's `.pythonlibs`). Do NOT bolt on a production
+   `pip install -r requirements.txt` blindly — in a Node-first deploy it may install off the
+   runtime python path, no-op as "already satisfied," or clobber a working `.pythonlibs`.
+
+**Diagnosis limit (important):** `fetchDeploymentLogs` returns **runtime logs only for
+Autoscale (cloud_run)**, NOT for Reserved VM (gce) — a failed VM build surfaces build logs but
+no app stdout/stderr. To actually see why a Streamlit container fails, diagnose on Autoscale,
+or make startup robust enough to pass blindly.
+
+**Why deployment type can't be auto-fixed:** it is user-only (Deployments pane), not settable
+via `artifact.toml`.
