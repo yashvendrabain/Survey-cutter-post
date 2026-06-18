@@ -11,6 +11,21 @@ copying into `/nix/store/<hash>-python3-.../lib/python3.11/site-packages/`. It
 errors on an early leaf package (e.g. iniconfig) but is actually trying to
 install the WHOLE selected set there.
 
+**DEBUG FIRST — is the failing build even using the fix?** A Replit publish builds
+from the *committed git tree* at publish time. Before re-diagnosing, compare each
+failed build's timestamp (`listDeploymentBuilds`) with the fix commit's timestamp
+(`git show -s --format=%cI <sha>`). Builds that predate the fix commit fail with the
+OLD behavior and are NOT evidence the fix is broken — the cure is simply to re-publish
+so the build picks up the committed fix. (Real case: 6 builds all failed with the
+nix-store EACCES; every one ran 20+ min BEFORE the fix was committed.)
+
+**The fix is validated by a REAL `uv sync` (not just `--dry-run`):** with
+`UV_PROJECT_ENVIRONMENT=/home/runner/workspace/.venv` active, `uv sync` exits 0,
+creates `.venv` (`pyvenv.cfg home = .../.pythonlibs/bin`), and
+`.venv/bin/python -c 'import streamlit,pandas,...'` (the artifact.toml prod build
+check) succeeds. `.venv` and `.pythonlibs` are gitignored via `/etc/.gitignore`, so a
+local simulation sync cannot be accidentally committed/bloat the image.
+
 **Root cause:** When a root `pyproject.toml` + `uv.lock` exist, the Replit deploy
 auto-runs a bare `uv lock` + `uv sync`. The python module injects
 `UV_PROJECT_ENVIRONMENT=/home/runner/workspace/.pythonlibs`. `.pythonlibs` is NOT
@@ -44,11 +59,12 @@ target.
 - Adding `.pythonlibs` to `.replitignore` does NOTHING for this. The python
   module re-provisions `.pythonlibs` as a non-venv in the build (it is gitignored,
   so not shipped from git anyway); `.replitignore` only trims the final image.
-- `[tool.uv] default-groups = []` alone does NOT fix it — it only drops the dev
-  group, so `uv sync` still installs the prod set into the read-only store. It is
-  a useful *secondary* refinement (leaner prod venv) but not the cure. When using
-  it, dev's verify/realign scripts must pass `uv export --all-groups` so
-  `.pythonlibs` still tracks the full lock (incl pytest).
+- `[tool.uv] default-groups = []` does NOT fix it, and (empirically, uv 0.9.5) does
+  not even drop the dev group: a fresh `uv sync` — even `uv sync --no-default-groups` —
+  still installs pytest/iniconfig/pluggy. So it is purely cosmetic here, NOT a leaner
+  prod venv. Harmless (the install succeeds into the writable `.venv` regardless), but
+  do not rely on it to exclude dev deps. Dev verify/realign scripts still pass
+  `uv export --all-groups` so `.pythonlibs` tracks the full lock (incl pytest).
 
 **Why / gotchas:**
 - uv 0.9.x does NOT accept `project-environment` in `uv.toml`/pyproject (unknown
