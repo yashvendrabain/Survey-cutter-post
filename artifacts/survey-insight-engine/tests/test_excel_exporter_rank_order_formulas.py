@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from pathlib import Path
 import unittest
 from uuid import uuid4
 
@@ -21,10 +20,11 @@ from src.models import (
     RankOrderRow,
     SurveySchema,
 )
+from tests.conftest import make_temp_output_dir
 
 
 UTC_NOW = datetime(2026, 5, 26, tzinfo=timezone.utc)
-FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
+OUTPUT_DIR = make_temp_output_dir()
 
 
 def _quality_report(dataframe: pd.DataFrame) -> DataQualityReport:
@@ -90,8 +90,7 @@ class TestRankOrderExporterFormulas(unittest.TestCase):
             total_responses=6,
         )
 
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
-        output_path = FIXTURE_DIR / f"rank_order_formulas_{uuid4().hex}.xlsx"
+        output_path = OUTPUT_DIR / f"rank_order_formulas_{uuid4().hex}.xlsx"
         export_single_cuts(
             [result],
             [],

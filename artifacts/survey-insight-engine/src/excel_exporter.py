@@ -8281,7 +8281,7 @@ def _write_memory_report_if_enabled(output_path: str, profiler: Any) -> None:
         return
 
     report = profiler.get_report()
-    report_dir = Path("outputs")
+    report_dir = Path(os.environ.get("SURVEY_MEMORY_REPORT_DIR", "outputs"))
     report_dir.mkdir(parents=True, exist_ok=True)
     report_path = report_dir / f"{Path(output_path).stem}.memory_report.txt"
     report_path.write_text(report, encoding="utf-8")

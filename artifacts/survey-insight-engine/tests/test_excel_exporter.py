@@ -53,12 +53,12 @@ from src.models import (
     SkipRecord,
     SurveySchema,
 )
-from tests.conftest import CROSS_CUT_30_RESPONDENTS_PATH
+from tests.conftest import CROSS_CUT_30_RESPONDENTS_PATH, make_temp_output_dir
 
 
 UTC_NOW = datetime(2026, 5, 4, 12, 0, tzinfo=timezone.utc)
 LONG_ID = "Q_VERY_LONG_SINGLE_SELECT_EXPORT_NAME"
-FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
+OUTPUT_DIR = make_temp_output_dir()
 def make_audit(
     metric_name: str,
     question_id: str,
@@ -904,7 +904,7 @@ class TestExcelExporter(unittest.TestCase):
 
     def test_no_double_underscore_data_names(self) -> None:
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_long_labels_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         export_long_label_fixture(output_path)
@@ -918,9 +918,9 @@ class TestExcelExporter(unittest.TestCase):
         )
 
     def test_nps_raw_score_named_ranges_are_separate_from_bucket_columns(self) -> None:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         dataframe = pd.DataFrame(
@@ -1145,7 +1145,7 @@ class TestExcelExporter(unittest.TestCase):
 
     def test_real_long_label_workbook_has_no_undefined_names(self) -> None:
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_long_labels_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         export_long_label_fixture(output_path)
@@ -1163,12 +1163,11 @@ class TestExcelExporter(unittest.TestCase):
     def test_memory_profile_report_written_when_enabled(self) -> None:
         from src import memory_profiler
 
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
-        report_path = Path("outputs") / f"{output_path.stem}.memory_report.txt"
+        report_path = OUTPUT_DIR / f"{output_path.stem}.memory_report.txt"
         if report_path.exists():
             report_path.unlink()
         results, skips, schema, quality_report, log = make_export_fixture()
@@ -1192,7 +1191,13 @@ class TestExcelExporter(unittest.TestCase):
         ]
 
         try:
-            with patch.dict(os.environ, {"SURVEY_PROFILE_MEMORY": "1"}):
+            with patch.dict(
+                os.environ,
+                {
+                    "SURVEY_PROFILE_MEMORY": "1",
+                    "SURVEY_MEMORY_REPORT_DIR": str(OUTPUT_DIR),
+                },
+            ):
                 export_single_cuts(
                     results,
                     skips,
@@ -1272,9 +1277,9 @@ class TestExcelExporter(unittest.TestCase):
         return result, schema
 
     def export_workbook(self) -> Path:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         results, skips, schema, quality_report, log = make_export_fixture()
@@ -1287,9 +1292,9 @@ class TestExcelExporter(unittest.TestCase):
         schema: SurveySchema,
         **export_kwargs,
     ) -> Path:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         quality_report = DataQualityReport(
@@ -1314,9 +1319,9 @@ class TestExcelExporter(unittest.TestCase):
         return output_path
 
     def export_numeric_allocation_workbook(self) -> Path:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         per_option_stats = {
@@ -1422,9 +1427,9 @@ class TestExcelExporter(unittest.TestCase):
         return output_path
 
     def export_streaming_raw_workbook(self) -> Path:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         row_count = 3000
@@ -1484,9 +1489,9 @@ class TestExcelExporter(unittest.TestCase):
         return output_path
 
     def export_mixed_eight_block_workbook(self) -> Path:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         results, skips, schema, quality_report, log = make_export_fixture()
@@ -1528,9 +1533,9 @@ class TestExcelExporter(unittest.TestCase):
         return output_path
 
     def export_workbook_with_cross_cuts(self) -> Path:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         (
@@ -1555,9 +1560,9 @@ class TestExcelExporter(unittest.TestCase):
         return output_path
 
     def export_cross_cut_workbook(self, cross_results: list) -> Path:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         (
@@ -1573,9 +1578,9 @@ class TestExcelExporter(unittest.TestCase):
         return output_path
 
     def export_filtered_workbook(self) -> Path:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         filtered_results, schema, log = make_filtered_export_fixture()
@@ -2059,9 +2064,9 @@ class TestExcelExporter(unittest.TestCase):
         )
 
     def test_subset_denominator_note_appears_when_denominator_is_small(self) -> None:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         results, skips, schema, quality_report, log = make_export_fixture()
@@ -2124,9 +2129,9 @@ class TestExcelExporter(unittest.TestCase):
         self.assertEqual(workbook["Filters"].sheet_state, "visible")
 
     def test_filter_display_label_drops_question_number(self) -> None:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         results, skips, schema, quality_report, log = make_export_fixture()
@@ -2163,9 +2168,9 @@ class TestExcelExporter(unittest.TestCase):
         self.assertNotRegex(str(workbook["Filters"]["A4"].value), r"\bQ\d+")
 
     def test_filters_sheet_uses_ai_short_labels_for_demographics(self) -> None:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         questions = (
@@ -2297,9 +2302,9 @@ class TestExcelExporter(unittest.TestCase):
         self.assertFalse(any("term:" in str(value) for value in values))
 
     def test_all_questions_dropdown_entries_use_q_number_dash_label_format(self) -> None:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         questions = (
@@ -2605,9 +2610,9 @@ class TestExcelExporter(unittest.TestCase):
         self.assertGreater(blank_caches, 0)
 
     def test_raw_data_has_filter_helper_columns(self) -> None:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         results, skips, schema, quality_report, log = make_export_fixture()
@@ -2683,13 +2688,19 @@ class TestExcelExporter(unittest.TestCase):
         from src import memory_profiler
 
         try:
-            with patch.dict(os.environ, {"SURVEY_PROFILE_MEMORY": "1"}):
+            with patch.dict(
+                os.environ,
+                {
+                    "SURVEY_PROFILE_MEMORY": "1",
+                    "SURVEY_MEMORY_REPORT_DIR": str(OUTPUT_DIR),
+                },
+            ):
                 output_path = self.export_streaming_raw_workbook()
         finally:
             memory_profiler.disable_profiling()
             memory_profiler.reset_log()
 
-        report_path = Path("outputs") / f"{output_path.stem}.memory_report.txt"
+        report_path = OUTPUT_DIR / f"{output_path.stem}.memory_report.txt"
         self.assertTrue(report_path.exists())
         report = report_path.read_text(encoding="utf-8")
         patch_peak = None
@@ -2714,9 +2725,9 @@ class TestExcelExporter(unittest.TestCase):
         self.assertIn("F_Custom1_Q", ws["C5"].value)
 
     def test_available_values_column_present(self) -> None:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         results, skips, schema, quality_report, log = make_export_fixture()
@@ -2766,9 +2777,9 @@ class TestExcelExporter(unittest.TestCase):
         self.assertRegex(str(heading), r"^Q\w+\s*[-:]?\s*")
 
     def test_short_labels_stay_in_filter_ui_not_question_heading(self) -> None:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         results, skips, schema, quality_report, log = make_export_fixture()
@@ -2851,9 +2862,9 @@ class TestExcelExporter(unittest.TestCase):
             self.assertEqual(ws.cell(heading_row, column).fill.fgColor.rgb, "FFCC0000")
 
     def test_question_heading_uses_full_text_without_comment(self) -> None:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         full_text = (
@@ -2920,9 +2931,9 @@ class TestExcelExporter(unittest.TestCase):
         self.assertIn("Q7 - Seniority", filter_values)
 
     def test_per_question_filter_named_cells_scoped_per_theme(self) -> None:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         results, skips, schema, quality_report, log = make_export_fixture()
@@ -2965,9 +2976,9 @@ class TestExcelExporter(unittest.TestCase):
         self.assertEqual(workbook["_Options"].sheet_state, "hidden")
 
     def test_demographic_filter_named_cells_exist(self) -> None:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         results, skips, schema, quality_report, log = make_export_fixture()
@@ -3014,9 +3025,9 @@ class TestExcelExporter(unittest.TestCase):
         self.assertNotIn("SUMPRODUCT", formula)
 
     def test_named_cells_are_workbook_scoped(self) -> None:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         results, skips, schema, quality_report, log = make_export_fixture()
@@ -3152,9 +3163,9 @@ class TestExcelExporter(unittest.TestCase):
         self.assertIn("-1>11", formula)
 
     def test_priority_demographic_ordering(self) -> None:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         results, skips, schema, quality_report, log = make_export_fixture()
@@ -3188,9 +3199,9 @@ class TestExcelExporter(unittest.TestCase):
         self.assertEqual(ws["A5"].value, "Multi Select Export Question")
 
     def test_workbook_has_one_sheet_per_theme(self) -> None:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         results, skips, schema, quality_report, log = make_export_fixture()
@@ -3232,9 +3243,9 @@ class TestExcelExporter(unittest.TestCase):
         self.assertIn("SUBTOTAL", value)
 
     def test_demographic_filter_row_has_data_validation(self) -> None:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         results, skips, schema, quality_report, log = make_export_fixture()
@@ -3261,9 +3272,9 @@ class TestExcelExporter(unittest.TestCase):
         self.assertGreater(len(ws.data_validations.dataValidation), 0)
 
     def test_grid_single_select_excel_format(self) -> None:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         result, schema = self.grid_single_select_format_fixture()
@@ -3546,10 +3557,10 @@ class TestExcelExporter(unittest.TestCase):
             warnings=(),
         )
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         export_single_cuts(
             [segment_result, grid_binary_result],
             [],
@@ -3838,9 +3849,9 @@ class TestExcelExporter(unittest.TestCase):
         self.assertEqual(skips[0].canonical_id, "Q26")
         self.assertEqual(skips[0].skip_reason, "all raw columns empty in dataset")
 
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         quality_report = DataQualityReport(
@@ -4391,9 +4402,9 @@ class TestExcelExporter(unittest.TestCase):
 
     def test_grid_cross_tab_respects_display_mode(self) -> None:
         result, schema, log = grid_cross_tab_export_result(display_mode="row_pct")
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         export_cross_cuts_only([result], schema, log, str(output_path))
@@ -4444,9 +4455,9 @@ class TestExcelExporter(unittest.TestCase):
         self.assertIn("Std", values)
 
     def test_nps_group_comparison_exports_entity_segment_table(self) -> None:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         dataframe = pd.DataFrame(
@@ -4508,9 +4519,9 @@ class TestExcelExporter(unittest.TestCase):
         self.assertIn(0.0, values)
 
     def test_new_metric_group_comparisons_export_matrix_and_detail_blocks(self) -> None:
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         dataframe = pd.DataFrame(
@@ -4615,9 +4626,9 @@ class TestExcelExporter(unittest.TestCase):
             cross_results,
             _cross_skips,
         ) = make_cross_cut_export_fixture()
-        FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = (
-            FIXTURE_DIR
+            OUTPUT_DIR
             / f"excel_exporter_{self._testMethodName}_{uuid4().hex}.xlsx"
         )
         export_cross_cuts_only(cross_results[:2], schema, log, str(output_path))

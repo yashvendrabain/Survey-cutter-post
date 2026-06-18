@@ -2,9 +2,31 @@
 
 from __future__ import annotations
 
+import atexit
+import shutil
+import tempfile
 from pathlib import Path
 
 from openpyxl import Workbook
+
+
+_TEST_OUTPUT_ROOT: Path | None = None
+
+
+def make_temp_output_dir() -> Path:
+    """Return a process-wide temp directory for throwaway test outputs.
+
+    Tests that export generated workbooks (or other scratch files) must write
+    here instead of tracked directories like ``tests/fixtures`` or ``outputs``,
+    so test runs never litter the repo. The directory is created lazily and
+    removed automatically when the process exits.
+    """
+    global _TEST_OUTPUT_ROOT
+    if _TEST_OUTPUT_ROOT is None:
+        _TEST_OUTPUT_ROOT = Path(tempfile.mkdtemp(prefix="survey_test_outputs_"))
+        atexit.register(shutil.rmtree, _TEST_OUTPUT_ROOT, ignore_errors=True)
+    _TEST_OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+    return _TEST_OUTPUT_ROOT
 
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
