@@ -48,3 +48,25 @@ or make startup robust enough to pass blindly.
 
 **Why deployment type can't be auto-fixed:** it is user-only (Deployments pane), not settable
 via `artifact.toml`.
+
+## Resolution (confirmed fix — option #2 was the real one)
+
+The `--server.fileWatcherType none` flag alone was **NOT** sufficient. The promote/"failed to
+start" failure was the Python deps reaching prod only via the gitignored `.pythonlibs`. The fix
+that worked was formalizing deps, NOT a prod `pip install` and NOT a VM size bump:
+
+- Declare the **exact** runtime deps in root `pyproject.toml` pinned to the *actually-installed*
+  versions, and regenerate `uv.lock` (`UV_PYTHON=.pythonlibs/bin/python uv lock`).
+- Keep `.pythonlibs` realigned to the lock via a **post-merge script** (`realign_python_lock.py`)
+  that wipes stale `*.dist-info` and force-reinstalls drifted packages to the locked versions
+  (`pip install --user --break-system-packages --no-deps --force-reinstall`). A verify script
+  (`verify_python_lock.py`) asserts installed==lock and is registered as a `python-lock`
+  validation. See `python-deps-provisioning.md`.
+- **Gotcha:** `requirements.txt` pins were *wrong/aspirational* — claimed streamlit 1.58.0 but
+  1.39.0 actually runs; openai had 3 layered dist-info dirs (split-brain). Trust what's installed
+  (and the lock), never the hand-written requirements.txt.
+
+**Concrete gce diagnostic marker:** `getDeploymentBuild(<failed-id>)` DOES return build logs for
+a Reserved VM (gce) build, but a promote failure shows only ~25 lines ending at
+`info: Waiting for deployment to be ready` — no app stdout/stderr. That last line == startup
+probe never got 200; the real traceback is unreachable on gce (confirms the diagnosis limit).
