@@ -3,3 +3,22 @@
 
 # No need to store the pnpm store twice.
 .local
+
+# Large generated download archive (multi-GB) — not needed at runtime.
+dist
+
+# Package/build caches — not needed at runtime.
+.cache
+
+# Git history — not needed in the deployed image.
+.git
+
+# Uploaded source assets (originals, spreadsheets, prior app versions) — not needed at runtime.
+attached_assets
+
+# Survey app: test fixtures, scratch outputs, and editor backups — not needed at runtime.
+artifacts/survey-insight-engine/tests
+artifacts/survey-insight-engine/outputs
+artifacts/survey-insight-engine/.pytest_cache
+**/*.bak
+**/*.bak_*
