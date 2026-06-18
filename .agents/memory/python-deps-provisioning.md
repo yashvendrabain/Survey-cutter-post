@@ -24,16 +24,47 @@ error and does NOT touch the working `.pythonlibs`. Verify with `uv lock --check
 Avoid `uv sync` — it would rewrite `.pythonlibs` (clobber risk) and target the wrong
 python.
 
-**Determinism caveat:** `uv lock` resolves transitives to *latest-compatible*, so the
-lock can list newer patch/minor versions than the ad-hoc `.pythonlibs` (which was
-pip-populated, not uv-synced). Direct/top-level pins match; ~18 transitives drifted
-newer. Publish ships `.pythonlibs` as-is and does NOT run a python install, so the
-lock is a reproducible recipe, not what actually ships — the drift is latent, not
-breaking.
+**Writing into `.pythonlibs` (this is the key trick):** the env is a `--user` site —
+`PYTHONUSERBASE=.pythonlibs`. The Nix `pip` refuses installs with
+`error: externally-managed-environment` (PEP 668). The working invocation is
+`.pythonlibs/bin/python -m pip install --user --break-system-packages ...` — `--user`
+targets the writable `.pythonlibs/lib/python3.11/site-packages` (never the read-only
+Nix store), and `--break-system-packages` overrides the PEP 668 guard *without*
+touching the store. This is how to install/upgrade/force-reinstall deps here.
 
-**Gotchas found in `.pythonlibs`:**
-- `streamlit-sortables` is installed but imported nowhere (unused leftover) — don't
-  add it to deps.
-- `openai` is split-brain: `openai.__version__` == 2.41.0 (the running code) but the
-  dist-info metadata == 2.36.0. Pin to 2.41.0 (what actually runs). Don't force a
-  reinstall on a working app just to fix the metadata.
+**The drift was layered stale `dist-info`, not just "uv resolved newer".** Ad-hoc pip
+runs overwrote code but left OLD `*.dist-info` dirs behind, so one package had multiple
+dist-info versions (e.g. openai had 2.36.0 + 2.40.0 + 2.41.0). `importlib.metadata` /
+`uv` then report whichever it scans first → split-brain (openai code 2.41 vs metadata
+2.36) and phantom "drift". To make `.pythonlibs` match the lock exactly:
+1. `uv export --no-emit-project --format requirements-txt` (omit `--no-dev` to KEEP
+   pytest et al. — the deployed env should mirror the *tested* lock), strip hashes →
+   `name==ver` list.
+2. Remove stale/duplicate `*.dist-info` dirs and any package not in the lock
+   (e.g. streamlit-sortables) — for extras, delete files via their `RECORD` first.
+3. `python -m pip install --user --break-system-packages --no-deps --force-reinstall
+   -r <list>` to rewrite every package's code+metadata to one coherent lock version.
+   Run it BACKGROUNDED (`nohup ... &`) — a 66-pkg force-reinstall exceeds the bash
+   tool's hard timeout and gets SIGKILLed mid-run, leaving a half-cleaned env.
+
+**Markers matter — do NOT strip them when building the install list.** `uv export`
+emits env markers, e.g. `colorama==0.4.6 ; sys_platform == 'win32'` and
+`watchdog==5.0.3 ; sys_platform != 'darwin'`. A naive `sed 's/ .*//'` drops the
+marker and will install win32-only `colorama` on Linux — a real fidelity break. Keep
+the marker and evaluate it (`packaging.markers.Marker(...).evaluate()`) so
+platform-gated packages are only installed/expected where they apply. On Linux the
+lock has 66 entries but only 65 install (colorama excluded; watchdog included).
+
+**There is a committed, reproducible check:**
+`artifacts/survey-insight-engine/scripts/verify_python_lock.py` — run with the project
+interpreter (`.pythonlibs/bin/python …`). It uses `uv export` + marker evaluation to
+assert installed==lock for every package, flags duplicate dist-info, unexpected
+extras, and openai code-vs-metadata split-brain; exits non-zero on any drift. This is
+the auditable proof since `.pythonlibs` is gitignored. `requirements.txt` in that
+artifact is a marker-preserving snapshot of the same export (mirror, not source of
+truth). Verify success also via `uv lock --check` and `/_stcore/health` == 200.
+
+The old "don't force a reinstall on a working app" caution is superseded for a
+deliberate lock-realignment like this — `pip --user --break-system-packages
+--force-reinstall` is safe here; `uv sync` is still the thing to avoid (wrong python +
+clobber).
