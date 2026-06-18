@@ -68,3 +68,18 @@ The old "don't force a reinstall on a working app" caution is superseded for a
 deliberate lock-realignment like this — `pip --user --break-system-packages
 --force-reinstall` is safe here; `uv sync` is still the thing to avoid (wrong python +
 clobber).
+
+**There is now an auto-fixer wired into post-merge:**
+`artifacts/survey-insight-engine/scripts/realign_python_lock.py` is the *fixer*
+counterpart to the verifier — `scripts/post-merge.sh` runs it (with the project
+interpreter) after every merge so `.pythonlibs` is realigned to `uv.lock`
+automatically. It is idempotent and incremental: it only reinstalls packages that
+drift (wrong/missing version or carrying duplicate dist-info), wiping all stale
+dist-info layers (files via RECORD) first so one coherent version remains; a clean
+env is a sub-5s no-op. **Operational gotcha:** the script clears stale dist-info
+BEFORE the force-reinstall, so if the reinstall is interrupted mid-run (bash-tool
+hard timeout or a backgrounded process killed when the shell session ends) the
+cleared packages end up MISSING — a half-cleaned env. It is idempotent, so just run
+it to completion (use `setsid`/post-merge, not a foregrounded bash call) and it
+reinstalls the missing ones. The post-merge timeout was bumped to 180s to fit a
+worst-case full reinstall.
