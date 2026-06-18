@@ -70,3 +70,24 @@ that worked was formalizing deps, NOT a prod `pip install` and NOT a VM size bum
 a Reserved VM (gce) build, but a promote failure shows only ~25 lines ending at
 `info: Waiting for deployment to be ready` — no app stdout/stderr. That last line == startup
 probe never got 200; the real traceback is unreachable on gce (confirms the diagnosis limit).
+
+## Classifying which failure you're looking at (gce) — and the "Build ✓" trap
+
+`listDeploymentBuilds` + `getDeploymentBuild` distinguish the two failure modes WITHOUT VM logs:
+- **pkgFail (build phase):** ~19-21 log lines ending at `uv sync` → `os error 13` into
+  `/nix/store`. → the `.venv` redirect fix (UV_PROJECT_ENVIRONMENT=.venv, shared).
+- **reachedPromote (promote phase):** ~25-33 lines ending at `Creating virtual machine` /
+  `Waiting for deployment to be ready` / `failed to initialize`. → the startup/port-bind fix.
+
+**TRAP:** a screenshot showing **"Build ✓ … Promote ✗" is NOT proof the `.venv` fix deployed.**
+A build from BEFORE the root `pyproject.toml`+`uv.lock` existed ALSO shows "Build ✓" (no
+uv-sync step ran at all) yet still fails promote. ALWAYS confirm a build's `timeCreated` is
+AFTER the fix commit before concluding anything. (Real miss: 06:37-10:04 builds = pre-uv
+promote-fails; 11:25-11:47 = uv-sync pkgFails; a "the .venv fix worked" call was made off a
+06:37 screenshot — the fix had never actually built.)
+
+**`.venv` prod run validated locally:** `/home/runner/workspace/.venv/bin/python -m streamlit
+run app.py <prod flags incl --server.fileWatcherType none>` binds and returns
+`/_stcore/health` = 200 in **~6s** (clean deps installed from `uv.lock` into `.venv` beat the
+old shipped-`.pythonlibs` path). App reads NO secret at import time, so a missing prod secret
+is not a startup-crash vector here.
