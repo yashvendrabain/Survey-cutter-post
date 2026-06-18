@@ -125,10 +125,21 @@ class TestRankOrderExporterFormulas(unittest.TestCase):
 
         for formula in formula_cells:
             self.assertTrue(str(formula).startswith("="), formula)
-        self.assertEqual(ws.cell(header_row, 3).value, "Net Rank Score")
+        self.assertEqual(ws.cell(header_row, 3).value, "Weighted Average")
         self.assertEqual(
             ws.cell(data_start, 3).value,
-            "=IFERROR((SUM(D18*2,F18*1)/(2*$B$20))*100,0)",
+            (
+                "=IFERROR((INDEX(All_Questions_Q43_PTS,1)*COUNTIFS("
+                'Q43r1_data,"1",passes_workbook_filters_data,1,'
+                "passes_workbook_custom_filters_data,1,"
+                "All_Questions_passes_local_filters_data,1,"
+                "All_Questions_Q43_F_passes_per_q_filter_data,1) + "
+                "INDEX(All_Questions_Q43_PTS,2)*COUNTIFS("
+                'Q43r1_data,"2",passes_workbook_filters_data,1,'
+                "passes_workbook_custom_filters_data,1,"
+                "All_Questions_passes_local_filters_data,1,"
+                "All_Questions_Q43_F_passes_per_q_filter_data,1))/$B$23,0)"
+            ),
         )
         self.assertIn("passes_workbook_filters_data", str(ws.cell(data_start, 4).value))
         self.assertIn("passes_workbook_filters_data", str(ws.cell(data_start, 6).value))
