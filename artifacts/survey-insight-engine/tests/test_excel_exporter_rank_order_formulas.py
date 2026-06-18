@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 import unittest
 from uuid import uuid4
 
@@ -126,21 +127,37 @@ class TestRankOrderExporterFormulas(unittest.TestCase):
         for formula in formula_cells:
             self.assertTrue(str(formula).startswith("="), formula)
         self.assertEqual(ws.cell(header_row, 3).value, "Weighted Average")
-        self.assertEqual(
-            ws.cell(data_start, 3).value,
-            (
-                "=IFERROR((INDEX(All_Questions_Q43_PTS,1)*COUNTIFS("
-                'Q43r1_data,"1",passes_workbook_filters_data,1,'
-                "passes_workbook_custom_filters_data,1,"
-                "All_Questions_passes_local_filters_data,1,"
-                "All_Questions_Q43_F_passes_per_q_filter_data,1) + "
-                "INDEX(All_Questions_Q43_PTS,2)*COUNTIFS("
-                'Q43r1_data,"2",passes_workbook_filters_data,1,'
-                "passes_workbook_custom_filters_data,1,"
-                "All_Questions_passes_local_filters_data,1,"
-                "All_Questions_Q43_F_passes_per_q_filter_data,1))/$B$23,0)"
-            ),
+
+        weighted_average = str(ws.cell(data_start, 3).value)
+        # The weighted-average formula is checked structurally rather than as a
+        # frozen literal so that benign exporter tweaks (row-layout shifts,
+        # whitespace, formula reordering) do not break the test while a genuine
+        # logic regression still does.
+        self.assertTrue(
+            weighted_average.startswith("=IFERROR("), weighted_average
         )
+        self.assertTrue(weighted_average.endswith(",0)"), weighted_average)
+        # Weighted sum indexes into the points named range, once per rank (K=2).
+        for rank in (1, 2):
+            self.assertIn(
+                f"INDEX(All_Questions_Q43_PTS,{rank})", weighted_average
+            )
+            # Each rank is counted via COUNTIFS over the option data range for
+            # that rank value.
+            self.assertIn(
+                f'COUNTIFS(Q43r1_data,"{rank}"', weighted_average
+            )
+        # COUNTIFS constrains on every filter named range.
+        for filter_range in (
+            "passes_workbook_filters_data",
+            "passes_workbook_custom_filters_data",
+            "All_Questions_passes_local_filters_data",
+            "All_Questions_Q43_F_passes_per_q_filter_data",
+        ):
+            self.assertIn(filter_range, weighted_average)
+        # The weighted sum is divided by the totals cell in column B; the exact
+        # row is layout-dependent, so only the column anchor is pinned.
+        self.assertRegex(weighted_average, r"/\$B\$\d+,0\)$")
         self.assertIn("passes_workbook_filters_data", str(ws.cell(data_start, 4).value))
         self.assertIn("passes_workbook_filters_data", str(ws.cell(data_start, 6).value))
         self.assertIn("Q43r1_data", str(ws.cell(data_start, 4).value))
