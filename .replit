@@ -74,3 +74,4 @@ packages = ["freetype", "glibcLocales", "lcms2", "libimagequant", "libjpeg", "li
 [userenv]
 
 [userenv.shared]
+UV_PROJECT_ENVIRONMENT = "/home/runner/workspace/.venv"

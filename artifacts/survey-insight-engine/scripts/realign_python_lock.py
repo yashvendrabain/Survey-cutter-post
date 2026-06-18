@@ -69,6 +69,7 @@ def lock_versions(root: Path) -> dict[str, str]:
         [
             "uv",
             "export",
+            "--all-groups",
             "--no-emit-project",
             "--format",
             "requirements-txt",
