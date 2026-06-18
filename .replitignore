@@ -22,3 +22,11 @@ artifacts/survey-insight-engine/outputs
 artifacts/survey-insight-engine/.pytest_cache
 **/*.bak
 **/*.bak_*
+
+# Python env: `uv sync` rebuilds this fresh as a proper venv during the deploy
+# build. The dev .pythonlibs is a non-venv --user tree whose `bin/python`
+# symlinks into the READ-ONLY nix store; shipping it makes the deploy's
+# `uv sync` resolve that interpreter and try to install into the nix store,
+# failing with "Permission denied (os error 13)". Excluding it lets the build
+# create a clean, writable venv at .pythonlibs (also trims ~719MB from image).
+.pythonlibs
