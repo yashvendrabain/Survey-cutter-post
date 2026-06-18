@@ -1,0 +1,40 @@
+[project]
+name = "repl-nix-workspace"
+version = "0.1.0"
+description = "Survey Insight Engine workspace Python dependencies"
+requires-python = ">=3.11"
+dependencies = [
+    "streamlit==1.39.0",
+    "pandas==2.2.3",
+    "numpy==1.26.4",
+    "scipy==1.17.1",
+    "plotly==6.7.0",
+    "openpyxl==3.1.5",
+    "xlsxwriter==3.2.0",
+    "pillow==10.4.0",
+    "python-dateutil==2.9.0",
+    "python-docx==1.2.0",
+    "openai==2.41.0",
+    "psutil==7.2.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==8.3.3",
+]
+
+[tool.uv]
+# These files live in the artifact dir (NOT the repo root) on purpose. When a
+# root pyproject.toml + uv.lock exist, Replit's deploy auto-runs `uv sync` during
+# the "Installing packages" build phase, targeting UV_PROJECT_ENVIRONMENT which on
+# Replit defaults to `.pythonlibs` — a NON-venv whose bin/python symlinks into the
+# READ-ONLY nix store, so the sync dies with "Permission denied (os error 13)".
+# Keeping the uv project OUT of the repo root means no auto `uv sync` runs at
+# deploy; production instead runs straight from the shipped, lock-aligned
+# `.pythonlibs` (see artifact.toml [services.production]). The verify/realign
+# scripts locate this lock by walking up from their own dir, so they keep working
+# from here with no code change.
+# `default-groups = []` keeps the dev group (pytest) out of any project sync; the
+# verify/realign scripts pass `--all-groups` explicitly so the local `.pythonlibs`
+# still tracks the full lock, including pytest.
+default-groups = []

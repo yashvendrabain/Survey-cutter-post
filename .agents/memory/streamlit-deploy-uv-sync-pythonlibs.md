@@ -1,76 +1,73 @@
 ---
 name: Python publish EACCES — deploy uv sync writes to read-only nix store
-description: Why a Replit publish build fails at "Installing packages" with Permission denied into the nix store, and the real fix (redirect UV_PROJECT_ENVIRONMENT to a writable .venv).
+description: Why a Replit publish build fails at "Installing packages" with Permission denied into the nix store, and the fix that actually reaches the deploy build (remove the ROOT uv-project trigger; run prod from the shipped .pythonlibs).
 ---
 
 # Python publish fails: deploy `uv sync` writes to read-only nix store
 
 **Symptom:** Publish build fails at "Installing packages" — `uv sync` prepares
-wheels fine, then `Failed to install <pkg> ... Permission denied (os error 13)`
-copying into `/nix/store/<hash>-python3-.../lib/python3.11/site-packages/`. It
-errors on an early leaf package (e.g. iniconfig) but is actually trying to
-install the WHOLE selected set there.
+wheels, then `Failed to install <pkg> ... Permission denied (os error 13)` copying
+into `/nix/store/<hash>-python3-.../lib/python3.11/site-packages/`. Errors on an
+early leaf pkg (e.g. numpy/iniconfig) but is trying to install the whole set there.
 
-**DEBUG FIRST — is the failing build even using the fix?** A Replit publish builds
-from the *committed git tree* at publish time. Before re-diagnosing, compare each
-failed build's timestamp (`listDeploymentBuilds`) with the fix commit's timestamp
-(`git show -s --format=%cI <sha>`). Builds that predate the fix commit fail with the
-OLD behavior and are NOT evidence the fix is broken — the cure is simply to re-publish
-so the build picks up the committed fix. (Real case: 6 builds all failed with the
-nix-store EACCES; every one ran 20+ min BEFORE the fix was committed.)
+**Root cause / trigger:** This deploy is **Node-first**. The "Installing packages"
+build phase runs NO Python install step **except** an auto `uv lock` + `uv sync`
+that Replit fires **only when a ROOT `pyproject.toml` + `uv.lock` exist**. That
+auto `uv sync` targets `UV_PROJECT_ENVIRONMENT`, which the python module defaults to
+`.pythonlibs` — a NON-venv whose `bin/python` symlinks into the read-only nix store,
+so uv resolves the nix-store prefix as the target and dies with EACCES.
 
-**The fix is validated by a REAL `uv sync` (not just `--dry-run`):** with
-`UV_PROJECT_ENVIRONMENT=/home/runner/workspace/.venv` active, `uv sync` exits 0,
-creates `.venv` (`pyvenv.cfg home = .../.pythonlibs/bin`), and
-`.venv/bin/python -c 'import streamlit,pandas,...'` (the artifact.toml prod build
-check) succeeds. `.venv` and `.pythonlibs` are gitignored via `/etc/.gitignore`, so a
-local simulation sync cannot be accidentally committed/bloat the image.
+**Proof of the trigger (build-history bisect):** builds that ran BEFORE a root
+`uv.lock` existed show "Installing packages" doing only the Node esbuild step (no
+Python install at all) and PASS the build phase; every build AFTER a root
+`pyproject.toml`+`uv.lock` were added fails at the auto `uv sync`. The root uv
+project is exactly what introduces the failure.
 
-**Root cause:** When a root `pyproject.toml` + `uv.lock` exist, the Replit deploy
-auto-runs a bare `uv lock` + `uv sync`. The python module injects
-`UV_PROJECT_ENVIRONMENT=/home/runner/workspace/.pythonlibs`. `.pythonlibs` is NOT
-a real venv (no `pyvenv.cfg`; its `bin/python` symlinks into the read-only nix
-store). uv therefore resolves the *nix store prefix* as the target env and tries
-to install there → EACCES. The nix python does NOT have the project deps "baked
-in" — `uv sync --dry-run` plans to install the full set (here 62 prod / 65 with
-dev) regardless. Dev never hits this because dev installs via `pip install
---user` into `.pythonlibs/lib`, never `uv sync`.
+**DISPROVEN fix (do NOT retry): redirecting UV_PROJECT_ENVIRONMENT via `setEnvVars`.**
+`setEnvVars({environment:"shared"})` writes `[userenv.shared]` into `.replit`. That
+store reaches the **workspace shell** and the **runtime**, but **NOT the deploy
+BUILD container** — 5 builds after setting `UV_PROJECT_ENVIRONMENT=.venv` (shared)
+failed with the IDENTICAL nix-store EACCES. A prior note claimed "shared scope
+reaches the build (confirmed in a fresh shell)"; the fresh-shell test only proves
+the *workspace* sees it, which is a different environment from the build container.
+uv 0.9.x has no pyproject/uv.toml field for the project env (env-var only), so there
+is no committed lever that the build is known to read.
 
-**The fix that WORKS: redirect the project env to a writable venv.**
-1. `setEnvVars({ values: { UV_PROJECT_ENVIRONMENT: "/home/runner/workspace/.venv" }, environment: "shared" })`.
-   This writes `[userenv.shared]` into `.replit` and OVERRIDES the module's
-   default (verify: a fresh `bash -lc 'echo $UV_PROJECT_ENVIRONMENT'` prints the
-   new value). The deploy build inherits the same env store, so its auto
-   `uv sync` now creates/uses the writable `.venv`.
-2. Point production at that venv: artifact.toml `[services.production].run` and
-   `.build` use `/home/runner/workspace/.venv/bin/python ...`. Keep
-   `[services.development]` on `.pythonlibs/bin/python` (dev is unchanged).
-3. Do NOT exclude `.pythonlibs` from the image. The `.venv` uv creates from
-   `.pythonlibs/bin/python3` records `home = .../.pythonlibs/bin` and its
-   `bin/python` symlinks to `.pythonlibs/bin/python3`; stripping `.pythonlibs`
-   breaks `.venv/bin/python` at runtime. (`sys.base_prefix` = the always-present
-   nix-store python, but the intermediate `.pythonlibs` symlink must survive.)
+**The fix that WORKS: remove the ROOT uv-project trigger; serve prod from `.pythonlibs`.**
+1. Move `pyproject.toml` + `uv.lock` OUT of the repo root into the artifact dir
+   (`artifacts/survey-insight-engine/`). No root uv project ⇒ deploy runs no auto
+   `uv sync` ⇒ build phase passes (matches the pre-uv-lock builds).
+2. Point production at the shipped env: artifact.toml `[services.production].run`
+   and `.build` use `/home/runner/workspace/.pythonlibs/bin/python ...` (identical
+   to the working `[services.development]` command). The `.build` is an `import`
+   smoke-test — keep it so any missing dep fails LOUDLY in the build logs (which ARE
+   retrievable for gce) instead of silently hanging at runtime.
+3. Do NOT exclude `.pythonlibs` from the image. With no install step, the app's
+   Python deps reach prod ONLY via this shipped `.pythonlibs`.
 
-**Verify before publishing:** with the env active, `uv sync --dry-run --frozen`
-must say `Would create project environment at: .venv` and show NO `/nix/store`
-target.
+**Why this delivers deps without an install step:** the deploy image is a snapshot
+of the workspace filesystem (INCLUDING gitignored files), trimmed only by
+`.replitignore`. Evidence: `.replitignore` bothers to exclude gitignored dirs
+(`dist`, `.cache`, `.local`) — pointless unless gitignored content ships by default.
+So the gitignored, lock-aligned `.pythonlibs` (~700MB) ships and provides the deps.
 
-**Disproven dead-ends (do not retry):**
-- Adding `.pythonlibs` to `.replitignore` does NOTHING for this. The python
-  module re-provisions `.pythonlibs` as a non-venv in the build (it is gitignored,
-  so not shipped from git anyway); `.replitignore` only trims the final image.
-- `[tool.uv] default-groups = []` does NOT fix it, and (empirically, uv 0.9.5) does
-  not even drop the dev group: a fresh `uv sync` — even `uv sync --no-default-groups` —
-  still installs pytest/iniconfig/pluggy. So it is purely cosmetic here, NOT a leaner
-  prod venv. Harmless (the install succeeds into the writable `.venv` regardless), but
-  do not rely on it to exclude dev deps. Dev verify/realign scripts still pass
-  `uv export --all-groups` so `.pythonlibs` tracks the full lock (incl pytest).
+**The verify/realign scripts need no path change after the move:** their
+`repo_root()` walks up from the script's own dir to the first `uv.lock`, so a lock
+in the artifact dir auto-resolves; `uv export` runs with `cwd=that dir`.
 
-**Why / gotchas:**
-- uv 0.9.x does NOT accept `project-environment` in `uv.toml`/pyproject (unknown
-  field) — the project env is env-var-only, so `UV_PROJECT_ENVIRONMENT` is the
-  only lever.
-- `.replit` cannot be hand-edited (blocked); set env vars via `setEnvVars` (which
-  writes `[userenv.*]`) and deployment run/build via `verifyAndReplaceArtifactToml`.
-- A user-set env-store value WINS over the module-injected default (confirmed in a
-  fresh shell), which is why `shared` scope reaches the build.
+**Verify before publishing (all local, no publish needed):**
+- root has NO `pyproject.toml`/`uv.lock`;
+- `.pythonlibs/bin/python artifacts/survey-insight-engine/scripts/verify_python_lock.py` exits 0;
+- run the exact prod command on a spare port ⇒ `/_stcore/health` == 200 (~8s here).
+
+**Still-open risk after the build passes:** a separate PROMOTE/startup failure (port
+21049 never binds) hit the early pre-uv-lock builds. Mitigations now in place that
+those builds lacked: `--server.fileWatcherType none` and a `.pythonlibs` realigned
+to the lock. The "formalize deps fixed promote" claim in
+`streamlit-autoscale-port-timeout.md` was NEVER actually validated (every build
+carrying it died at uv-sync before reaching promote). If promote still fails, the
+next levers are bumping the Reserved VM size or temporarily switching to Autoscale
+to get runtime logs (gce runtime logs are not retrievable).
+
+**`.replit` editing:** set env vars via `setEnvVars`/`deleteEnvVars` (writes
+`[userenv.*]`), and deployment run/build via `verifyAndReplaceArtifactToml`.

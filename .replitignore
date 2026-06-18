@@ -23,8 +23,9 @@ artifacts/survey-insight-engine/.pytest_cache
 **/*.bak
 **/*.bak_*
 
-# NOTE: do NOT exclude `.pythonlibs`. The deploy's `uv sync` targets a writable
-# `.venv` (via UV_PROJECT_ENVIRONMENT), but that venv's interpreter symlinks
-# through `.pythonlibs/bin/python3` (pyvenv.cfg `home = .../.pythonlibs/bin`).
-# Stripping `.pythonlibs` from the image would break `.venv/bin/python` at
-# runtime. The nix-store stdlib base is always present in the image.
+# NOTE: do NOT exclude `.pythonlibs`. The deploy has NO Python install step (the
+# uv project lives in the artifact dir, so no auto `uv sync` runs at build time),
+# so the app's Python deps reach production ONLY via this shipped `.pythonlibs`,
+# which the production run command executes directly
+# (`.pythonlibs/bin/python -m streamlit ...`). Stripping it would leave prod with
+# no Streamlit/pandas/numpy. The nix-store stdlib base is always present.

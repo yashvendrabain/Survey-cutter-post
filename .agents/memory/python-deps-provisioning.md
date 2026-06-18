@@ -6,7 +6,9 @@ description: How to declare/lock Python deps for the Streamlit artifact without 
 # Python dependency provisioning (uv) in this monorepo
 
 The Python toolchain here is `uv` with the runtime venv at `.pythonlibs/` (NOT a
-`.venv`). The root `pyproject.toml` + `uv.lock` are the declarative source of truth;
+`.venv`). The `pyproject.toml` + `uv.lock` live in `artifacts/survey-insight-engine/`
+(NOT the repo root — a root uv project makes the deploy auto-run a failing `uv sync`;
+see `streamlit-deploy-uv-sync-pythonlibs.md`) and are the declarative source of truth;
 `artifacts/survey-insight-engine/requirements.txt` is secondary documentation that
 must mirror the actually-installed versions.
 

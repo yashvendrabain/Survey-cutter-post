@@ -18,8 +18,8 @@ localPort = 21049
 run = "/home/runner/workspace/.pythonlibs/bin/python -m streamlit run app.py --server.port 21049 --server.address 0.0.0.0 --server.headless true --server.enableCORS=false --server.enableXsrfProtection=false --server.baseUrlPath= --server.fileWatcherType none"
 
 [services.production]
-build = "/home/runner/workspace/.venv/bin/python -c 'import streamlit, pandas, numpy, scipy, plotly, openpyxl, xlsxwriter, PIL, dateutil, docx, openai, psutil'"
-run = "/home/runner/workspace/.venv/bin/python -m streamlit run app.py --server.port 21049 --server.address 0.0.0.0 --server.headless true --server.enableCORS=false --server.enableXsrfProtection=false --server.baseUrlPath= --server.fileWatcherType none"
+build = "/home/runner/workspace/.pythonlibs/bin/python -c 'import streamlit, pandas, numpy, scipy, plotly, openpyxl, xlsxwriter, PIL, dateutil, docx, openai, psutil'"
+run = "/home/runner/workspace/.pythonlibs/bin/python -m streamlit run app.py --server.port 21049 --server.address 0.0.0.0 --server.headless true --server.enableCORS=false --server.enableXsrfProtection=false --server.baseUrlPath= --server.fileWatcherType none"
 
 [services.env]
 PORT = "21049"

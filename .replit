@@ -49,28 +49,12 @@ localPort = 8081
 externalPort = 8081
 
 [[ports]]
-localPort = 8082
-externalPort = 3003
-
-[[ports]]
-localPort = 8501
+localPort = 8765
 externalPort = 3000
 
 [[ports]]
 localPort = 21049
 externalPort = 80
-
-[[ports]]
-localPort = 21055
-externalPort = 3002
-
-[[ports]]
-localPort = 21099
-externalPort = 3001
-
-[[ports]]
-localPort = 28999
-externalPort = 4200
 
 [nix]
 channel = "stable-25_05"
@@ -79,4 +63,3 @@ packages = ["freetype", "glibcLocales", "lcms2", "libimagequant", "libjpeg", "li
 [userenv]
 
 [userenv.shared]
-UV_PROJECT_ENVIRONMENT = "/home/runner/workspace/.venv"

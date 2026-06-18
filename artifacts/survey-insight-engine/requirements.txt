@@ -1,5 +1,5 @@
 # Auto-generated snapshot of the Survey Insight Engine runtime environment.
-# Source of truth is the root uv.lock; regenerate with:
+# Source of truth is artifacts/survey-insight-engine/uv.lock; regenerate with:
 #   uv export --no-emit-project --format requirements-txt
 # Verify the installed .pythonlibs matches with:
 #   .pythonlibs/bin/python artifacts/survey-insight-engine/scripts/verify_python_lock.py

@@ -49,11 +49,15 @@ or make startup robust enough to pass blindly.
 **Why deployment type can't be auto-fixed:** it is user-only (Deployments pane), not settable
 via `artifact.toml`.
 
-## Resolution (confirmed fix — option #2 was the real one)
+## Resolution (UNCONFIRMED — the "formalize deps" theory was never deployed)
 
-The `--server.fileWatcherType none` flag alone was **NOT** sufficient. The promote/"failed to
-start" failure was the Python deps reaching prod only via the gitignored `.pythonlibs`. The fix
-that worked was formalizing deps, NOT a prod `pip install` and NOT a VM size bump:
+**CAUTION:** the "formalize deps fixed promote" conclusion below was NEVER validated in a
+successful deploy. Formalizing deps meant adding a ROOT `pyproject.toml`+`uv.lock`, which made
+every subsequent build die at the auto `uv sync` (EACCES into the nix store) BEFORE ever reaching
+promote — so we never observed a promote with this change live. See
+`streamlit-deploy-uv-sync-pythonlibs.md`: the build-passing fix is to keep the uv project OUT of
+the repo root and run prod from the shipped `.pythonlibs`. Treat the steps below as an unproven
+theory, not a confirmed fix:
 
 - Declare the **exact** runtime deps in root `pyproject.toml` pinned to the *actually-installed*
   versions, and regenerate `uv.lock` (`UV_PYTHON=.pythonlibs/bin/python uv lock`).
@@ -75,7 +79,9 @@ probe never got 200; the real traceback is unreachable on gce (confirms the diag
 
 `listDeploymentBuilds` + `getDeploymentBuild` distinguish the two failure modes WITHOUT VM logs:
 - **pkgFail (build phase):** ~19-21 log lines ending at `uv sync` → `os error 13` into
-  `/nix/store`. → the `.venv` redirect fix (UV_PROJECT_ENVIRONMENT=.venv, shared).
+  `/nix/store`. → fix = remove the ROOT uv-project trigger (move pyproject+uv.lock into the
+  artifact dir); deps then ship via `.pythonlibs`. (The old "UV_PROJECT_ENVIRONMENT=.venv,
+  shared" redirect is DISPROVEN — [userenv.shared] does not reach the build container.)
 - **reachedPromote (promote phase):** ~25-33 lines ending at `Creating virtual machine` /
   `Waiting for deployment to be ready` / `failed to initialize`. → the startup/port-bind fix.
 
