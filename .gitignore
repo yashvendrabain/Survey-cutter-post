@@ -50,3 +50,7 @@ Thumbs.db
 
 # Generated download archives
 /dist/
+
+# Uploaded source assets (user spreadsheets with real survey data, prior app
+# versions, scratch fixtures) — kept out of the public repo. Large and sensitive.
+attached_assets/
